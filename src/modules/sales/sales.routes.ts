@@ -1,0 +1,2360 @@
+import { Router } from 'express';
+import { prisma } from '../../lib/prisma.js';
+import { authenticate, requirePermission, requireBranch } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
+import { PERMISSIONS } from '../../config/permissions.js';
+import { sendSuccess, sendPaginated } from '../../utils/response.js';
+import { AppError } from '../../utils/AppError.js';
+import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
+import { formatDocNo, nextCounter } from '../../utils/documentCounter.js';
+import { z } from 'zod';
+import { getPosTerminalPolicy } from '../pos/pos-policy.js';
+
+export const salesRoutes = Router();
+salesRoutes.use(authenticate);
+
+const salesReturnSchema = z.object({
+    reason: z.string().max(300).optional(),
+    notes: z.string().max(1000).optional(),
+    items: z.array(z.object({
+        invoiceItemId: z.string().min(1),
+        qty: z.number().positive(),
+    })).min(1),
+});
+
+const salesInvoiceQuerySchema = paginationSchema.extend({
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    paymentMethod: z.string().optional(),
+});
+
+const topSellingItemsQuerySchema = z.object({
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    search: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    sortBy: z.enum(['qty', 'revenue', 'invoices']).default('qty'),
+});
+
+const pendingPaymentsQuerySchema = paginationSchema.extend({
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    customerId: z.string().optional(),
+});
+
+const overdueInvoicesQuerySchema = paginationSchema.extend({
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    customerId: z.string().optional(),
+    minDays: z.coerce.number().int().min(1).max(3650).default(30),
+});
+
+const salesPaymentsQuerySchema = paginationSchema.extend({
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    state: z.enum(['open', 'closed', 'all']).default('open'),
+    customerId: z.string().optional(),
+});
+
+const salesReceivePaymentSchema = z.object({
+    amount: z.number().positive(),
+    paymentMethod: z.string().min(1),
+    paymentDate: z.string().optional(),
+    referenceNo: z.string().max(100).optional(),
+    notes: z.string().max(1000).optional(),
+});
+
+const salesQuotationQuerySchema = paginationSchema.extend({
+    state: z.enum(['active', 'converted', 'all']).default('active'),
+});
+
+const salesQuotationItemSchema = z.object({
+    productId: z.string().min(1).optional(),
+    description: z.string().min(1),
+    unitCode: z.string().min(1).optional(),
+    qty: z.number().positive(),
+    unitPrice: z.number().nonnegative(),
+    discount: z.number().nonnegative().default(0),
+    taxAmount: z.number().nonnegative().default(0),
+});
+
+const salesQuotationCreateSchema = z.object({
+    customerId: z.string().min(1).optional(),
+    customerName: z.string().max(200).optional(),
+    validUntil: z.string().optional(),
+    notes: z.string().max(2000).optional(),
+    terms: z.string().max(5000).optional(),
+    items: z.array(salesQuotationItemSchema).min(1),
+});
+
+const salesQuotationConvertSchema = z.object({
+    paymentMethod: z.enum(['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER']).optional(),
+});
+
+const salesOrderQuerySchema = paginationSchema.extend({
+    state: z.enum(['active', 'completed', 'cancelled', 'all']).default('active'),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+});
+
+const salesOrderItemSchema = z.object({
+    productId: z.string().min(1).optional(),
+    description: z.string().min(1),
+    unitCode: z.string().min(1).optional(),
+    qty: z.number().positive(),
+    unitPrice: z.number().nonnegative(),
+    discount: z.number().nonnegative().default(0),
+    taxAmount: z.number().nonnegative().default(0),
+});
+
+const salesOrderCreateSchema = z.object({
+    customerId: z.string().min(1).optional(),
+    customerName: z.string().max(200).optional(),
+    date: z.string().optional(),
+    deliveryDate: z.string().optional(),
+    notes: z.string().max(2000).optional(),
+    terms: z.string().max(5000).optional(),
+    items: z.array(salesOrderItemSchema).min(1),
+});
+
+const salesOrderUpdateSchema = salesOrderCreateSchema.partial().extend({
+    status: z.enum(['DRAFT', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'INVOICED']).optional(),
+});
+
+const salesOrderConvertSchema = z.object({
+    paymentMethod: z.enum(['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER']).optional(),
+});
+
+const salesPricingGroupSchema = z.object({
+    name: z.string().min(1).max(100),
+    code: z.string().optional().nullable(),
+    isDefault: z.boolean().optional().default(false),
+});
+
+const salesPricingAssignCustomersSchema = z.object({
+    customerIds: z.array(z.string()).default([]),
+});
+
+const salesPricingMatrixSchema = z.object({
+    prices: z.array(z.object({
+        productId: z.string().min(1),
+        unitCode: z.string().min(1),
+        salePrice: z.number().min(0).nullable(),
+    })).default([]),
+});
+
+const salesPricingRuleSchema = z.object({
+    value: z.string().min(1).max(120),
+    description: z.string().max(1000).optional(),
+    color: z.string().max(20).optional(),
+    isActive: z.boolean().optional().default(true),
+});
+
+const SALES_QUOTATION_META_PREFIX = '[SQMETA]';
+const DEFAULT_LOYALTY_VALUE_PER_POINT = 0.005;
+
+function buildSalesQuotationNotes(notes?: string, validUntil?: string, converted?: { invoiceId: string; invoiceNo: string; at: string }) {
+    const meta = {
+        validUntil: validUntil || null,
+        convertedInvoiceId: converted?.invoiceId || null,
+        convertedInvoiceNo: converted?.invoiceNo || null,
+        convertedAt: converted?.at || null,
+    };
+    const base = `${SALES_QUOTATION_META_PREFIX}${JSON.stringify(meta)}`;
+    return notes?.trim() ? `${base}\n${notes.trim()}` : base;
+}
+
+function parseSalesQuotationNotes(raw?: string | null) {
+    const value = String(raw || '');
+    if (!value.startsWith(SALES_QUOTATION_META_PREFIX)) {
+        return { notes: value || null, validUntil: null as string | null, convertedInvoiceId: null as string | null, convertedInvoiceNo: null as string | null, convertedAt: null as string | null };
+    }
+    const lines = value.split('\n');
+    const metaLine = lines[0].slice(SALES_QUOTATION_META_PREFIX.length);
+    let meta: any = {};
+    try {
+        meta = JSON.parse(metaLine);
+    } catch {
+        meta = {};
+    }
+    const notes = lines.slice(1).join('\n').trim();
+    return {
+        notes: notes || null,
+        validUntil: typeof meta.validUntil === 'string' ? meta.validUntil : null,
+        convertedInvoiceId: typeof meta.convertedInvoiceId === 'string' ? meta.convertedInvoiceId : null,
+        convertedInvoiceNo: typeof meta.convertedInvoiceNo === 'string' ? meta.convertedInvoiceNo : null,
+        convertedAt: typeof meta.convertedAt === 'string' ? meta.convertedAt : null,
+    };
+}
+
+function parseSalesPricingRuleMeta(description?: string | null) {
+    if (!description) return { description: null as string | null, color: '#2563eb', isActive: true };
+    const text = String(description);
+    if (!text.startsWith('[SRMETA]')) return { description: text, color: '#2563eb', isActive: true };
+    const lines = text.split('\n');
+    const metaRaw = lines[0].slice('[SRMETA]'.length);
+    let meta: any = {};
+    try { meta = JSON.parse(metaRaw); } catch { meta = {}; }
+    return {
+        description: lines.slice(1).join('\n').trim() || null,
+        color: typeof meta.color === 'string' && meta.color ? meta.color : '#2563eb',
+        isActive: typeof meta.isActive === 'boolean' ? meta.isActive : true,
+    };
+}
+
+function buildSalesPricingRuleMeta(description?: string, color?: string, isActive?: boolean) {
+    const meta = `[SRMETA]${JSON.stringify({ color: color || '#2563eb', isActive: isActive !== false })}`;
+    return description?.trim() ? `${meta}\n${description.trim()}` : meta;
+}
+
+function getCreatedAtDateRange(startDate?: string, endDate?: string) {
+    const start = typeof startDate === 'string' && startDate.trim() ? startDate.trim() : undefined;
+    const end = typeof endDate === 'string' && endDate.trim() ? endDate.trim() : undefined;
+    const createdAt: any = {};
+
+    if (start) {
+        const startAt = new Date(`${start}T00:00:00.000`);
+        if (Number.isNaN(startAt.getTime())) throw AppError.badRequest('Invalid startDate, expected YYYY-MM-DD');
+        createdAt.gte = startAt;
+    }
+    if (end) {
+        const endAt = new Date(`${end}T23:59:59.999`);
+        if (Number.isNaN(endAt.getTime())) throw AppError.badRequest('Invalid endDate, expected YYYY-MM-DD');
+        createdAt.lte = endAt;
+    }
+    return Object.keys(createdAt).length ? createdAt : undefined;
+}
+
+async function getLoyaltyValuePerPoint(companyId: string): Promise<number> {
+    const row: any = await (prisma as any).globalString.findFirst({
+        where: {
+            companyId,
+            group: 'POS_LOYALTY_SETTINGS',
+            systemKey: 'DEFAULT',
+        },
+        select: { metadata: true },
+    });
+
+    const pointsPerUnit = Number(row?.metadata?.redemptionPointsPerUnit);
+    const currencyValue = Number(row?.metadata?.redemptionCurrencyValue);
+    if (!Number.isFinite(pointsPerUnit) || pointsPerUnit <= 0) return DEFAULT_LOYALTY_VALUE_PER_POINT;
+    if (!Number.isFinite(currencyValue) || currencyValue <= 0) return DEFAULT_LOYALTY_VALUE_PER_POINT;
+    const value = currencyValue / pointsPerUnit;
+    return Number.isFinite(value) && value > 0 ? value : DEFAULT_LOYALTY_VALUE_PER_POINT;
+}
+
+function withLoyaltyDiscountValue<T extends { loyaltyPointsRedeemed?: number | null }>(invoice: T, valuePerPoint: number): T & { loyaltyDiscountValue: number } {
+    const redeemed = Number(invoice?.loyaltyPointsRedeemed || 0);
+    const loyaltyDiscountValue = Number((Math.max(0, redeemed) * valuePerPoint).toFixed(2));
+    return {
+        ...invoice,
+        loyaltyDiscountValue,
+    };
+}
+
+async function isManagerOrAdminUser(req: any): Promise<boolean> {
+    const role = await prisma.role.findFirst({
+        where: { id: req.user!.roleId, companyId: req.user!.companyId },
+        select: { name: true, permissions: true },
+    });
+    const roleName = String(role?.name || '').toLowerCase();
+    const perms = role?.permissions || [];
+    return roleName.includes('manager') || perms.includes(PERMISSIONS.ADMIN_MANAGE_BRANCHES);
+}
+
+// GET /sales/invoices - List all sales invoices
+salesRoutes.get('/invoices', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const query = salesInvoiceQuerySchema.parse(req.query);
+        const { skip, take, page, limit } = getPaginationParams(query);
+
+        const where: any = {
+            companyId: req.user!.companyId,
+            branchId: req.activeBranchId!,
+        };
+        const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
+        if (createdAt) where.createdAt = createdAt;
+        if (query.paymentMethod) where.paymentMethod = query.paymentMethod;
+
+        if (query.search?.trim()) {
+            const search = query.search.trim();
+            where.OR = [
+                { invoiceNo: { contains: search, mode: 'insensitive' } },
+                { notes: { contains: search, mode: 'insensitive' } },
+                { customer: { name: { contains: search, mode: 'insensitive' } } },
+                { loyaltyCustomer: { name: { contains: search, mode: 'insensitive' } } },
+                { loyaltyCustomer: { phone: { contains: search, mode: 'insensitive' } } },
+            ];
+        }
+
+        const [invoices, total, loyaltyValuePerPoint] = await Promise.all([
+            (prisma as any).pOSInvoice.findMany({
+                where,
+                skip,
+                take,
+                include: {
+                    customer: { select: { id: true, name: true, customerCode: true, phone: true } },
+                    loyaltyCustomer: { select: { id: true, name: true, phone: true } },
+                    branch: { select: { id: true, name: true, code: true } },
+                    createdBy: { select: { id: true, name: true } },
+                    _count: { select: { items: true } },
+                },
+                orderBy: { createdAt: 'desc' },
+            }),
+            (prisma as any).pOSInvoice.count({ where }),
+            getLoyaltyValuePerPoint(req.user!.companyId),
+        ]);
+
+        const enriched = invoices.map((inv: any) => withLoyaltyDiscountValue(inv, loyaltyValuePerPoint));
+        sendPaginated(res, enriched, total, page, limit);
+    } catch (error) { next(error); }
+});
+
+// GET /sales/invoices/:id - Detailed invoice view
+salesRoutes.get('/invoices/:id', requirePermission(PERMISSIONS.SALES_VIEW), async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const invoice = await (prisma as any).pOSInvoice.findFirst({
+            where: { id, companyId: req.user!.companyId },
+            include: {
+                customer: { select: { id: true, name: true, phone: true, email: true } },
+                loyaltyCustomer: { select: { id: true, name: true, phone: true } },
+                branch: { select: { id: true, name: true, code: true } },
+                createdBy: { select: { id: true, name: true } },
+                items: {
+                    include: {
+                        product: { select: { name: true, nameArabic: true, itemCode: true, units: { select: { unitCode: true, unitName: true, qtyInBaseUnit: true } } } }
+                    }
+                },
+            },
+        });
+
+        if (!invoice) throw AppError.notFound('Invoice not found');
+        const loyaltyValuePerPoint = await getLoyaltyValuePerPoint(req.user!.companyId);
+        sendSuccess(res, withLoyaltyDiscountValue(invoice, loyaltyValuePerPoint));
+    } catch (error) { next(error); }
+});
+
+// GET /sales/summary - Global summary for analytics
+salesRoutes.get('/summary', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const startDate = typeof req.query.startDate === 'string' ? req.query.startDate : undefined;
+        const endDate = typeof req.query.endDate === 'string' ? req.query.endDate : undefined;
+        const createdAt = getCreatedAtDateRange(startDate, endDate);
+        const whereBase: any = { companyId, branchId };
+        if (createdAt) whereBase.createdAt = createdAt;
+        if (req.query.paymentMethod) whereBase.paymentMethod = String(req.query.paymentMethod);
+
+        const [totalCount, totalAmount, unpostedCount] = await Promise.all([
+            (prisma as any).pOSInvoice.count({ where: whereBase }),
+            (prisma as any).pOSInvoice.aggregate({
+                where: { ...whereBase, isPosted: true },
+                _sum: { grandTotal: true }
+            }),
+            (prisma as any).pOSInvoice.count({ where: { ...whereBase, isPosted: false } }),
+        ]);
+
+        sendSuccess(res, {
+            totalInvoices: totalCount,
+            totalRevenue: totalAmount._sum.grandTotal || 0,
+            pendingPost: unpostedCount,
+        });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/quotations - List all sales quotations
+salesRoutes.get('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const query = salesQuotationQuerySchema.parse(req.query);
+        const { skip, take, page, limit } = getPaginationParams(query);
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+
+        const where: any = {
+            companyId,
+            branchId,
+        };
+
+        if (query.state === 'active') {
+            where.status = { in: ['DRAFT', 'SENT', 'ACCEPTED'] };
+        } else if (query.state === 'converted') {
+            where.status = 'CONVERTED';
+        }
+
+        if (query.search?.trim()) {
+            const search = query.search.trim();
+            where.OR = [
+                { quotationNo: { contains: search, mode: 'insensitive' } },
+                { customerName: { contains: search, mode: 'insensitive' } },
+                { customer: { is: { name: { contains: search, mode: 'insensitive' } } } },
+            ];
+        }
+
+        const [rows, total] = await Promise.all([
+            (prisma as any).salesQuotation.findMany({
+                where,
+                skip,
+                take,
+                include: {
+                    customer: { select: { id: true, name: true, customerCode: true } },
+                    createdBy: { select: { id: true, name: true } },
+                    _count: { select: { items: true } },
+                },
+                orderBy: { createdAt: 'desc' },
+            }),
+            (prisma as any).salesQuotation.count({ where }),
+        ]);
+
+        sendPaginated(res, rows, total, page, limit);
+    } catch (error) { next(error); }
+});
+
+// GET /sales/quotations/:id - Get quotation detail
+salesRoutes.get('/quotations/:id', requirePermission(PERMISSIONS.SALES_QUOTATION_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const row = await (prisma as any).salesQuotation.findFirst({
+            where: {
+                id: req.params.id,
+                companyId: req.user!.companyId,
+                branchId: req.activeBranchId!,
+            },
+            include: {
+                customer: { select: { id: true, name: true, customerCode: true, phone: true, email: true, allowCreditSales: true } },
+                createdBy: { select: { id: true, name: true } },
+                items: {
+                    include: {
+                        product: { select: { id: true, name: true, itemCode: true, units: { select: { unitCode: true, unitName: true } } } },
+                    },
+                },
+            },
+        });
+
+        if (!row) throw AppError.notFound('Quotation');
+        sendSuccess(res, row);
+    } catch (error) { next(error); }
+});
+
+// POST /sales/quotations - Create new quotation
+salesRoutes.post('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_CREATE), requireBranch, validate({ body: salesQuotationCreateSchema }), async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const userId = req.user!.id;
+        const body = req.body as z.infer<typeof salesQuotationCreateSchema>;
+
+        let subtotal = 0;
+        let taxTotal = 0;
+        let discountTotal = 0;
+
+        const preparedItems = body.items.map(line => {
+            const qty = Number(line.qty);
+            const unitPrice = Number(line.unitPrice);
+            const discount = Number(line.discount || 0);
+            const tax = Number(line.taxAmount || 0);
+            const lineTotal = (qty * unitPrice) - discount;
+
+            subtotal += lineTotal;
+            taxTotal += tax;
+            discountTotal += discount;
+
+            return {
+                productId: line.productId || null,
+                description: line.description,
+                unitCode: line.unitCode || null,
+                qty,
+                unitPrice,
+                discount,
+                taxAmount: tax,
+                lineTotal
+            };
+        });
+
+        const quotationNo = formatDocNo('SQ', await nextCounter(prisma as any, companyId, 'SALES_QUOTATION', branchId));
+
+        const row = await (prisma as any).salesQuotation.create({
+            data: {
+                companyId,
+                branchId,
+                quotationNo,
+                customerId: body.customerId || null,
+                customerName: body.customerName || null,
+                validUntil: body.validUntil ? new Date(body.validUntil) : null,
+                subtotal,
+                taxTotal,
+                discountTotal,
+                grandTotal: subtotal + taxTotal,
+                notes: body.notes,
+                terms: body.terms,
+                createdById: userId,
+                status: 'DRAFT',
+                items: { create: preparedItems }
+            },
+            include: { items: true }
+        });
+
+        sendSuccess(res, row, { message: 'Quotation created successfully' }, 201);
+    } catch (error) { next(error); }
+});
+
+// POST /sales/quotations/:id/convert - Convert quotation to invoice
+salesRoutes.post('/quotations/:id/convert', requirePermission(PERMISSIONS.SALES_QUOTATION_CONVERT), requireBranch, validate({ body: salesQuotationConvertSchema }), async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const quotationId = req.params.id;
+        const paymentMethod = String(req.body?.paymentMethod || 'CREDIT').toUpperCase();
+
+        const result = await prisma.$transaction(async (tx) => {
+            const quote: any = await (tx as any).salesQuotation.findFirst({
+                where: { id: quotationId, companyId, branchId },
+                include: { items: true }
+            });
+
+            if (!quote) throw AppError.notFound('Quotation');
+            if (quote.status === 'CONVERTED') throw AppError.badRequest('Quotation is already converted');
+            if (quote.status === 'CANCELLED') throw AppError.badRequest('Cannot convert a cancelled quotation');
+            if (paymentMethod === 'CREDIT' && !quote.customerId) {
+                throw AppError.badRequest('Customer is required for CREDIT payment');
+            }
+            if (paymentMethod === 'CREDIT' && quote.customerId) {
+                const customer = await tx.customer.findFirst({
+                    where: { id: quote.customerId, companyId },
+                    select: { id: true, allowCreditSales: true },
+                });
+                if (!customer) throw AppError.notFound('Customer');
+                if (customer.allowCreditSales === false) {
+                    throw AppError.badRequest('Selected customer is not allowed for CREDIT sales');
+                }
+            }
+
+            // 1. Create Invoice
+            const invoiceNo = formatDocNo('SI', await nextCounter(tx as any, companyId, 'SALES_INVOICE', branchId));
+            const invoice = await (tx as any).pOSInvoice.create({
+                data: {
+                    companyId,
+                    branchId,
+                    invoiceNo,
+                    customerId: quote.customerId,
+                    subtotal: quote.subtotal,
+                    taxTotal: quote.taxTotal,
+                    discountTotal: quote.discountTotal,
+                    grandTotal: quote.grandTotal,
+                    paymentMethod,
+                    status: 'UNPOSTED',
+                    isPosted: false,
+                    notes: `Converted from Quotation ${quote.quotationNo}`,
+                    createdById: req.user!.id,
+                    items: {
+                        create: quote.items.map((item: any) => {
+                            if (!item.productId) throw AppError.badRequest(`Quotation line "${item.description}" has no product and cannot be converted to invoice`);
+                            return {
+                                productId: item.productId,
+                                unitCode: item.unitCode || 'UNIT',
+                                qty: item.qty,
+                                unitPrice: item.unitPrice,
+                                discount: item.discount,
+                                taxAmount: item.taxAmount,
+                                lineTotal: item.lineTotal
+                            };
+                        })
+                    }
+                }
+            });
+
+            // 2. Update Quotation Status
+            await (tx as any).salesQuotation.update({
+                where: { id: quotationId },
+                data: { status: 'CONVERTED' }
+            });
+
+            return {
+                quotationId: quote.id,
+                quotationNo: quote.quotationNo,
+                invoiceId: invoice.id,
+                invoiceNo: invoice.invoiceNo
+            };
+        });
+
+        sendSuccess(res, result, { message: 'Quotation converted to invoice successfully' });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/pricing/price-groups
+salesRoutes.get('/pricing/price-groups', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req, res, next) => {
+    try {
+        const rows = await (prisma as any).priceGroup.findMany({
+            where: { companyId: req.user!.companyId },
+            include: {
+                _count: { select: { customers: true, productPriceGroups: true } },
+            },
+            orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+        });
+        sendSuccess(res, rows);
+    } catch (error) { next(error); }
+});
+
+// POST /sales/pricing/price-groups
+salesRoutes.post('/pricing/price-groups', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingGroupSchema }), async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const payload = {
+            name: String(req.body.name || '').trim(),
+            code: req.body.code ? String(req.body.code).trim().toUpperCase() : null,
+            isDefault: Boolean(req.body.isDefault),
+            companyId,
+        };
+        const row = await prisma.$transaction(async (tx) => {
+            if (payload.isDefault) {
+                await (tx as any).priceGroup.updateMany({
+                    where: { companyId },
+                    data: { isDefault: false },
+                });
+            }
+            return (tx as any).priceGroup.create({ data: payload });
+        });
+        sendSuccess(res, row, undefined, 201);
+    } catch (error) { next(error); }
+});
+
+// PATCH /sales/pricing/price-groups/:id
+salesRoutes.patch('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingGroupSchema.partial() }), async (req, res, next) => {
+    try {
+        const id = String(req.params.id);
+        const companyId = req.user!.companyId;
+        const existing = await (prisma as any).priceGroup.findFirst({ where: { id, companyId } });
+        if (!existing) throw AppError.notFound('Price Group');
+        const payload = {
+            ...(req.body.name !== undefined ? { name: String(req.body.name || '').trim() } : {}),
+            ...(req.body.code !== undefined ? { code: req.body.code ? String(req.body.code).trim().toUpperCase() : null } : {}),
+            ...(req.body.isDefault !== undefined ? { isDefault: Boolean(req.body.isDefault) } : {}),
+        };
+        const row = await prisma.$transaction(async (tx) => {
+            if (payload.isDefault) {
+                await (tx as any).priceGroup.updateMany({
+                    where: { companyId, id: { not: id } },
+                    data: { isDefault: false },
+                });
+            }
+            return (tx as any).priceGroup.update({ where: { id }, data: payload });
+        });
+        sendSuccess(res, row);
+    } catch (error) { next(error); }
+});
+
+// DELETE /sales/pricing/price-groups/:id
+salesRoutes.delete('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req, res, next) => {
+    try {
+        const id = String(req.params.id);
+        const companyId = req.user!.companyId;
+        const row = await (prisma as any).priceGroup.findFirst({
+            where: { id, companyId },
+            include: {
+                _count: { select: { customers: true, productPriceGroups: true } },
+            },
+        });
+        if (!row) throw AppError.notFound('Price Group');
+        if (row.isDefault) throw AppError.badRequest('Default price group cannot be deleted');
+        if ((row?._count?.customers || 0) > 0 || (row?._count?.productPriceGroups || 0) > 0) {
+            throw AppError.badRequest('Price group is in use');
+        }
+        await (prisma as any).priceGroup.delete({ where: { id } });
+        sendSuccess(res, { message: 'Deleted' });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/pricing/price-groups/:id
+salesRoutes.get('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req, res, next) => {
+    try {
+        const id = String(req.params.id);
+        const companyId = req.user!.companyId;
+        const row = await (prisma as any).priceGroup.findFirst({
+            where: { id, companyId },
+            include: {
+                _count: { select: { customers: true, productPriceGroups: true } },
+            },
+        });
+        if (!row) throw AppError.notFound('Price Group');
+        sendSuccess(res, row);
+    } catch (error) { next(error); }
+});
+
+// PUT /sales/pricing/price-groups/:id/customers
+salesRoutes.put('/pricing/price-groups/:id/customers', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingAssignCustomersSchema }), async (req, res, next) => {
+    try {
+        const id = String(req.params.id);
+        const companyId = req.user!.companyId;
+        const { customerIds } = req.body as z.infer<typeof salesPricingAssignCustomersSchema>;
+        const group = await (prisma as any).priceGroup.findFirst({ where: { id, companyId }, select: { id: true } });
+        if (!group) throw AppError.notFound('Price Group');
+
+        const uniqueIds = Array.from(new Set((customerIds || []).map((x) => String(x))));
+        if (uniqueIds.length > 0) {
+            const cnt = await prisma.customer.count({ where: { companyId, id: { in: uniqueIds } } });
+            if (cnt !== uniqueIds.length) throw AppError.badRequest('Invalid customer in payload');
+        }
+
+        await prisma.$transaction(async (tx) => {
+            await tx.customer.updateMany({
+                where: { companyId, priceGroupId: id },
+                data: { priceGroupId: null },
+            });
+            if (uniqueIds.length > 0) {
+                await tx.customer.updateMany({
+                    where: { companyId, id: { in: uniqueIds } },
+                    data: { priceGroupId: id },
+                });
+            }
+        });
+
+        sendSuccess(res, { assignedCount: uniqueIds.length });
+    } catch (error) { next(error); }
+});
+
+// PUT /sales/pricing/price-groups/:id/pricing
+salesRoutes.put('/pricing/price-groups/:id/pricing', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingMatrixSchema }), async (req, res, next) => {
+    try {
+        const id = String(req.params.id);
+        const companyId = req.user!.companyId;
+        const { prices } = req.body as z.infer<typeof salesPricingMatrixSchema>;
+        const group = await (prisma as any).priceGroup.findFirst({ where: { id, companyId }, select: { id: true } });
+        if (!group) throw AppError.notFound('Price Group');
+
+        const normalized = prices.map((row) => ({
+            productId: row.productId,
+            unitCode: String(row.unitCode).trim().toUpperCase(),
+            salePrice: row.salePrice,
+        }));
+
+        const productIds = Array.from(new Set(normalized.map((p) => p.productId)));
+        if (productIds.length > 0) {
+            const products = await prisma.product.findMany({
+                where: { companyId, id: { in: productIds } },
+                include: { units: { select: { unitCode: true } } },
+            });
+            const map = new Map(products.map((p) => [p.id, p]));
+            if (products.length !== productIds.length) throw AppError.badRequest('Invalid product in payload');
+            for (const row of normalized) {
+                const product = map.get(row.productId);
+                if (!product) throw AppError.badRequest('Invalid product in payload');
+                const hasUnit = (product.units || []).some((u: any) => String(u.unitCode).toUpperCase() === row.unitCode);
+                if (!hasUnit) throw AppError.badRequest(`Invalid unit ${row.unitCode} for selected product`);
+            }
+        }
+
+        await prisma.$transaction(async (tx) => {
+            for (const row of normalized) {
+                if (row.salePrice === null) {
+                    await (tx as any).productPriceGroup.deleteMany({
+                        where: {
+                            productId: row.productId,
+                            priceGroupId: id,
+                            unitCode: row.unitCode,
+                        },
+                    });
+                    continue;
+                }
+                await (tx as any).productPriceGroup.upsert({
+                    where: {
+                        productId_priceGroupId_unitCode: {
+                            productId: row.productId,
+                            priceGroupId: id,
+                            unitCode: row.unitCode,
+                        },
+                    },
+                    create: {
+                        productId: row.productId,
+                        priceGroupId: id,
+                        unitCode: row.unitCode,
+                        salePrice: Number(row.salePrice),
+                    },
+                    update: {
+                        salePrice: Number(row.salePrice),
+                    },
+                });
+            }
+        });
+
+        sendSuccess(res, { updated: normalized.length });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/pricing/customers
+salesRoutes.get('/pricing/customers', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req, res, next) => {
+    try {
+        const query = paginationSchema.parse(req.query);
+        const { skip, take, page, limit } = getPaginationParams(query);
+        const where: any = { companyId: req.user!.companyId };
+        if (query.search?.trim()) {
+            const key = query.search.trim();
+            where.OR = [
+                { name: { contains: key, mode: 'insensitive' } },
+                { customerCode: { contains: key, mode: 'insensitive' } },
+                { phone: { contains: key, mode: 'insensitive' } },
+            ];
+        }
+        const [rows, total] = await Promise.all([
+            prisma.customer.findMany({
+                where,
+                skip,
+                take,
+                select: { id: true, name: true, customerCode: true, phone: true, priceGroupId: true },
+                orderBy: { name: 'asc' },
+            }),
+            prisma.customer.count({ where }),
+        ]);
+        sendPaginated(res, rows, total, page, limit);
+    } catch (error) { next(error); }
+});
+
+// GET /sales/pricing/products
+salesRoutes.get('/pricing/products', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req, res, next) => {
+    try {
+        const query = paginationSchema.parse(req.query);
+        const { skip, take, page, limit } = getPaginationParams(query);
+        const groupId = typeof req.query.groupId === 'string' ? req.query.groupId : undefined;
+        const where: any = { companyId: req.user!.companyId };
+        if (query.search?.trim()) {
+            const key = query.search.trim();
+            where.OR = [
+                { name: { contains: key, mode: 'insensitive' } },
+                { itemCode: { contains: key, mode: 'insensitive' } },
+            ];
+        }
+        const [rows, total] = await Promise.all([
+            prisma.product.findMany({
+                where,
+                skip,
+                take,
+                include: {
+                    units: { select: { unitCode: true, unitName: true, salePrice: true } },
+                    priceGroupPrices: {
+                        where: groupId ? { priceGroupId: groupId } : undefined,
+                        select: { id: true, priceGroupId: true, unitCode: true, salePrice: true },
+                    },
+                },
+                orderBy: { name: 'asc' },
+            }),
+            prisma.product.count({ where }),
+        ]);
+        sendPaginated(res, rows, total, page, limit);
+    } catch (error) { next(error); }
+});
+
+// GET /sales/pricing/promotions
+salesRoutes.get('/pricing/promotions', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req, res, next) => {
+    try {
+        const rows = await (prisma as any).globalString.findMany({
+            where: { companyId: req.user!.companyId, group: 'SALES_PROMOTION' },
+            orderBy: [{ isActive: 'desc' }, { value: 'asc' }],
+        });
+        const data = rows.map((row: any) => {
+            const meta = parseSalesPricingRuleMeta(row.description);
+            return {
+                id: row.id,
+                value: row.value,
+                description: meta.description,
+                color: meta.color,
+                isActive: meta.isActive && row.isActive !== false,
+            };
+        });
+        sendSuccess(res, data);
+    } catch (error) { next(error); }
+});
+
+// POST /sales/pricing/promotions
+salesRoutes.post('/pricing/promotions', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema }), async (req, res, next) => {
+    try {
+        const { value, description, color, isActive } = req.body as z.infer<typeof salesPricingRuleSchema>;
+        const row = await (prisma as any).globalString.create({
+            data: {
+                companyId: req.user!.companyId,
+                group: 'SALES_PROMOTION',
+                value: value.trim(),
+                isActive: isActive !== false,
+                description: buildSalesPricingRuleMeta(description, color, isActive),
+                color: color || '#2563eb',
+            },
+        });
+        sendSuccess(res, row, undefined, 201);
+    } catch (error) { next(error); }
+});
+
+// PUT /sales/pricing/promotions/:id
+salesRoutes.put('/pricing/promotions/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema.partial() }), async (req, res, next) => {
+    try {
+        const existing = await (prisma as any).globalString.findFirst({
+            where: { id: req.params.id, companyId: req.user!.companyId, group: 'SALES_PROMOTION' },
+        });
+        if (!existing) throw AppError.notFound('Promotion');
+        const currentMeta = parseSalesPricingRuleMeta(existing.description);
+        const nextValue = req.body.value !== undefined ? String(req.body.value).trim() : existing.value;
+        const nextColor = req.body.color !== undefined ? String(req.body.color) : currentMeta.color;
+        const nextIsActive = req.body.isActive !== undefined ? Boolean(req.body.isActive) : currentMeta.isActive;
+        const nextDescription = req.body.description !== undefined ? String(req.body.description) : (currentMeta.description || '');
+
+        const row = await (prisma as any).globalString.update({
+            where: { id: existing.id },
+            data: {
+                value: nextValue,
+                isActive: nextIsActive,
+                color: nextColor,
+                description: buildSalesPricingRuleMeta(nextDescription, nextColor, nextIsActive),
+            },
+        });
+        sendSuccess(res, row);
+    } catch (error) { next(error); }
+});
+
+// DELETE /sales/pricing/promotions/:id
+salesRoutes.delete('/pricing/promotions/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req, res, next) => {
+    try {
+        const existing = await (prisma as any).globalString.findFirst({
+            where: { id: req.params.id, companyId: req.user!.companyId, group: 'SALES_PROMOTION' },
+        });
+        if (!existing) throw AppError.notFound('Promotion');
+        await (prisma as any).globalString.delete({ where: { id: existing.id } });
+        sendSuccess(res, { message: 'Deleted' });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/pricing/discount-rules
+salesRoutes.get('/pricing/discount-rules', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req, res, next) => {
+    try {
+        const rows = await (prisma as any).globalString.findMany({
+            where: { companyId: req.user!.companyId, group: 'SALES_DISCOUNT_RULE' },
+            orderBy: [{ isActive: 'desc' }, { value: 'asc' }],
+        });
+        const data = rows.map((row: any) => {
+            const meta = parseSalesPricingRuleMeta(row.description);
+            return {
+                id: row.id,
+                value: row.value,
+                description: meta.description,
+                color: meta.color,
+                isActive: meta.isActive && row.isActive !== false,
+            };
+        });
+        sendSuccess(res, data);
+    } catch (error) { next(error); }
+});
+
+// POST /sales/pricing/discount-rules
+salesRoutes.post('/pricing/discount-rules', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema }), async (req, res, next) => {
+    try {
+        const { value, description, color, isActive } = req.body as z.infer<typeof salesPricingRuleSchema>;
+        const row = await (prisma as any).globalString.create({
+            data: {
+                companyId: req.user!.companyId,
+                group: 'SALES_DISCOUNT_RULE',
+                value: value.trim(),
+                isActive: isActive !== false,
+                description: buildSalesPricingRuleMeta(description, color, isActive),
+                color: color || '#2563eb',
+            },
+        });
+        sendSuccess(res, row, undefined, 201);
+    } catch (error) { next(error); }
+});
+
+// PUT /sales/pricing/discount-rules/:id
+salesRoutes.put('/pricing/discount-rules/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema.partial() }), async (req, res, next) => {
+    try {
+        const existing = await (prisma as any).globalString.findFirst({
+            where: { id: req.params.id, companyId: req.user!.companyId, group: 'SALES_DISCOUNT_RULE' },
+        });
+        if (!existing) throw AppError.notFound('Discount Rule');
+        const currentMeta = parseSalesPricingRuleMeta(existing.description);
+        const nextValue = req.body.value !== undefined ? String(req.body.value).trim() : existing.value;
+        const nextColor = req.body.color !== undefined ? String(req.body.color) : currentMeta.color;
+        const nextIsActive = req.body.isActive !== undefined ? Boolean(req.body.isActive) : currentMeta.isActive;
+        const nextDescription = req.body.description !== undefined ? String(req.body.description) : (currentMeta.description || '');
+
+        const row = await (prisma as any).globalString.update({
+            where: { id: existing.id },
+            data: {
+                value: nextValue,
+                isActive: nextIsActive,
+                color: nextColor,
+                description: buildSalesPricingRuleMeta(nextDescription, nextColor, nextIsActive),
+            },
+        });
+        sendSuccess(res, row);
+    } catch (error) { next(error); }
+});
+
+// DELETE /sales/pricing/discount-rules/:id
+salesRoutes.delete('/pricing/discount-rules/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req, res, next) => {
+    try {
+        const existing = await (prisma as any).globalString.findFirst({
+            where: { id: req.params.id, companyId: req.user!.companyId, group: 'SALES_DISCOUNT_RULE' },
+        });
+        if (!existing) throw AppError.notFound('Discount Rule');
+        await (prisma as any).globalString.delete({ where: { id: existing.id } });
+        sendSuccess(res, { message: 'Deleted' });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/analytics - detailed metrics for dashboards
+salesRoutes.get('/analytics', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const now = new Date();
+        const trendStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+        const [invoices, returns] = await Promise.all([
+            (prisma as any).pOSInvoice.findMany({
+                where: { companyId, branchId, createdAt: { gte: trendStart } },
+                select: {
+                    id: true,
+                    createdAt: true,
+                    grandTotal: true,
+                    isPosted: true,
+                    status: true,
+                    paymentMethod: true,
+                    customerId: true,
+                    customer: { select: { id: true, name: true } },
+                },
+                orderBy: { createdAt: 'asc' },
+            }),
+            (prisma as any).salesReturn.findMany({
+                where: { companyId, branchId, status: 'POSTED', createdAt: { gte: trendStart } },
+                select: { id: true, createdAt: true, grandTotal: true },
+                orderBy: { createdAt: 'asc' },
+            }),
+        ]);
+
+        const postedInvoices = invoices.filter((inv: any) => inv.isPosted && inv.status !== 'VOID' && inv.status !== 'UNPOSTED');
+        const grossSales = postedInvoices.reduce((sum: number, inv: any) => sum + Number(inv.grandTotal || 0), 0);
+        const returnTotal = returns.reduce((sum: number, row: any) => sum + Number(row.grandTotal || 0), 0);
+        const netSales = grossSales - returnTotal;
+        const avgOrderValue = postedInvoices.length > 0 ? grossSales / postedInvoices.length : 0;
+
+        const paymentMethodTotals = postedInvoices.reduce((acc: Record<string, number>, inv: any) => {
+            const key = String(inv.paymentMethod || 'UNKNOWN');
+            acc[key] = (acc[key] || 0) + Number(inv.grandTotal || 0);
+            return acc;
+        }, {});
+
+        const customerTotals = postedInvoices.reduce((acc: Record<string, { name: string; value: number }>, inv: any) => {
+            if (!inv.customerId) return acc;
+            const key = String(inv.customerId);
+            const name = inv.customer?.name || 'Customer';
+            if (!acc[key]) acc[key] = { name, value: 0 };
+            acc[key].value += Number(inv.grandTotal || 0);
+            return acc;
+        }, {});
+
+        const monthKeys = Array.from({ length: 6 }).map((_, idx) => {
+            const d = new Date(now.getFullYear(), now.getMonth() - (5 - idx), 1);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            return {
+                key,
+                label: d.toLocaleDateString('en-US', { month: 'short' }),
+            };
+        });
+        const trendMap = monthKeys.reduce((acc, entry) => {
+            acc[entry.key] = { month: entry.label, gross: 0, returns: 0, net: 0 };
+            return acc;
+        }, {} as Record<string, { month: string; gross: number; returns: number; net: number }>);
+
+        for (const inv of postedInvoices) {
+            const d = new Date(inv.createdAt);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            if (trendMap[key]) {
+                trendMap[key].gross += Number(inv.grandTotal || 0);
+            }
+        }
+        for (const ret of returns) {
+            const d = new Date(ret.createdAt);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            if (trendMap[key]) {
+                trendMap[key].returns += Number(ret.grandTotal || 0);
+            }
+        }
+
+        const trend = monthKeys.map((m) => {
+            const row = trendMap[m.key];
+            row.net = row.gross - row.returns;
+            return row;
+        });
+
+        const paymentMethodBreakdown = Object.entries(paymentMethodTotals as Record<string, number>)
+            .map(([method, total]) => ({ method, total: Number(total || 0) }))
+            .sort((a, b) => b.total - a.total);
+        const topCustomers = Object.values(customerTotals as Record<string, { name: string; value: number }>)
+            .sort((a, b) => b.value - a.value)
+            .slice(0, 5);
+
+        sendSuccess(res, {
+            metrics: {
+                totalInvoices: invoices.length,
+                postedInvoices: postedInvoices.length,
+                unpostedInvoices: invoices.filter((inv: any) => !inv.isPosted || inv.status === 'UNPOSTED').length,
+                grossSales,
+                returnTotal,
+                netSales,
+                avgOrderValue,
+                returnRatePct: postedInvoices.length > 0 ? (returns.length / postedInvoices.length) * 100 : 0,
+            },
+            paymentMethodBreakdown,
+            topCustomers,
+            trend,
+        });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/top-selling-items - top selling products in selected date range
+salesRoutes.get('/top-selling-items', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const query = topSellingItemsQuerySchema.parse(req.query);
+        const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
+        const search = query.search?.trim();
+
+        const invoiceWhere: any = {
+            companyId,
+            branchId,
+            isPosted: true,
+            status: { notIn: ['VOID', 'UNPOSTED'] },
+        };
+        if (createdAt) invoiceWhere.createdAt = createdAt;
+
+        const where: any = {
+            invoice: { is: invoiceWhere },
+        };
+        if (search) {
+            where.product = {
+                is: {
+                    OR: [
+                        { name: { contains: search, mode: 'insensitive' } },
+                        { itemCode: { contains: search, mode: 'insensitive' } },
+                    ],
+                },
+            };
+        }
+
+        const lines = await (prisma as any).pOSInvoiceItem.findMany({
+            where,
+            select: {
+                invoiceId: true,
+                productId: true,
+                qty: true,
+                lineTotal: true,
+                taxAmount: true,
+                product: { select: { itemCode: true, name: true, nameArabic: true } },
+            },
+        });
+
+        const agg = new Map<string, {
+            productId: string;
+            itemCode: string;
+            name: string;
+            nameArabic: string | null;
+            qty: number;
+            revenue: number;
+            tax: number;
+            total: number;
+            invoiceIds: Set<string>;
+        }>();
+
+        for (const line of lines) {
+            const key = String(line.productId);
+            const existing = agg.get(key) || {
+                productId: key,
+                itemCode: line.product?.itemCode || '-',
+                name: line.product?.name || 'Unnamed Product',
+                nameArabic: line.product?.nameArabic || null,
+                qty: 0,
+                revenue: 0,
+                tax: 0,
+                total: 0,
+                invoiceIds: new Set<string>(),
+            };
+            existing.qty += Number(line.qty || 0);
+            existing.revenue += Number(line.lineTotal || 0);
+            existing.tax += Number(line.taxAmount || 0);
+            existing.total += Number(line.lineTotal || 0) + Number(line.taxAmount || 0);
+            existing.invoiceIds.add(String(line.invoiceId));
+            agg.set(key, existing);
+        }
+
+        const sortBy = query.sortBy;
+        const items = Array.from(agg.values())
+            .map((row) => ({
+                productId: row.productId,
+                itemCode: row.itemCode,
+                name: row.name,
+                nameArabic: row.nameArabic,
+                qty: row.qty,
+                revenue: row.revenue,
+                tax: row.tax,
+                total: row.total,
+                invoiceCount: row.invoiceIds.size,
+            }))
+            .sort((a, b) => {
+                if (sortBy === 'revenue') return b.revenue - a.revenue;
+                if (sortBy === 'invoices') return b.invoiceCount - a.invoiceCount;
+                return b.qty - a.qty;
+            })
+            .slice(0, query.limit);
+
+        sendSuccess(res, {
+            items,
+            filters: {
+                startDate: query.startDate || null,
+                endDate: query.endDate || null,
+                search: search || null,
+                sortBy,
+                limit: query.limit,
+            },
+            generatedAt: new Date().toISOString(),
+        });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/pending-payments - credit invoices with outstanding balance
+salesRoutes.get('/pending-payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const query = pendingPaymentsQuerySchema.parse(req.query);
+        const { skip, take, page, limit } = getPaginationParams(query);
+        const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
+
+        const where: any = {
+            companyId,
+            branchId,
+            paymentMethod: 'CREDIT',
+            status: { notIn: ['VOID', 'REFUNDED'] },
+        };
+        if (createdAt) where.createdAt = createdAt;
+        if (query.customerId) where.customerId = query.customerId;
+        if (query.search?.trim()) {
+            const key = query.search.trim();
+            where.OR = [
+                { invoiceNo: { contains: key, mode: 'insensitive' } },
+                { customer: { is: { name: { contains: key, mode: 'insensitive' } } } },
+                { customer: { is: { phone: { contains: key, mode: 'insensitive' } } } },
+                { loyaltyCustomer: { is: { name: { contains: key, mode: 'insensitive' } } } },
+                { loyaltyCustomer: { is: { phone: { contains: key, mode: 'insensitive' } } } },
+            ];
+        }
+
+        const invoices = await (prisma as any).pOSInvoice.findMany({
+            where,
+            include: {
+                customer: { select: { id: true, name: true, phone: true } },
+                loyaltyCustomer: { select: { id: true, name: true, phone: true } },
+                createdBy: { select: { id: true, name: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        const now = Date.now();
+        const rows = invoices.map((inv: any) => {
+            const grandTotal = Number(inv.grandTotal || 0);
+            const received = Number(inv.cashReceived || 0);
+            const outstanding = Math.max(0, grandTotal - received);
+            const daysOutstanding = Math.max(
+                0,
+                Math.floor((now - new Date(inv.createdAt).getTime()) / (24 * 60 * 60 * 1000))
+            );
+            return {
+                id: inv.id,
+                invoiceNo: inv.invoiceNo,
+                createdAt: inv.createdAt,
+                customer: inv.customer,
+                loyaltyCustomer: inv.loyaltyCustomer,
+                createdBy: inv.createdBy,
+                status: inv.status,
+                isPosted: Boolean(inv.isPosted),
+                paymentMethod: inv.paymentMethod,
+                grandTotal,
+                received,
+                outstanding,
+                daysOutstanding,
+                isOverdue: daysOutstanding > 30,
+            };
+        });
+
+        // Guardrail: only show truly unpaid credit invoices
+        const unpaidRows = rows.filter((row: any) => Number(row.outstanding || 0) > 0.000001);
+        const total = unpaidRows.length;
+        const pagedRows = unpaidRows.slice(skip, skip + take);
+
+        const summaryAcc = unpaidRows.reduce((acc: any, row: any) => {
+            const grandTotal = Number(row.grandTotal || 0);
+            const received = Number(row.received || 0);
+            const outstanding = Number(row.outstanding || 0);
+            acc.totalInvoiced += grandTotal;
+            acc.totalReceived += received;
+            acc.totalOutstanding += outstanding;
+            if (row.isOverdue) acc.overdueCount += 1;
+            return acc;
+        }, {
+            totalInvoiced: 0,
+            totalReceived: 0,
+            totalOutstanding: 0,
+            overdueCount: 0,
+        });
+
+        sendSuccess(res, pagedRows, {
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            },
+            summary: {
+                invoiceCount: total,
+                totalInvoiced: summaryAcc.totalInvoiced,
+                totalReceived: summaryAcc.totalReceived,
+                totalOutstanding: summaryAcc.totalOutstanding,
+                averageOutstanding: total > 0 ? summaryAcc.totalOutstanding / total : 0,
+                overdueCount: summaryAcc.overdueCount,
+            },
+        });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/overdue-invoices - unpaid credit invoices older than minDays
+salesRoutes.get('/overdue-invoices', requirePermission(PERMISSIONS.SALES_CREDIT_CONTROL), requireBranch, async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const query = overdueInvoicesQuerySchema.parse(req.query);
+        const { skip, take, page, limit } = getPaginationParams(query);
+        const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
+
+        const where: any = {
+            companyId,
+            branchId,
+            paymentMethod: 'CREDIT',
+            status: { notIn: ['VOID', 'REFUNDED'] },
+        };
+        if (createdAt) where.createdAt = createdAt;
+        if (query.customerId) where.customerId = query.customerId;
+        if (query.search?.trim()) {
+            const key = query.search.trim();
+            where.OR = [
+                { invoiceNo: { contains: key, mode: 'insensitive' } },
+                { customer: { is: { name: { contains: key, mode: 'insensitive' } } } },
+                { customer: { is: { phone: { contains: key, mode: 'insensitive' } } } },
+                { loyaltyCustomer: { is: { name: { contains: key, mode: 'insensitive' } } } },
+                { loyaltyCustomer: { is: { phone: { contains: key, mode: 'insensitive' } } } },
+            ];
+        }
+
+        const invoices = await (prisma as any).pOSInvoice.findMany({
+            where,
+            include: {
+                customer: { select: { id: true, name: true, phone: true } },
+                loyaltyCustomer: { select: { id: true, name: true, phone: true } },
+                createdBy: { select: { id: true, name: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        const now = Date.now();
+        const rows = invoices.map((inv: any) => {
+            const grandTotal = Number(inv.grandTotal || 0);
+            const received = Number(inv.cashReceived || 0);
+            const outstanding = Math.max(0, grandTotal - received);
+            const daysOutstanding = Math.max(
+                0,
+                Math.floor((now - new Date(inv.createdAt).getTime()) / (24 * 60 * 60 * 1000))
+            );
+            return {
+                id: inv.id,
+                invoiceNo: inv.invoiceNo,
+                createdAt: inv.createdAt,
+                customer: inv.customer,
+                loyaltyCustomer: inv.loyaltyCustomer,
+                createdBy: inv.createdBy,
+                status: inv.status,
+                isPosted: Boolean(inv.isPosted),
+                paymentMethod: inv.paymentMethod,
+                grandTotal,
+                received,
+                outstanding,
+                daysOutstanding,
+                isOverdue: daysOutstanding > query.minDays,
+            };
+        });
+
+        const overdueRows = rows
+            .filter((row: any) => Number(row.outstanding || 0) > 0.000001 && Number(row.daysOutstanding || 0) > query.minDays)
+            .sort((a: any, b: any) => Number(b.daysOutstanding || 0) - Number(a.daysOutstanding || 0));
+        const total = overdueRows.length;
+        const pagedRows = overdueRows.slice(skip, skip + take);
+
+        const summaryAcc = overdueRows.reduce((acc: any, row: any) => {
+            acc.totalOutstanding += Number(row.outstanding || 0);
+            acc.totalInvoiced += Number(row.grandTotal || 0);
+            acc.totalReceived += Number(row.received || 0);
+            acc.totalDays += Number(row.daysOutstanding || 0);
+            if (Number(row.daysOutstanding || 0) > 90) acc.severeCount += 1;
+            return acc;
+        }, {
+            totalOutstanding: 0,
+            totalInvoiced: 0,
+            totalReceived: 0,
+            totalDays: 0,
+            severeCount: 0,
+        });
+
+        sendSuccess(res, pagedRows, {
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            },
+            summary: {
+                invoiceCount: total,
+                totalInvoiced: summaryAcc.totalInvoiced,
+                totalReceived: summaryAcc.totalReceived,
+                totalOutstanding: summaryAcc.totalOutstanding,
+                averageOutstanding: total > 0 ? summaryAcc.totalOutstanding / total : 0,
+                averageDaysOutstanding: total > 0 ? summaryAcc.totalDays / total : 0,
+                severeCount: summaryAcc.severeCount,
+                minDays: query.minDays,
+            },
+        });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/payments - list credit invoices and collected amounts
+salesRoutes.get('/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const query = salesPaymentsQuerySchema.parse(req.query);
+        const { skip, take, page, limit } = getPaginationParams(query);
+        const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
+
+        const where: any = {
+            companyId,
+            branchId,
+            isPosted: true,
+            paymentMethod: 'CREDIT',
+            status: { notIn: ['VOID', 'UNPOSTED', 'REFUNDED'] },
+        };
+        if (createdAt) where.createdAt = createdAt;
+        if (query.customerId) where.customerId = query.customerId;
+        if (query.state === 'open') where.status = { in: ['CREDIT', 'PARTIAL'] };
+        if (query.state === 'closed') where.status = 'PAID';
+        if (query.search?.trim()) {
+            const key = query.search.trim();
+            where.OR = [
+                { invoiceNo: { contains: key, mode: 'insensitive' } },
+                { customer: { is: { name: { contains: key, mode: 'insensitive' } } } },
+                { customer: { is: { phone: { contains: key, mode: 'insensitive' } } } },
+                { loyaltyCustomer: { is: { name: { contains: key, mode: 'insensitive' } } } },
+                { loyaltyCustomer: { is: { phone: { contains: key, mode: 'insensitive' } } } },
+            ];
+        }
+
+        const [invoices, total, agg] = await Promise.all([
+            (prisma as any).pOSInvoice.findMany({
+                where,
+                skip,
+                take,
+                include: {
+                    customer: { select: { id: true, name: true, phone: true } },
+                    loyaltyCustomer: { select: { id: true, name: true, phone: true } },
+                    createdBy: { select: { id: true, name: true } },
+                },
+                orderBy: { createdAt: 'desc' },
+            }),
+            (prisma as any).pOSInvoice.count({ where }),
+            (prisma as any).pOSInvoice.aggregate({
+                where,
+                _sum: { grandTotal: true, cashReceived: true },
+                _count: { id: true },
+            }),
+        ]);
+
+        const rows = invoices.map((inv: any) => {
+            const totalAmount = Number(inv.grandTotal || 0);
+            const paid = Number(inv.cashReceived || 0);
+            const outstanding = Math.max(0, totalAmount - paid);
+            return {
+                id: inv.id,
+                invoiceNo: inv.invoiceNo,
+                createdAt: inv.createdAt,
+                customer: inv.customer,
+                loyaltyCustomer: inv.loyaltyCustomer,
+                createdBy: inv.createdBy,
+                status: inv.status,
+                totalAmount,
+                paidAmount: paid,
+                outstandingAmount: outstanding,
+            };
+        });
+
+        const totalAmount = Number(agg?._sum?.grandTotal || 0);
+        const totalPaid = Number(agg?._sum?.cashReceived || 0);
+        const totalOutstanding = Math.max(0, totalAmount - totalPaid);
+
+        sendSuccess(res, rows, {
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            },
+            summary: {
+                invoiceCount: Number(agg?._count?.id || 0),
+                totalAmount,
+                totalPaid,
+                totalOutstanding,
+            },
+        });
+    } catch (error) { next(error); }
+});
+
+// GET /sales/invoices/:id/payments - payment summary and receipt history
+salesRoutes.get('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const invoiceId = String(req.params.id);
+
+        const invoice = await (prisma as any).pOSInvoice.findFirst({
+            where: { id: invoiceId, companyId, branchId },
+            select: {
+                id: true,
+                invoiceNo: true,
+                createdAt: true,
+                paymentMethod: true,
+                status: true,
+                grandTotal: true,
+                cashReceived: true,
+                customerId: true,
+                customer: { select: { id: true, name: true, phone: true } },
+            },
+        });
+        if (!invoice) throw AppError.notFound('Invoice');
+
+        const entries = await prisma.journalEntry.findMany({
+            where: {
+                companyId,
+                sourceType: 'SalesPayment',
+                sourceId: invoiceId,
+            },
+            include: {
+                postedBy: { select: { id: true, name: true } },
+                lines: {
+                    include: { account: { select: { code: true } } },
+                },
+            },
+            orderBy: { date: 'desc' },
+        });
+
+        const payments = entries.map((entry: any) => {
+            const arCredit = (entry.lines || [])
+                .filter((line: any) => line.account?.code === '1110')
+                .reduce((sum: number, line: any) => sum + Number(line.credit || 0), 0);
+            const cashOrBankDebit = (entry.lines || [])
+                .filter((line: any) => line.account?.code === '1100' || line.account?.code === '1200')
+                .reduce((sum: number, line: any) => sum + Number(line.debit || 0), 0);
+            return {
+                id: entry.id,
+                paymentNo: entry.entryNo,
+                paymentDate: entry.date,
+                amount: arCredit > 0 ? arCredit : cashOrBankDebit,
+                paymentMethod: cashOrBankDebit > 0 ? 'CASH/BANK' : 'MANUAL',
+                referenceNo: null,
+                notes: entry.memo || null,
+                createdBy: entry.postedBy,
+            };
+        });
+
+        const totalAmount = Number(invoice.grandTotal || 0);
+        const paidAmount = Number(invoice.cashReceived || 0);
+        const outstandingAmount = Math.max(0, totalAmount - paidAmount);
+
+        sendSuccess(res, {
+            invoice: {
+                ...invoice,
+                totalAmount,
+                paidAmount,
+                outstandingAmount,
+            },
+            payments,
+            totals: {
+                totalAmount,
+                paidAmount,
+                outstandingAmount,
+            },
+        });
+    } catch (error) { next(error); }
+});
+
+// POST /sales/invoices/:id/payments - receive customer payment for credit invoice
+salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_RECEIVE), requireBranch, validate({ body: salesReceivePaymentSchema }), async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const userId = req.user!.id;
+        const invoiceId = String(req.params.id);
+        const { amount, paymentMethod, paymentDate, referenceNo, notes } = req.body as z.infer<typeof salesReceivePaymentSchema>;
+
+        const result = await prisma.$transaction(async (tx) => {
+            const invoice: any = await (tx as any).pOSInvoice.findFirst({
+                where: { id: invoiceId, companyId, branchId },
+                select: {
+                    id: true,
+                    invoiceNo: true,
+                    paymentMethod: true,
+                    status: true,
+                    isPosted: true,
+                    customerId: true,
+                    grandTotal: true,
+                    cashReceived: true,
+                    branchId: true,
+                },
+            });
+            if (!invoice) throw AppError.notFound('Invoice');
+            if (!invoice.isPosted || invoice.status === 'VOID' || invoice.status === 'UNPOSTED' || invoice.status === 'REFUNDED') {
+                throw AppError.badRequest('Cannot receive payment for this invoice status');
+            }
+            if (String(invoice.paymentMethod) !== 'CREDIT') {
+                throw AppError.badRequest('Only CREDIT invoices can receive payment in this module');
+            }
+
+            const totalAmount = Number(invoice.grandTotal || 0);
+            const alreadyPaid = Number(invoice.cashReceived || 0);
+            const outstanding = Math.max(0, totalAmount - alreadyPaid);
+            if (outstanding <= 0) throw AppError.badRequest('Invoice has no outstanding balance');
+            if (Number(amount) > outstanding) {
+                throw AppError.badRequest(`Payment exceeds outstanding balance. Outstanding: ${outstanding.toFixed(2)}`);
+            }
+
+            const postedAt = paymentDate ? new Date(paymentDate) : new Date();
+            if (Number.isNaN(postedAt.getTime())) throw AppError.badRequest('Invalid payment date');
+
+            const newPaid = alreadyPaid + Number(amount);
+            const newOutstanding = Math.max(0, totalAmount - newPaid);
+            const newStatus = newOutstanding <= 0.000001 ? 'PAID' : 'PARTIAL';
+
+            await (tx as any).pOSInvoice.update({
+                where: { id: invoice.id },
+                data: {
+                    cashReceived: newPaid,
+                    status: newStatus,
+                },
+            });
+
+            const accounts = await tx.account.findMany({
+                where: { companyId, code: { in: ['1100', '1200', '1110'] } },
+            });
+            const cashAcct = accounts.find((a) => a.code === '1100');
+            const bankAcct = accounts.find((a) => a.code === '1200');
+            const arAcct = accounts.find((a) => a.code === '1110');
+
+            let entryNo: string | null = null;
+            if (arAcct && (cashAcct || bankAcct)) {
+                entryNo = formatDocNo('JE', await nextCounter(tx as any, companyId, 'JOURNAL_ENTRY'));
+                const isBank = paymentMethod === 'BANK_TRANSFER' || paymentMethod === 'CARD';
+                const receiptAcct = isBank ? bankAcct : cashAcct;
+                if (!receiptAcct) throw AppError.badRequest('Required payment account is not configured');
+
+                await tx.journalEntry.create({
+                    data: {
+                        companyId,
+                        branchId: invoice.branchId,
+                        entryNo,
+                        date: postedAt,
+                        memo: `Sales payment for ${invoice.invoiceNo}${referenceNo ? ` · Ref ${referenceNo}` : ''}${notes ? ` · ${notes}` : ''}`,
+                        sourceType: 'SalesPayment',
+                        sourceId: invoice.id,
+                        postedById: userId,
+                        lines: {
+                            create: [
+                                { accountId: receiptAcct.id, debit: Number(amount), credit: 0 },
+                                { accountId: arAcct.id, debit: 0, credit: Number(amount), partyType: 'CUSTOMER', partyId: invoice.customerId || undefined },
+                            ],
+                        },
+                    },
+                });
+            }
+
+            return {
+                invoiceId: invoice.id,
+                invoiceNo: invoice.invoiceNo,
+                paymentDate: postedAt,
+                amount: Number(amount),
+                paymentMethod,
+                referenceNo: referenceNo || null,
+                notes: notes || null,
+                totals: {
+                    totalAmount,
+                    paidAmount: newPaid,
+                    outstandingAmount: newOutstanding,
+                },
+                status: newStatus,
+                journalEntryNo: entryNo,
+            };
+        }, { maxWait: 10000, timeout: 20000 });
+
+        sendSuccess(res, result, undefined, 201);
+    } catch (error) { next(error); }
+});
+
+// GET /sales/returns
+salesRoutes.get('/returns', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const query = paginationSchema.parse(req.query);
+        const { skip, take, page, limit } = getPaginationParams(query);
+        const where: any = {
+            companyId: req.user!.companyId,
+            branchId: req.activeBranchId!,
+        };
+        if (query.search) {
+            where.OR = [
+                { returnNo: { contains: query.search, mode: 'insensitive' } },
+                { invoice: { is: { invoiceNo: { contains: query.search, mode: 'insensitive' } } } },
+                { customer: { is: { name: { contains: query.search, mode: 'insensitive' } } } },
+            ];
+        }
+
+        const [rows, total] = await Promise.all([
+            (prisma as any).salesReturn.findMany({
+                where,
+                skip,
+                take,
+                include: {
+                    invoice: { select: { id: true, invoiceNo: true } },
+                    customer: { select: { id: true, name: true } },
+                    createdBy: { select: { id: true, name: true } },
+                    _count: { select: { items: true } },
+                },
+                orderBy: { createdAt: 'desc' },
+            }),
+            (prisma as any).salesReturn.count({ where }),
+        ]);
+
+        sendPaginated(res, rows, total, page, limit);
+    } catch (error) { next(error); }
+});
+
+// GET /sales/returns/:id
+salesRoutes.get('/returns/:id', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const row = await (prisma as any).salesReturn.findFirst({
+            where: {
+                id: req.params.id,
+                companyId: req.user!.companyId,
+                branchId: req.activeBranchId!,
+            },
+            include: {
+                invoice: { select: { id: true, invoiceNo: true, paymentMethod: true, createdAt: true } },
+                customer: { select: { id: true, name: true, customerCode: true } },
+                createdBy: { select: { id: true, name: true } },
+                items: {
+                    include: {
+                        product: { select: { id: true, itemCode: true, name: true } },
+                        invoiceItem: { select: { id: true, qty: true, unitCode: true } },
+                    }
+                }
+            }
+        });
+        if (!row) throw AppError.notFound('Sales Return');
+        sendSuccess(res, row);
+    } catch (error) { next(error); }
+});
+
+// GET /sales/invoices/:id/return-candidates
+salesRoutes.get('/invoices/:id/return-candidates', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const invoice = await (prisma as any).pOSInvoice.findFirst({
+            where: {
+                id: req.params.id,
+                companyId: req.user!.companyId,
+                branchId: req.activeBranchId!,
+            },
+            include: {
+                customer: { select: { id: true, name: true, customerCode: true } },
+                items: {
+                    include: {
+                        product: { select: { id: true, itemCode: true, name: true } },
+                    },
+                },
+            },
+        });
+        if (!invoice) throw AppError.notFound('Invoice');
+        if (!invoice.isPosted || invoice.status === 'VOID' || invoice.status === 'UNPOSTED') {
+            throw AppError.badRequest('Only posted non-void invoices can be returned');
+        }
+
+        const returned = await (prisma as any).salesReturnItem.groupBy({
+            by: ['invoiceItemId'],
+            where: {
+                invoiceItemId: { in: invoice.items.map((x: any) => x.id) },
+                salesReturn: { is: { companyId: req.user!.companyId, status: 'POSTED' } },
+            },
+            _sum: { qty: true },
+        });
+        const returnedMap = new Map<string, number>(returned.map((x: any) => [x.invoiceItemId, Number(x._sum.qty || 0)]));
+
+        const items = invoice.items.map((item: any) => {
+            const returnedQty = returnedMap.get(item.id) || 0;
+            const availableQty = Number(item.qty) - returnedQty;
+            return {
+                id: item.id,
+                product: item.product,
+                productId: item.productId,
+                unitCode: item.unitCode,
+                unitPrice: item.unitPrice,
+                discount: item.discount,
+                taxAmount: item.taxAmount,
+                lineTotal: item.lineTotal,                qtyInvoiced: Number(item.qty),
+                qtyReturned: returnedQty,
+                qtyAvailable: availableQty,
+            };
+        });
+
+        sendSuccess(res, {
+            invoice: {
+                id: invoice.id,
+                invoiceNo: invoice.invoiceNo,
+                customer: invoice.customer,
+                grandTotal: invoice.grandTotal,
+                paymentMethod: invoice.paymentMethod,
+                createdAt: invoice.createdAt,
+            },
+            items,
+        });
+    } catch (error) { next(error); }
+});
+
+// POST /sales/invoices/:id/returns
+salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RETURN), requireBranch, validate({ body: salesReturnSchema }), async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const userId = req.user!.id;
+        const branchId = req.activeBranchId!;
+        const invoiceId = req.params.id;
+        const { reason, notes, items } = req.body as z.infer<typeof salesReturnSchema>;
+        const actorIsManagerOrAdmin = await isManagerOrAdminUser(req);
+
+        const result = await prisma.$transaction(async (tx) => {
+            const invoice: any = await (tx as any).pOSInvoice.findFirst({
+                where: {
+                    id: invoiceId,
+                    companyId,
+                    ...(actorIsManagerOrAdmin ? {} : { branchId }),
+                },
+                include: { items: true },
+            });
+            if (!invoice) throw AppError.notFound('Invoice');
+            if (!invoice.isPosted || invoice.status === 'VOID' || invoice.status === 'UNPOSTED') {
+                throw AppError.badRequest('Only posted non-void invoices can be returned');
+            }
+            if (!actorIsManagerOrAdmin && String(invoice.branchId) !== String(branchId)) {
+                throw AppError.forbidden('Invoice branch does not match active branch');
+            }
+
+            if (invoice.posTerminalId) {
+                const policy = await getPosTerminalPolicy(companyId, String(invoice.posTerminalId));
+                if (!policy.allowPosReturns && !actorIsManagerOrAdmin) {
+                    throw AppError.forbidden('Returns are disabled for this POS terminal');
+                }
+                const ageDays = Math.max(0, Math.floor((Date.now() - new Date(invoice.createdAt).getTime()) / (24 * 60 * 60 * 1000)));
+                if (!actorIsManagerOrAdmin && ageDays > Number(policy.returnWindowDays || 0)) {
+                    throw AppError.badRequest(`Return window exceeded (${policy.returnWindowDays} days)`);
+                }
+                if (!actorIsManagerOrAdmin && policy.requireSameShiftForReturns) {
+                    const openShift = await (tx as any).pOSShift.findFirst({
+                        where: {
+                            companyId,
+                            terminalId: String(invoice.posTerminalId),
+                            userId,
+                            status: 'OPEN',
+                        },
+                        select: { id: true },
+                    });
+                    if (!openShift || String(openShift.id) !== String(invoice.posShiftId || '')) {
+                        throw AppError.forbidden('Return allowed only in same open shift for this POS invoice');
+                    }
+                }
+            }
+
+            const invoiceItems: any[] = Array.isArray(invoice.items) ? invoice.items : [];
+            const itemMap = new Map<string, any>(invoiceItems.map((i: any) => [i.id, i]));
+            const requestedIds = items.map((x) => x.invoiceItemId);
+            if (new Set(requestedIds).size !== requestedIds.length) {
+                throw AppError.badRequest('Duplicate return lines are not allowed');
+            }
+
+            const returned = await (tx as any).salesReturnItem.groupBy({
+                by: ['invoiceItemId'],
+                where: {
+                    invoiceItemId: { in: requestedIds },
+                    salesReturn: { is: { companyId, status: 'POSTED' } },
+                },
+                _sum: { qty: true },
+            });
+            const returnedMap = new Map<string, number>(returned.map((x: any) => [x.invoiceItemId, Number(x._sum.qty || 0)]));
+
+            let subtotal = 0;
+            let taxTotal = 0;
+            const prepared = items.map((line) => {
+                const src = itemMap.get(line.invoiceItemId);
+                if (!src) throw AppError.badRequest('Invalid invoice item reference');
+                const alreadyReturned = returnedMap.get(src.id) || 0;
+                const available = Number(src.qty) - alreadyReturned;
+                if (line.qty > available) {
+                    throw AppError.badRequest(`Return qty exceeds available qty for invoice item ${src.id}`);
+                }
+
+                const unitPrice = Number(src.unitPrice || 0);
+                const unitDiscount = Number(src.qty) > 0 ? Number(src.discount || 0) / Number(src.qty) : 0;
+                const unitTax = Number(src.qty) > 0 ? Number(src.taxAmount || 0) / Number(src.qty) : 0;
+                const lineDiscount = Number(line.qty) * unitDiscount;
+                const lineTax = Number(line.qty) * unitTax;
+                const lineTotal = Number(line.qty) * unitPrice - lineDiscount;
+                subtotal += lineTotal;
+                taxTotal += lineTax;
+
+                return {
+                    invoiceItemId: src.id,
+                    productId: src.productId,
+                    unitCode: src.unitCode,
+                    qty: Number(line.qty),
+                    unitPrice,
+                    discount: lineDiscount,
+                    taxAmount: lineTax,
+                    lineTotal,                };
+            });
+
+            const grandTotal = subtotal + taxTotal;
+            const returnNo = formatDocNo('SR', await nextCounter(tx as any, companyId, 'SALES_RETURN', branchId));
+
+            const row = await (tx as any).salesReturn.create({
+                data: {
+                    companyId,
+                    branchId,
+                    invoiceId: invoice.id,
+                    customerId: invoice.customerId,
+                    returnNo,
+                    subtotal,
+                    taxTotal,
+                    grandTotal,
+                    status: 'POSTED',
+                    reason,
+                    notes: [
+                        notes || null,
+                        actorIsManagerOrAdmin ? `[Manager/Admin Override by ${req.user?.email || userId}]` : null,
+                    ].filter(Boolean).join(' | ') || null,
+                    createdById: userId,
+                    items: {
+                        create: prepared,
+                    },
+                },
+                include: { items: true },
+            });
+
+            // Restock + movement
+            for (const line of prepared) {
+                const stock = await tx.inventoryStock.findFirst({
+                    where: {
+                        companyId,
+                        branchId,
+                        productId: line.productId,
+                        unitCode: line.unitCode,                    },
+                });
+                if (stock) {
+                    await tx.inventoryStock.update({
+                        where: { id: stock.id },
+                        data: { qtyOnHand: { increment: line.qty } },
+                    });
+                } else {
+                    await tx.inventoryStock.create({
+                        data: {
+                            companyId,
+                            branchId,
+                            productId: line.productId,
+                            unitCode: line.unitCode,
+                            qtyOnHand: line.qty,
+                            avgCost: 0,                        },
+                    });
+                }
+
+                await tx.stockMovement.create({
+                    data: {
+                        companyId,
+                        branchId,
+                        type: 'RETURN',
+                        referenceType: 'SalesReturn',
+                        referenceId: row.id,
+                        productId: line.productId,
+                        unitCode: line.unitCode,
+                        qty: line.qty,
+                        cost: 0,
+                        price: line.unitPrice,                        createdById: userId,
+                    },
+                });
+            }
+
+            const allReturned = await (tx as any).salesReturnItem.groupBy({
+                by: ['invoiceItemId'],
+                where: {
+                    invoiceItemId: { in: invoiceItems.map((x: any) => x.id) },
+                    salesReturn: { is: { companyId, status: 'POSTED' } },
+                },
+                _sum: { qty: true },
+            });
+            const allReturnedMap = new Map<string, number>(allReturned.map((x: any) => [x.invoiceItemId, Number(x._sum.qty || 0)]));
+            const fullyReturned = invoiceItems.every((it: any) => (allReturnedMap.get(it.id) || 0) >= Number(it.qty));
+            await (tx as any).pOSInvoice.update({
+                where: { id: invoice.id },
+                data: { status: fullyReturned ? 'REFUNDED' : 'PARTIAL' },
+            });
+
+            // Journal reversal (minimal)
+            const accounts = await tx.account.findMany({
+                where: { companyId, code: { in: ['1100', '1200', '1110', '4100', '2200'] } },
+            });
+            const cashAcct = accounts.find((a) => a.code === '1100');
+            const bankAcct = accounts.find((a) => a.code === '1200');
+            const arAcct = accounts.find((a) => a.code === '1110');
+            const salesAcct = accounts.find((a) => a.code === '4100');
+            const vatPayableAcct = accounts.find((a) => a.code === '2200');
+
+            if (salesAcct) {
+                const entryNo = formatDocNo('JE', await nextCounter(tx as any, companyId, 'JOURNAL_ENTRY'));
+                const net = grandTotal - taxTotal;
+                const lines: any[] = [
+                    { accountId: salesAcct.id, debit: net, credit: 0 },
+                ];
+                if (vatPayableAcct && taxTotal > 0) lines.push({ accountId: vatPayableAcct.id, debit: taxTotal, credit: 0 });
+
+                if (invoice.paymentMethod === 'CREDIT' && arAcct) {
+                    lines.push({ accountId: arAcct.id, debit: 0, credit: grandTotal, partyType: 'CUSTOMER', partyId: invoice.customerId });
+                } else if ((invoice.paymentMethod === 'CARD' || invoice.paymentMethod === 'MIXED') && bankAcct) {
+                    lines.push({ accountId: bankAcct.id, debit: 0, credit: grandTotal });
+                } else if (cashAcct) {
+                    lines.push({ accountId: cashAcct.id, debit: 0, credit: grandTotal });
+                }
+
+                await tx.journalEntry.create({
+                    data: {
+                        companyId,
+                        branchId,
+                        entryNo,
+                        date: new Date(),
+                        memo: `Sales return ${row.returnNo} against ${invoice.invoiceNo}`,
+                        sourceType: 'SalesReturn',
+                        sourceId: row.id,
+                        postedById: userId,
+                        lines: { create: lines },
+                    },
+                });
+            }
+
+            return row;
+        }, { maxWait: 10000, timeout: 30000 });
+
+        sendSuccess(res, result, undefined, 201);
+    } catch (error) { next(error); }
+});
+
+// ══════════════════════════════════════════════════════════════
+// SALES ORDERS
+// ══════════════════════════════════════════════════════════════
+
+// GET /sales/orders
+salesRoutes.get('/orders', requirePermission(PERMISSIONS.SALES_ORDER_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const query = salesOrderQuerySchema.parse(req.query);
+        const { skip, take, page, limit } = getPaginationParams(query);
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+
+        const where: any = { companyId, branchId };
+
+        if (query.state === 'active') {
+            where.status = { in: ['DRAFT', 'CONFIRMED', 'PROCESSING', 'SHIPPED'] };
+        } else if (query.state === 'completed') {
+            where.status = { in: ['DELIVERED', 'INVOICED'] };
+        } else if (query.state === 'cancelled') {
+            where.status = 'CANCELLED';
+        }
+
+        const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
+        if (createdAt) where.createdAt = createdAt;
+
+        if (query.search?.trim()) {
+            const search = query.search.trim();
+            where.OR = [
+                { orderNo: { contains: search, mode: 'insensitive' } },
+                { customerName: { contains: search, mode: 'insensitive' } },
+                { customer: { is: { name: { contains: search, mode: 'insensitive' } } } },
+            ];
+        }
+
+        const [rows, total] = await Promise.all([
+            (prisma as any).salesOrder.findMany({
+                where,
+                skip,
+                take,
+                include: {
+                    customer: { select: { id: true, name: true, customerCode: true } },
+                    createdBy: { select: { id: true, name: true } },
+                    _count: { select: { items: true } },
+                },
+                orderBy: { createdAt: 'desc' },
+            }),
+            (prisma as any).salesOrder.count({ where }),
+        ]);
+
+        sendPaginated(res, rows, total, page, limit);
+    } catch (error) { next(error); }
+});
+
+// GET /sales/orders/:id
+salesRoutes.get('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_VIEW), requireBranch, async (req, res, next) => {
+    try {
+        const row = await (prisma as any).salesOrder.findFirst({
+            where: {
+                id: req.params.id,
+                companyId: req.user!.companyId,
+                branchId: req.activeBranchId!,
+            },
+            include: {
+                customer: { select: { id: true, name: true, customerCode: true, phone: true, email: true, allowCreditSales: true } },
+                createdBy: { select: { id: true, name: true } },
+                items: {
+                    include: {
+                        product: { select: { id: true, name: true, itemCode: true, units: { select: { unitCode: true, unitName: true } } } },
+                    },
+                },
+                invoices: { select: { id: true, invoiceNo: true, status: true, grandTotal: true } },
+            },
+        });
+
+        if (!row) throw AppError.notFound('Sales Order');
+        sendSuccess(res, row);
+    } catch (error) { next(error); }
+});
+
+// POST /sales/orders
+salesRoutes.post('/orders', requirePermission(PERMISSIONS.SALES_ORDER_CREATE), requireBranch, validate({ body: salesOrderCreateSchema }), async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const userId = req.user!.id;
+        const body = req.body as z.infer<typeof salesOrderCreateSchema>;
+
+        let subtotal = 0;
+        let taxTotal = 0;
+        let discountTotal = 0;
+
+        const preparedItems = body.items.map(line => {
+            const qty = Number(line.qty);
+            const unitPrice = Number(line.unitPrice);
+            const discount = Number(line.discount || 0);
+            const tax = Number(line.taxAmount || 0);
+            const lineTotal = (qty * unitPrice) - discount;
+
+            subtotal += lineTotal;
+            taxTotal += tax;
+            discountTotal += discount;
+
+            return {
+                productId: line.productId || null,
+                description: line.description,
+                unitCode: line.unitCode || null,
+                qty,
+                unitPrice,
+                discount,
+                taxAmount: tax,
+                lineTotal
+            };
+        });
+
+        const orderNo = formatDocNo('SO', await nextCounter(prisma as any, companyId, 'SALES_ORDER', branchId));
+
+        const row = await (prisma as any).salesOrder.create({
+            data: {
+                companyId,
+                branchId,
+                orderNo,
+                customerId: body.customerId || null,
+                customerName: body.customerName || null,
+                date: body.date ? new Date(body.date) : new Date(),
+                deliveryDate: body.deliveryDate ? new Date(body.deliveryDate) : null,
+                subtotal,
+                taxTotal,
+                discountTotal,
+                grandTotal: subtotal + taxTotal,
+                notes: body.notes,
+                terms: body.terms,
+                createdById: userId,
+                status: 'DRAFT',
+                items: { create: preparedItems }
+            },
+            include: { items: true }
+        });
+
+        sendSuccess(res, row, { message: 'Sales Order created' }, 201);
+    } catch (error) { next(error); }
+});
+
+// PATCH /sales/orders/:id
+salesRoutes.patch('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_CREATE), requireBranch, validate({ body: salesOrderUpdateSchema }), async (req, res, next) => {
+    try {
+        const id = req.params.id;
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const body = req.body as z.infer<typeof salesOrderUpdateSchema>;
+
+        const existing = await (prisma as any).salesOrder.findFirst({ where: { id, companyId, branchId } });
+        if (!existing) throw AppError.notFound('Sales Order');
+        if (existing.status === 'INVOICED' || existing.status === 'CANCELLED') throw AppError.badRequest(`Cannot edit order in ${existing.status} status`);
+
+        const data: any = {};
+        if (body.status) data.status = body.status;
+        if (body.notes !== undefined) data.notes = body.notes;
+        if (body.terms !== undefined) data.terms = body.terms;
+        if (body.deliveryDate !== undefined) data.deliveryDate = body.deliveryDate ? new Date(body.deliveryDate) : null;
+        if (body.customerId !== undefined) data.customerId = body.customerId;
+        if (body.customerName !== undefined) data.customerName = body.customerName;
+
+        if (body.items) {
+            let subtotal = 0;
+            let taxTotal = 0;
+            let discountTotal = 0;
+
+            const preparedItems = body.items.map(line => {
+                const qty = Number(line.qty);
+                const unitPrice = Number(line.unitPrice);
+                const discount = Number(line.discount || 0);
+                const tax = Number(line.taxAmount || 0);
+                const lineTotal = (qty * unitPrice) - discount;
+
+                subtotal += lineTotal;
+                taxTotal += tax;
+                discountTotal += discount;
+
+                return {
+                    productId: line.productId || null,
+                    description: line.description,
+                    unitCode: line.unitCode || null,
+                    qty,
+                    unitPrice,
+                    discount,
+                    taxAmount: tax,
+                    lineTotal
+                };
+            });
+            data.subtotal = subtotal;
+            data.taxTotal = taxTotal;
+            data.discountTotal = discountTotal;
+            data.grandTotal = subtotal + taxTotal;
+
+            await prisma.$transaction(async (tx) => {
+                await (tx as any).salesOrderItem.deleteMany({ where: { orderId: id } });
+                await (tx as any).salesOrder.update({
+                    where: { id },
+                    data: {
+                        ...data,
+                        items: { create: preparedItems }
+                    }
+                });
+            });
+        } else {
+            await (prisma as any).salesOrder.update({ where: { id }, data });
+        }
+
+        sendSuccess(res, { message: 'Order updated' });
+    } catch (error) { next(error); }
+});
+
+// POST /sales/orders/:id/convert
+salesRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.SALES_QUOTATION_CONVERT), requireBranch, validate({ body: salesOrderConvertSchema }), async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchId = req.activeBranchId!;
+        const orderId = req.params.id;
+        const paymentMethod = String(req.body?.paymentMethod || 'CREDIT').toUpperCase();
+
+        const result = await prisma.$transaction(async (tx) => {
+            const order: any = await (tx as any).salesOrder.findFirst({
+                where: { id: orderId, companyId, branchId },
+                include: { items: true }
+            });
+
+            if (!order) throw AppError.notFound('Sales Order');
+            if (order.status === 'INVOICED') throw AppError.badRequest('Order is already invoiced');
+            if (order.status === 'CANCELLED') throw AppError.badRequest('Cannot invoice a cancelled order');
+            if (paymentMethod === 'CREDIT' && !order.customerId) {
+                throw AppError.badRequest('Customer is required for CREDIT payment');
+            }
+            if (paymentMethod === 'CREDIT' && order.customerId) {
+                const customer = await tx.customer.findFirst({
+                    where: { id: order.customerId, companyId },
+                    select: { id: true, allowCreditSales: true },
+                });
+                if (!customer) throw AppError.notFound('Customer');
+                if (customer.allowCreditSales === false) {
+                    throw AppError.badRequest('Selected customer is not allowed for CREDIT sales');
+                }
+            }
+
+            // Create Invoice
+            const invoiceNo = formatDocNo('SI', await nextCounter(tx as any, companyId, 'SALES_INVOICE', branchId));
+            const invoice = await (tx as any).pOSInvoice.create({
+                data: {
+                    companyId,
+                    branchId,
+                    invoiceNo,
+                    customerId: order.customerId,
+                    salesOrderId: order.id,
+                    subtotal: order.subtotal,
+                    taxTotal: order.taxTotal,
+                    discountTotal: order.discountTotal,
+                    grandTotal: order.grandTotal,
+                    paymentMethod,
+                    status: 'UNPOSTED',
+                    isPosted: false,
+                    notes: `Converted from Sales Order ${order.orderNo}`,
+                    createdById: req.user!.id,
+                    items: {
+                        create: order.items.map((item: any) => ({
+                            productId: item.productId,
+                            unitCode: item.unitCode || 'UNIT',
+                            qty: item.qty,
+                            unitPrice: item.unitPrice,
+                            discount: item.discount,
+                            taxAmount: item.taxAmount,
+                            lineTotal: item.lineTotal
+                        }))
+                    }
+                }
+            });
+
+            // Update Order Status
+            await (tx as any).salesOrder.update({
+                where: { id: orderId },
+                data: { status: 'INVOICED' }
+            });
+
+            return {
+                orderId: order.id,
+                orderNo: order.orderNo,
+                invoiceId: invoice.id,
+                invoiceNo: invoice.invoiceNo
+            };
+        });
+
+        sendSuccess(res, result, { message: 'Order converted to invoice' });
+    } catch (error) { next(error); }
+});
