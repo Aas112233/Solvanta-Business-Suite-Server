@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { PERMISSIONS } from '../../config/permissions.js';
@@ -37,7 +37,7 @@ function parseOptionalDate(value: unknown): Date | undefined {
 }
 
 // GET /suppliers
-supplierRoutes.get('/', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req, res, next) => {
+supplierRoutes.get('/', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const query = paginationSchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
@@ -121,7 +121,7 @@ supplierRoutes.get('/', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req
 });
 
 // GET /suppliers/summary/stats — overall stats for dashboard
-supplierRoutes.get('/summary/stats', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req, res, next) => {
+supplierRoutes.get('/summary/stats', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
         const [totalSuppliers, activeSuppliers] = await Promise.all([
@@ -150,7 +150,7 @@ supplierRoutes.get('/summary/stats', requirePermission(PERMISSIONS.SUPPLIER_VIEW
 });
 
 // GET /suppliers/:id/ledger — supplier transaction history
-supplierRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req, res, next) => {
+supplierRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const supplierId = req.params.id as string;
         const companyId = req.user!.companyId;
@@ -251,7 +251,7 @@ supplierRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.SUPPLIER_VIEW), 
 });
 
 // GET /suppliers/:id
-supplierRoutes.get('/:id', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req, res, next) => {
+supplierRoutes.get('/:id', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const supplier = await prisma.supplier.findFirst({
             where: { id: req.params.id as any, companyId: req.user!.companyId, ...activeSupplierFilter },
@@ -270,7 +270,7 @@ supplierRoutes.get('/:id', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (
 });
 
 // POST /suppliers
-supplierRoutes.post('/', requirePermission(PERMISSIONS.SUPPLIER_CREATE), validate({ body: supplierSchema }), async (req, res, next) => {
+supplierRoutes.post('/', requirePermission(PERMISSIONS.SUPPLIER_CREATE), validate({ body: supplierSchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { address, city, country, ...rest } = req.body;
         const companyId = req.user!.companyId;
@@ -306,7 +306,7 @@ supplierRoutes.post('/', requirePermission(PERMISSIONS.SUPPLIER_CREATE), validat
 });
 
 // PATCH /suppliers/:id
-supplierRoutes.patch('/:id', requirePermission(PERMISSIONS.SUPPLIER_EDIT), validate({ body: supplierSchema.partial() }), async (req, res, next) => {
+supplierRoutes.patch('/:id', requirePermission(PERMISSIONS.SUPPLIER_EDIT), validate({ body: supplierSchema.partial() }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const existing = await prisma.supplier.findFirst({
             where: { id: req.params.id as any, companyId: req.user!.companyId, ...activeSupplierFilter },
@@ -333,7 +333,7 @@ supplierRoutes.patch('/:id', requirePermission(PERMISSIONS.SUPPLIER_EDIT), valid
 });
 
 // DELETE /suppliers/:id (soft-delete)
-supplierRoutes.delete('/:id', requirePermission(PERMISSIONS.SUPPLIER_DELETE), async (req, res, next) => {
+supplierRoutes.delete('/:id', requirePermission(PERMISSIONS.SUPPLIER_DELETE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         await prisma.supplier.updateMany({
             where: { id: req.params.id as any, companyId: req.user!.companyId },

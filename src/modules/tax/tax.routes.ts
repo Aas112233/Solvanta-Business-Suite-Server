@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
@@ -21,7 +21,7 @@ const taxCreateSchema = z.object({
 const taxUpdateSchema = taxCreateSchema.partial();
 
 // GET /taxes
-taxRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), async (req, res, next) => {
+taxRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const taxes = await prisma.tax.findMany({
             where: { companyId: req.user!.companyId },
@@ -32,7 +32,7 @@ taxRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), async (
 });
 
 // POST /taxes
-taxRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), validate({ body: taxCreateSchema }), async (req, res, next) => {
+taxRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), validate({ body: taxCreateSchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const body = req.body as z.infer<typeof taxCreateSchema>;
         const companyId = req.user!.companyId;
@@ -66,7 +66,7 @@ taxRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), valida
 });
 
 // PATCH /taxes/:id
-taxRoutes.patch('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), validate({ body: taxUpdateSchema }), async (req, res, next) => {
+taxRoutes.patch('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), validate({ body: taxUpdateSchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const id = String(req.params.id);
         const body = req.body as z.infer<typeof taxUpdateSchema>;
@@ -103,7 +103,7 @@ taxRoutes.patch('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), va
 });
 
 // DELETE /taxes/:id
-taxRoutes.delete('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), async (req, res, next) => {
+taxRoutes.delete('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const id = String(req.params.id);
         const companyId = req.user!.companyId;

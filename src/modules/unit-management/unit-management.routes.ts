@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { authenticate, requireAnyPermission, requirePermission } from '../../middleware/auth.js';
 import { PERMISSIONS } from '../../config/permissions.js';
@@ -51,7 +51,7 @@ async function ensureUniqueUnitName(name: string, excludeId?: string) {
 }
 
 // GET /unit-management
-unitManagementRoutes.get('/', requirePermission(PERMISSIONS.PRODUCT_VIEW), async (_req, res, next) => {
+unitManagementRoutes.get('/', requirePermission(PERMISSIONS.PRODUCT_VIEW), async (_req: Request, res: Response, next: NextFunction) => {
     try {
         const units = await (prisma as any).unitMaster.findMany({
             orderBy: { name: 'asc' },
@@ -66,7 +66,7 @@ unitManagementRoutes.get('/', requirePermission(PERMISSIONS.PRODUCT_VIEW), async
 unitManagementRoutes.post(
     '/',
     requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER),
-    async (req, res, next) => {
+    async (req: Request, res: Response, next: NextFunction) => {
         try {
             const parsed = unitMasterSchema.parse(req.body);
             const name = normalizeUnitName(parsed.name);
@@ -94,7 +94,7 @@ unitManagementRoutes.post(
 unitManagementRoutes.patch(
     '/:id',
     requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER),
-    async (req, res, next) => {
+    async (req: Request, res: Response, next: NextFunction) => {
         try {
             const parsed = unitMasterPatchSchema.parse(req.body);
             if (Object.keys(parsed).length === 0) throw AppError.badRequest('No fields provided');
@@ -133,7 +133,7 @@ unitManagementRoutes.patch(
 unitManagementRoutes.delete(
     '/:id',
     requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER),
-    async (req, res, next) => {
+    async (req: Request, res: Response, next: NextFunction) => {
         try {
             await (prisma as any).unitMaster.delete({
                 where: { id: req.params.id as string },

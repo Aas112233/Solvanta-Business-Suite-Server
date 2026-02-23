@@ -1,8 +1,26 @@
-node_modules
-dist
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment variables
 .env
+.env.*
+!.env.example
+.env.production
+# Logs
+logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS Files
 .DS_Store
-*.seed.ts
-# Prisma generated files
+Thumbs.db
+
+# Prisma
 prisma/generated-client
+*.seed.ts

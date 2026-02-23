@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { PERMISSIONS } from '../../config/permissions.js';
@@ -37,7 +37,7 @@ const userListQuerySchema = paginationSchema.extend({
 });
 
 // GET /users
-userRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), async (req, res, next) => {
+userRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const query = userListQuerySchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
@@ -76,7 +76,7 @@ userRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), async (re
 });
 
 // GET /users/me
-userRoutes.get('/me', async (req, res, next) => {
+userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const user = await prisma.user.findUnique({
             where: { id: req.user!.id },
@@ -104,7 +104,7 @@ userRoutes.get('/me', async (req, res, next) => {
 });
 
 // POST /users
-userRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), validate({ body: createUserSchema }), async (req, res, next) => {
+userRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), validate({ body: createUserSchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { password, branchIds, ...data } = req.body;
         if (data.email) data.email = data.email.toLowerCase().trim();
@@ -131,7 +131,7 @@ userRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), validate
 });
 
 // PATCH /users/:id
-userRoutes.patch('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), validate({ body: updateUserSchema }), async (req, res, next) => {
+userRoutes.patch('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), validate({ body: updateUserSchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { password, branchIds, ...data } = req.body;
         const updateData: any = { ...data };
@@ -177,7 +177,7 @@ userRoutes.patch('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), vali
 });
 
 // DELETE /users/:id
-userRoutes.delete('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), async (req, res, next) => {
+userRoutes.delete('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), async (req: Request, res: Response, next: NextFunction) => {
     try {
         if (req.params.id === req.user!.id) {
             throw AppError.badRequest('Cannot delete your own account');

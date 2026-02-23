@@ -17,7 +17,9 @@ export class AppError extends Error {
         this.isOperational = isOperational;
         this.details = details;
         Object.setPrototypeOf(this, AppError.prototype);
-        Error.captureStackTrace(this, this.constructor);
+        if ((Error as any).captureStackTrace) {
+            (Error as any).captureStackTrace(this, this.constructor);
+        }
     }
 
     static badRequest(message: string, details?: any) {

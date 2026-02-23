@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
@@ -301,7 +301,7 @@ function buildTenantCompanySettings(payload: z.infer<typeof createTenantSchema>)
     };
 }
 
-async function writeAudit(companyId: string, userId: string, action: string, entity: string, entityId?: string, after?: unknown) {
+async function writeAudit(companyId: any, userId: any, action: any, entity: any, entityId?: any, after?: any) {
     await basePrisma.auditLog.create({
         data: {
             companyId,
@@ -428,7 +428,7 @@ function hasLimitBreach(tenant: {
     return overUsers || overBranches || overProducts;
 }
 
-superAdminRoutes.get('/overview', async (_req, res, next) => {
+superAdminRoutes.get('/overview', async (_req: Request, res: Response, next: NextFunction) => {
     try {
         const [tenants, auditLast24h] = await Promise.all([
             buildTenantSnapshots(),
@@ -489,7 +489,7 @@ superAdminRoutes.get('/overview', async (_req, res, next) => {
     }
 });
 
-superAdminRoutes.get('/tenants', async (req, res, next) => {
+superAdminRoutes.get('/tenants', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const statusFilter = String(req.query.status || 'All');
         const planFilter = String(req.query.plan || 'All');
@@ -514,7 +514,7 @@ superAdminRoutes.get('/tenants', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.post('/tenants', async (req, res, next) => {
+superAdminRoutes.post('/tenants', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = createTenantSchema.parse(req.body);
         const adminEmail = parsed.adminUser.email.trim().toLowerCase();
@@ -604,7 +604,7 @@ superAdminRoutes.post('/tenants', async (req, res, next) => {
             };
         });
 
-        await writeAudit(created.company.id, req.user!.id, 'TENANT_CREATED', 'Company', created.company.id, {
+        await writeAudit(created.company.id as any, req.user!.id, 'TENANT_CREATED', 'Company', created.company.id as any, {
             company: created.company,
             headOffice: created.headOffice,
             adminUser: created.adminUser,
@@ -627,9 +627,9 @@ superAdminRoutes.post('/tenants', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.get('/tenants/:id/control-center', async (req, res, next) => {
+superAdminRoutes.get('/tenants/:id/control-center', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const companyId = req.params.id;
+        const companyId = String(req.params.id);
         const [tenantList, users] = await Promise.all([
             buildTenantSnapshots(),
             basePrisma.user.findMany({
@@ -650,7 +650,7 @@ superAdminRoutes.get('/tenants/:id/control-center', async (req, res, next) => {
                 branches: tenant.totalBranches,
                 products: tenant.totalProducts,
             },
-            users: users.map((user) => ({
+            users: users.map((user: any) => ({
                 id: user.id,
                 name: user.name,
                 email: user.email,
@@ -665,9 +665,9 @@ superAdminRoutes.get('/tenants/:id/control-center', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.get('/tenants/:id/users', async (req, res, next) => {
+superAdminRoutes.get('/tenants/:id/users', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const companyId = req.params.id;
+        const companyId = String(req.params.id);
         const company = await getTenantCompanyOrThrow(companyId);
         const statusFilter = String(req.query.status || 'All');
         const search = String(req.query.search || '').trim().toLowerCase();
@@ -689,7 +689,7 @@ superAdminRoutes.get('/tenants/:id/users', async (req, res, next) => {
                 return user.name.toLowerCase().includes(search) || user.email.toLowerCase().includes(search);
             })
             .slice(0, limit)
-            .map((user) => ({
+            .map((user: any) => ({
                 id: user.id,
                 name: user.name,
                 email: user.email,
@@ -708,11 +708,11 @@ superAdminRoutes.get('/tenants/:id/users', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/users/:userId/status', async (req, res, next) => {
+superAdminRoutes.patch('/tenants/:id/users/:userId/status', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = userStatusSchema.parse(req.body);
-        const companyId = req.params.id;
-        const userId = req.params.userId;
+        const companyId = String(req.params.id);
+        const userId = String(req.params.userId);
 
         const target = await basePrisma.user.findFirst({
             where: { id: userId, companyId },
@@ -730,7 +730,7 @@ superAdminRoutes.patch('/tenants/:id/users/:userId/status', async (req, res, nex
         });
 
         await writeAudit(
-            companyId,
+            companyId as any,
             req.user!.id,
             parsed.isActive ? 'TENANT_USER_ACTIVATED' : 'TENANT_USER_SUSPENDED',
             'User',
@@ -751,22 +751,22 @@ superAdminRoutes.patch('/tenants/:id/users/:userId/status', async (req, res, nex
     }
 });
 
-superAdminRoutes.get('/tenants/:id/usage', async (req, res, next) => {
+superAdminRoutes.get('/tenants/:id/usage', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const companyId = req.params.id;
+        const companyId = String(req.params.id);
         const company = await basePrisma.company.findUnique({ where: { id: companyId }, select: { id: true, name: true } });
         if (!company) throw AppError.notFound('Company');
 
         const [branches, users, roles, products, customers, suppliers, posInvoices, purchaseInvoices, stockCounts] = await Promise.all([
-            basePrisma.branch.count({ where: { companyId } }),
-            basePrisma.user.count({ where: { companyId } }),
-            basePrisma.role.count({ where: { companyId } }),
-            basePrisma.product.count({ where: { companyId, deletedAt: { isSet: false } } }),
-            basePrisma.customer.count({ where: { companyId, deletedAt: { isSet: false } } }),
-            basePrisma.supplier.count({ where: { companyId, deletedAt: { isSet: false } } }),
-            basePrisma.pOSInvoice.count({ where: { companyId } }),
-            basePrisma.purchaseInvoice.count({ where: { companyId } }),
-            basePrisma.stockCount.count({ where: { companyId } }),
+            basePrisma.branch.count({ where: { companyId: companyId as string } }),
+            basePrisma.user.count({ where: { companyId: companyId as string } }),
+            basePrisma.role.count({ where: { companyId: companyId as string } }),
+            basePrisma.product.count({ where: { companyId: companyId as string, deletedAt: { isSet: false } } }),
+            basePrisma.customer.count({ where: { companyId: companyId as string, deletedAt: { isSet: false } } }),
+            basePrisma.supplier.count({ where: { companyId: companyId as string, deletedAt: { isSet: false } } }),
+            basePrisma.pOSInvoice.count({ where: { companyId: companyId as string } }),
+            basePrisma.purchaseInvoice.count({ where: { companyId: companyId as string } }),
+            basePrisma.stockCount.count({ where: { companyId: companyId as string } }),
         ]);
 
         sendSuccess(res, {
@@ -788,14 +788,14 @@ superAdminRoutes.get('/tenants/:id/usage', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/status', async (req, res, next) => {
+superAdminRoutes.patch('/tenants/:id/status', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = statusSchema.parse(req.body);
-        const companyId = req.params.id;
+        const companyId = String(req.params.id);
         const company = await getTenantCompanyOrThrow(companyId);
 
         const updated = await basePrisma.company.update({
-            where: { id: companyId },
+            where: { id: companyId as any },
             data: {
                 settings: mergeCompanySuperAdminSettings(company.settings, {
                     status: parsed.status,
@@ -806,12 +806,12 @@ superAdminRoutes.patch('/tenants/:id/status', async (req, res, next) => {
 
         if (parsed.status === 'Suspended') {
             await basePrisma.user.updateMany({
-                where: { companyId, id: { not: req.user!.id } },
+                where: { companyId: companyId as any, id: { not: req.user!.id } },
                 data: { isActive: false },
             });
         }
 
-        await writeAudit(companyId, req.user!.id, `TENANT_${parsed.status.toUpperCase()}`, 'Company', companyId, {
+        await writeAudit(companyId as any, req.user!.id, `TENANT_${parsed.status.toUpperCase()}`, 'Company', companyId as any, {
             status: parsed.status,
             reason: parsed.reason || '',
         });
@@ -826,14 +826,14 @@ superAdminRoutes.patch('/tenants/:id/status', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/features', async (req, res, next) => {
+superAdminRoutes.patch('/tenants/:id/features', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = featureSchema.parse(req.body);
-        const companyId = req.params.id;
+        const companyId = String(req.params.id);
         const company = await getTenantCompanyOrThrow(companyId);
 
         const updated = await basePrisma.company.update({
-            where: { id: companyId },
+            where: { id: companyId as any },
             data: {
                 settings: mergeCompanySuperAdminSettings(company.settings, {
                     featureFlags: parsed.featureFlags,
@@ -841,7 +841,7 @@ superAdminRoutes.patch('/tenants/:id/features', async (req, res, next) => {
             },
         });
 
-        await writeAudit(companyId, req.user!.id, 'TENANT_FEATURE_FLAGS_UPDATED', 'Company', companyId, parsed.featureFlags);
+        await writeAudit(companyId as string, req.user!.id, 'TENANT_FEATURE_FLAGS_UPDATED', 'Company', companyId as string, parsed.featureFlags);
 
         sendSuccess(res, {
             id: updated.id,
@@ -852,10 +852,10 @@ superAdminRoutes.patch('/tenants/:id/features', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/plan', async (req, res, next) => {
+superAdminRoutes.patch('/tenants/:id/plan', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = planSchema.parse(req.body);
-        const companyId = req.params.id;
+        const companyId = String(req.params.id);
         const company = await getTenantCompanyOrThrow(companyId);
         const settings = getSuperAdminSettings(company.settings);
 
@@ -868,7 +868,7 @@ superAdminRoutes.patch('/tenants/:id/plan', async (req, res, next) => {
         };
 
         await basePrisma.company.update({
-            where: { id: companyId },
+            where: { id: companyId as any },
             data: {
                 settings: mergeCompanySuperAdminSettings(company.settings, {
                     planOverride: parsed.plan,
@@ -877,7 +877,7 @@ superAdminRoutes.patch('/tenants/:id/plan', async (req, res, next) => {
             },
         });
 
-        await writeAudit(companyId, req.user!.id, 'TENANT_PLAN_UPDATED', 'Company', companyId, {
+        await writeAudit(companyId as string, req.user!.id, 'TENANT_PLAN_UPDATED', 'Company', companyId as string, {
             plan: parsed.plan,
             billing: updatedBilling,
         });
@@ -891,10 +891,10 @@ superAdminRoutes.patch('/tenants/:id/plan', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/limits', async (req, res, next) => {
+superAdminRoutes.patch('/tenants/:id/limits', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = limitsSchema.parse(req.body);
-        const companyId = req.params.id;
+        const companyId = String(req.params.id);
         const company = await getTenantCompanyOrThrow(companyId);
         const settings = getSuperAdminSettings(company.settings);
 
@@ -907,7 +907,7 @@ superAdminRoutes.patch('/tenants/:id/limits', async (req, res, next) => {
         };
 
         await basePrisma.company.update({
-            where: { id: companyId },
+            where: { id: companyId as any },
             data: {
                 settings: mergeCompanySuperAdminSettings(company.settings, {
                     limits: updatedLimits,
@@ -915,17 +915,17 @@ superAdminRoutes.patch('/tenants/:id/limits', async (req, res, next) => {
             },
         });
 
-        await writeAudit(companyId, req.user!.id, 'TENANT_LIMITS_UPDATED', 'Company', companyId, updatedLimits);
+        await writeAudit(companyId as string, req.user!.id, 'TENANT_LIMITS_UPDATED', 'Company', companyId as string, updatedLimits);
         sendSuccess(res, updatedLimits);
     } catch (error) {
         next(error);
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/maintenance', async (req, res, next) => {
+superAdminRoutes.patch('/tenants/:id/maintenance', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = maintenanceSchema.parse(req.body);
-        const companyId = req.params.id;
+        const companyId = String(req.params.id);
         const company = await getTenantCompanyOrThrow(companyId);
         const settings = getSuperAdminSettings(company.settings);
 
@@ -938,7 +938,7 @@ superAdminRoutes.patch('/tenants/:id/maintenance', async (req, res, next) => {
         };
 
         await basePrisma.company.update({
-            where: { id: companyId },
+            where: { id: companyId as any },
             data: {
                 settings: mergeCompanySuperAdminSettings(company.settings, {
                     maintenance: updatedMaintenance,
@@ -947,11 +947,11 @@ superAdminRoutes.patch('/tenants/:id/maintenance', async (req, res, next) => {
         });
 
         await writeAudit(
-            companyId,
+            companyId as string,
             req.user!.id,
             parsed.enabled ? 'TENANT_MAINTENANCE_ENABLED' : 'TENANT_MAINTENANCE_DISABLED',
             'Company',
-            companyId,
+            companyId as string,
             updatedMaintenance,
         );
 
@@ -1054,7 +1054,7 @@ async function getAnnouncementRowsByKey(key: string): Promise<{ rows: Announceme
     throw AppError.notFound('Announcement');
 }
 
-superAdminRoutes.get('/announcements', async (_req, res, next) => {
+superAdminRoutes.get('/announcements', async (_req: Request, res: Response, next: NextFunction) => {
     try {
         const rows = await loadAnnouncementRows();
         const summary = buildAnnouncementSummary(rows);
@@ -1064,7 +1064,7 @@ superAdminRoutes.get('/announcements', async (_req, res, next) => {
     }
 });
 
-superAdminRoutes.post('/announcements/broadcast', async (req, res, next) => {
+superAdminRoutes.post('/announcements/broadcast', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = broadcastSchema.parse(req.body);
         const companies = await basePrisma.company.findMany({ select: { id: true } });
@@ -1093,7 +1093,7 @@ superAdminRoutes.post('/announcements/broadcast', async (req, res, next) => {
                 },
             });
 
-            await writeAudit(company.id, req.user!.id, 'SUPER_ADMIN_BROADCAST', 'GlobalString', undefined, {
+            await writeAudit(company.id as string, req.user!.id, 'SUPER_ADMIN_BROADCAST', 'GlobalString', undefined, {
                 title: parsed.title,
                 level: parsed.level,
                 expiresAt: expiresAt || null,
@@ -1112,10 +1112,10 @@ superAdminRoutes.post('/announcements/broadcast', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.post('/announcements/tenant/:id', async (req, res, next) => {
+superAdminRoutes.post('/announcements/tenant/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = broadcastSchema.parse(req.body);
-        const companyId = req.params.id;
+        const companyId = String(req.params.id);
         const company = await getTenantCompanyOrThrow(companyId);
         const now = new Date();
         const nowIso = now.toISOString();
@@ -1141,7 +1141,7 @@ superAdminRoutes.post('/announcements/tenant/:id', async (req, res, next) => {
             },
         });
 
-        await writeAudit(companyId, req.user!.id, 'SUPER_ADMIN_TENANT_BROADCAST', 'GlobalString', undefined, {
+        await writeAudit(companyId as string, req.user!.id, 'SUPER_ADMIN_TENANT_BROADCAST', 'GlobalString', undefined, {
             title: parsed.title,
             level: parsed.level,
             companyId,
@@ -1166,7 +1166,7 @@ superAdminRoutes.post('/announcements/tenant/:id', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.patch('/announcements/:id', async (req, res, next) => {
+superAdminRoutes.patch('/announcements/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = announcementUpdateSchema.parse(req.body);
         if (
@@ -1179,7 +1179,7 @@ superAdminRoutes.patch('/announcements/:id', async (req, res, next) => {
             throw AppError.badRequest('No announcement fields to update');
         }
 
-        const { rows, broadcastId } = await getAnnouncementRowsByKey(req.params.id);
+        const { rows, broadcastId } = await getAnnouncementRowsByKey(req.params.id as any);
         const nowIso = new Date().toISOString();
 
         await basePrisma.$transaction(
@@ -1219,7 +1219,7 @@ superAdminRoutes.patch('/announcements/:id', async (req, res, next) => {
 
         const affectedCompanyIds = Array.from(new Set(rows.map((row) => row.companyId)));
         for (const companyId of affectedCompanyIds) {
-            await writeAudit(companyId, req.user!.id, 'SUPER_ADMIN_ANNOUNCEMENT_UPDATED', 'GlobalString', undefined, {
+            await writeAudit(companyId as string, req.user!.id, 'SUPER_ADMIN_ANNOUNCEMENT_UPDATED', 'GlobalString', undefined, {
                 broadcastId,
                 title: parsed.title,
                 level: parsed.level,
@@ -1234,9 +1234,9 @@ superAdminRoutes.patch('/announcements/:id', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.delete('/announcements/:id', async (req, res, next) => {
+superAdminRoutes.delete('/announcements/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { rows, broadcastId } = await getAnnouncementRowsByKey(req.params.id);
+        const { rows, broadcastId } = await getAnnouncementRowsByKey(req.params.id as any);
         const rowIds = rows.map((row) => row.id);
 
         await basePrisma.globalString.deleteMany({
@@ -1245,7 +1245,7 @@ superAdminRoutes.delete('/announcements/:id', async (req, res, next) => {
 
         const affectedCompanyIds = Array.from(new Set(rows.map((row) => row.companyId)));
         for (const companyId of affectedCompanyIds) {
-            await writeAudit(companyId, req.user!.id, 'SUPER_ADMIN_ANNOUNCEMENT_DELETED', 'GlobalString', undefined, {
+            await writeAudit(companyId as string, req.user!.id, 'SUPER_ADMIN_ANNOUNCEMENT_DELETED', 'GlobalString', undefined, {
                 broadcastId,
                 deletedCopies: rowIds.length,
             });
@@ -1257,7 +1257,7 @@ superAdminRoutes.delete('/announcements/:id', async (req, res, next) => {
     }
 });
 
-superAdminRoutes.get('/audit', async (req, res, next) => {
+superAdminRoutes.get('/audit', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
         const action = String(req.query.action || '').trim();
