@@ -10,6 +10,11 @@ build/
 .env.*
 !.env.example
 .env.production
+
+# Secrets and Local Credentials
+*credentials.local.json
+*.local.json
+
 # Logs
 logs
 *.log
