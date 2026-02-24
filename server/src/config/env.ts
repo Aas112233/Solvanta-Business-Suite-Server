@@ -5,10 +5,12 @@ dotenv.config();
 
 const envSchema = z.object({
     DATABASE_URL: z.string().url(),
-    PORT: z.coerce.number().default(3000),
+    PORT: z.coerce.number().default(5001),
     HOST: z.string().default('0.0.0.0'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-    CORS_ORIGIN: z.string().default('http://localhost:5002,http://127.0.0.1:5002,http://localhost:5173,http://127.0.0.1:5173'),
+    CORS_ORIGIN: z
+        .string()
+        .default('http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173'),
     JWT_SECRET: z.string().min(10),
     JWT_REFRESH_SECRET: z.string().min(10),
     JWT_EXPIRES_IN: z.string().default('15m'),

@@ -1191,6 +1191,29 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                 throw AppError.badRequest('One or more products are unavailable for sale');
             }
 
+            const activeSalesTaxes = await tx.tax.findMany({
+                where: {
+                    companyId,
+                    isActive: true,
+                    OR: [{ type: 'SALES' }, { type: 'BOTH' }],
+                },
+                select: {
+                    id: true,
+                    name: true,
+                    rate: true,
+                    isDefault: true,
+                },
+            });
+
+            if (activeSalesTaxes.length === 0) {
+                throw AppError.badRequest(
+                    'POS sales are blocked: configure at least one active sales tax in Settings > Tax Management.'
+                );
+            }
+
+            const activeSalesTaxById = new Map(activeSalesTaxes.map((tax) => [tax.id, tax]));
+            const defaultSalesTax = activeSalesTaxes.find((tax) => tax.isDefault) || activeSalesTaxes[0];
+
             const priceOverrides = new Map<string, number>();
             const customerPriceGroupId = customer?.priceGroupId || null;
             const terminalPriceGroupId = posSession?.terminalPriceGroupId || null;
@@ -1211,6 +1234,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                 }
             }
 
+            const taxConfigErrors = new Set<string>();
             const computedItems = requestedItems.map((item) => {
                 const product = productById.get(item.productId);
                 if (!product) throw AppError.badRequest(`Product ${item.productId} not found`);
@@ -1241,7 +1265,30 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                 }
 
                 const lineSubtotal = gross - discount;
-                const taxRate = Number((item as any).taxRate ?? (product as any).tax?.rate ?? product.taxRate ?? 0);
+                const productLabel = `${product.itemCode} (${product.name})`;
+                let appliedTax = null;
+
+                if (product.taxId) {
+                    appliedTax = activeSalesTaxById.get(product.taxId) || null;
+                    if (!appliedTax) {
+                        taxConfigErrors.add(`${productLabel}: assigned tax is inactive or not valid for sales`);
+                        return null;
+                    }
+                } else if (defaultSalesTax) {
+                    appliedTax = defaultSalesTax;
+                }
+
+                if (!appliedTax) {
+                    taxConfigErrors.add(`${productLabel}: no tax assigned and no default sales tax configured`);
+                    return null;
+                }
+
+                const taxRate = Number(appliedTax.rate);
+                if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 1) {
+                    taxConfigErrors.add(`${productLabel}: tax rate is invalid`);
+                    return null;
+                }
+
                 const taxAmount = lineSubtotal * taxRate;
                 return {
                     productId: item.productId,
@@ -1251,8 +1298,25 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     taxRate,
                     discount,
                     taxAmount,
-                    lineTotal: lineSubtotal,                };
-            });
+                    lineTotal: lineSubtotal,
+                };
+            }).filter(Boolean) as Array<{
+                productId: string;
+                unitCode: string;
+                qty: number;
+                unitPrice: number;
+                taxRate: number;
+                discount: number;
+                taxAmount: number;
+                lineTotal: number;
+            }>;
+
+            if (taxConfigErrors.size > 0) {
+                const errors = Array.from(taxConfigErrors);
+                const preview = errors.slice(0, 3).join('; ');
+                const suffix = errors.length > 3 ? `; and ${errors.length - 3} more item(s)` : '';
+                throw AppError.badRequest(`Tax configuration is incomplete: ${preview}${suffix}`);
+            }
 
             const subtotal = computedItems.reduce((sum, item) => sum + item.lineTotal, 0); // Note: lineTotal was used as subtotal in return
             const discountTotal = computedItems.reduce((sum, item) => sum + item.discount, 0);
