@@ -29,3 +29,10 @@ Thumbs.db
 # Prisma
 prisma/generated-client
 *.seed.ts
+
+# Agent/LLM files
+.gemini/
+.claude/
+.cursor/
+.Agent/
+.agent/
