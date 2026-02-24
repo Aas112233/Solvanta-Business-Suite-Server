@@ -18,7 +18,7 @@ const createUserSchema = z.object({
     phone: z.string().optional(),
     password: z.string().min(6),
     roleId: z.string().min(1),
-    branchIds: z.array(z.string()).min(1),
+    branchIds: z.array(z.string()).optional().default([]),
     isActive: z.boolean().optional().default(true),
 });
 
@@ -106,9 +106,47 @@ userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) =>
 // POST /users
 userRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), validate({ body: createUserSchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { password, branchIds, ...data } = req.body;
+        const { password, branchIds = [], ...data } = req.body;
         if (data.email) data.email = data.email.toLowerCase().trim();
         const passwordHash = await bcrypt.hash(password, 12);
+
+        const role = await prisma.role.findFirst({
+            where: { id: data.roleId, companyId: req.user!.companyId },
+            select: { permissions: true },
+        });
+        if (!role) throw AppError.badRequest('Invalid role selected');
+
+        const companyBranches = await prisma.branch.findMany({
+            where: { companyId: req.user!.companyId },
+            select: { id: true },
+        });
+        const companyBranchIds = new Set(companyBranches.map((branch) => branch.id));
+
+        let normalizedBranchIds = Array.from(
+            new Set(
+                (Array.isArray(branchIds) ? branchIds : [])
+                    .filter((branchId): branchId is string => typeof branchId === 'string' && branchId.trim().length > 0)
+            )
+        );
+
+        // Admin-like roles can be created without manual branch selection; grant all company branches.
+        if (normalizedBranchIds.length === 0) {
+            const isAdminLikeRole =
+                role.permissions.includes(PERMISSIONS.ADMIN_MANAGE_USERS) ||
+                role.permissions.includes(PERMISSIONS.ADMIN_MANAGE_BRANCHES);
+            if (isAdminLikeRole) {
+                normalizedBranchIds = companyBranches.map((branch) => branch.id);
+            }
+        }
+
+        if (normalizedBranchIds.length === 0) {
+            throw AppError.badRequest('Select at least one branch for this user');
+        }
+
+        const hasInvalidBranch = normalizedBranchIds.some((branchId) => !companyBranchIds.has(branchId));
+        if (hasInvalidBranch) {
+            throw AppError.badRequest('One or more selected branches are invalid');
+        }
 
         const user = await prisma.user.create({
             data: {
@@ -116,7 +154,7 @@ userRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), validate
                 passwordHash,
                 companyId: req.user!.companyId,
                 branches: {
-                    create: branchIds.map((branchId: string) => ({ branchId })),
+                    create: normalizedBranchIds.map((branchId: string) => ({ branchId })),
                 },
             },
             include: {
