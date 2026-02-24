@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solvanta POS - Offline</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            background: linear-gradient(135deg, #0f172a, #1e293b);
+            color: #e2e8f0;
+            padding: 16px;
+        }
+
+        .container {
+            max-width: 520px;
+            text-align: center;
+            background: rgba(15, 23, 42, 0.5);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+        }
+
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        p {
+            line-height: 1.6;
+            color: #cbd5e1;
+            margin-bottom: 12px;
+        }
+
+        code {
+            display: inline-block;
+            margin-top: 8px;
+            color: #7dd3fc;
+            font-weight: 600;
+            word-break: break-all;
+        }
+
+        button {
+            margin-top: 18px;
+            border: none;
+            border-radius: 10px;
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+            background: linear-gradient(135deg, #2563eb, #0284c7);
+            cursor: pointer;
+        }
+
+        button:hover {
+            filter: brightness(1.05);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Connection Unavailable</h1>
+        <p>The POS page could not be loaded. Check internet connectivity and try again.</p>
+        <p>Target URL:</p>
+        <code>https://solvanta.wuaze.com/pos</code>
+        <div>
+            <button onclick="location.reload()">Retry</button>
+        </div>
+    </div>
+</body>
+</html>
