@@ -45,6 +45,7 @@ const posItemSchema = z.object({
 
 const posInvoiceSchema = z.object({
     customerId: z.string().optional().nullable(),
+    clientRequestId: z.string().max(120).optional(),
     items: z.array(posItemSchema).min(1),
     subtotal: z.number().min(0).optional(),
     discountTotal: z.number().min(0).optional().default(0),
@@ -742,6 +743,18 @@ posRoutes.get('/session/me', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMIS
     } catch (error) { next(error); }
 });
 
+// POST /pos/session/logout
+// POS session token is stateless JWT; this endpoint confirms connectivity and session validity before client clears it.
+posRoutes.post('/session/logout', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), async (req, res, next) => {
+    try {
+        const session = resolvePosSession(req);
+        if (!session) throw AppError.unauthorized('POS session not found');
+        if (session.companyId !== req.user!.companyId) throw AppError.unauthorized('Invalid POS session');
+
+        sendSuccess(res, { message: 'POS session ended' });
+    } catch (error) { next(error); }
+});
+
 // GET /pos/receipt-settings
 posRoutes.get('/receipt-settings', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), async (req, res, next) => {
     try {
@@ -1078,6 +1091,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
     try {
         const {
             customerId,
+            clientRequestId,
             items,
             paymentMethod,
             cashReceived = 0,
@@ -1101,6 +1115,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
         const branchId = posSession?.branchId || bodyBranchId || req.activeBranchId!;
         const companyId = req.user!.companyId;
         const userId = posSession?.posUserId || req.user!.id;
+        const normalizedClientRequestId = String(clientRequestId || '').trim().slice(0, 120);
         const loyaltySettings = await getLoyaltySettings(companyId);
         await assertBranchAccessible(req, branchId);
         if (usePosSession) {
@@ -1126,6 +1141,21 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     select: { id: true },
                 });
                 if (!shift) throw AppError.badRequest('Shift is invalid or closed');
+            }
+        }
+
+        if (normalizedClientRequestId) {
+            const existingInvoice = await prisma.pOSInvoice.findFirst({
+                where: {
+                    companyId,
+                    clientRequestId: normalizedClientRequestId,
+                } as any,
+                include: { items: true },
+            });
+
+            if (existingInvoice) {
+                sendSuccess(res, existingInvoice);
+                return;
             }
         }
 
@@ -1405,6 +1435,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     companyId,
                     branchId,
                     invoiceNo,
+                    clientRequestId: normalizedClientRequestId || null,
                     customerId: customerId || null,
                     posTerminalId: posTerminalId || null,
                     posShiftId: posShiftId || null,

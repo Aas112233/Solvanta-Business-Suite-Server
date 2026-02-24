@@ -683,6 +683,7 @@ model POSInvoice {
   posTerminalId String?       @db.ObjectId
   posShiftId    String?       @db.ObjectId
   salesOrderId  String?       @db.ObjectId
+  clientRequestId String?
   subtotal      Float
   discountTotal Float         @default(0)
   taxTotal      Float         @default(0)
@@ -718,6 +719,7 @@ model POSInvoice {
   @@index([customerId])
   @@index([posShiftId])
   @@index([salesOrderId])
+  @@index([companyId, clientRequestId])
   @@map("pos_invoices")
 }
 
