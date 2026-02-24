@@ -68,6 +68,13 @@ const allowedOrigins = parseCorsOrigins(env.CORS_ORIGIN);
 
 // ── Security ────────────────────────────────────────────────
 app.use(helmet());
+
+// Render and similar PaaS route traffic through a reverse proxy.
+// Trust the first proxy hop in production so rate limiting can use real client IPs.
+if (env.NODE_ENV === 'production') {
+    app.set('trust proxy', 1);
+}
+
 app.use(cors({
     origin: (origin, callback) => {
         if (!origin) {
