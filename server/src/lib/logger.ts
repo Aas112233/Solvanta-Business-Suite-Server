@@ -2,6 +2,7 @@ import winston from 'winston';
 import { env } from '../config/env.js';
 
 const { combine, timestamp, printf, colorize, errors } = winston.format;
+const isServerlessRuntime = process.env.VERCEL === '1' || process.env.AWS_LAMBDA_FUNCTION_NAME != null;
 
 const devFormat = combine(
     colorize(),
@@ -24,7 +25,7 @@ export const logger = winston.createLogger({
     format: env.NODE_ENV === 'production' ? prodFormat : devFormat,
     transports: [
         new winston.transports.Console(),
-        ...(env.NODE_ENV === 'production'
+        ...(env.NODE_ENV === 'production' && !isServerlessRuntime
             ? [
                 new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
                 new winston.transports.File({ filename: 'logs/combined.log' }),
