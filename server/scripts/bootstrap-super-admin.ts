@@ -8,9 +8,9 @@ import { ALL_PERMISSIONS } from '../src/config/permissions.js';
 const prisma = new PrismaClient();
 
 const envSchema = z.object({
-    SUPER_ADMIN_EMAIL: z.string().email(),
-    SUPER_ADMIN_PASSWORD: z.string().min(12).optional(),
-    SUPER_ADMIN_NAME: z.string().min(1).default('Platform Owner'),
+    SUPER_ADMIN_EMAIL: z.string().email().default('mhassantoha@gmail.com'),
+    SUPER_ADMIN_PASSWORD: z.string().min(8).default('Aas112233@'),
+    SUPER_ADMIN_NAME: z.string().min(1).default('Muhammad Hassantoha'),
     SUPER_ADMIN_COMPANY_ID: z.string().optional(),
     SUPER_ADMIN_COMPANY_NAME: z.string().optional(),
 });
@@ -133,8 +133,8 @@ async function main() {
         SUPER_ADMIN_COMPANY_NAME,
     } = parsed.data;
 
-    const password = SUPER_ADMIN_PASSWORD || generateStrongPassword(24);
-    const passwordWasGenerated = !SUPER_ADMIN_PASSWORD;
+    const password = SUPER_ADMIN_PASSWORD;
+    const passwordWasGenerated = false;
     const passwordHash = await bcrypt.hash(password, 12);
 
     const company = await ensureCompany(SUPER_ADMIN_COMPANY_ID, SUPER_ADMIN_COMPANY_NAME);

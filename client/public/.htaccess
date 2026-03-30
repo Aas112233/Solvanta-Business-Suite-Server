@@ -5,6 +5,14 @@ Options -Indexes -MultiViews
   RewriteEngine On
   RewriteBase /
 
+  # Block direct access to sensitive files and folders if they are uploaded by mistake.
+  RewriteRule "(^|/)\.(?!well-known/)" - [F,L]
+  RewriteRule "(^|/)(?:src|scripts|node_modules|config|tests?)(/|$)" - [F,L,NC]
+  RewriteRule "(^|/)(?:package|package-lock|tsconfig|vite\.config|vercel)(?:\.[^/]+)?$" - [F,L,NC]
+  RewriteRule "(^|/)\.env(?:\.[^/]+)?$" - [F,L,NC]
+  RewriteRule "(^|/).+\.(?:log|md|markdown|ya?ml|toml|ini|sql|bak|old|orig|dist-info)$" - [F,L,NC]
+  RewriteRule "(^|/).+\.(?:map)$" - [F,L,NC]
+
   # Serve existing files and directories directly.
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
@@ -15,6 +23,8 @@ Options -Indexes -MultiViews
 </IfModule>
 
 <IfModule mod_headers.c>
+  Header always unset X-Powered-By
+
   <FilesMatch "\.(html)$">
     Header set Cache-Control "no-cache, no-store, must-revalidate"
     Header set Pragma "no-cache"

@@ -9,11 +9,39 @@ build/
 .env
 .env.*
 !.env.example
+!**/.env.example
 .env.production
 
 # Secrets and Local Credentials
 *credentials.local.json
 *.local.json
+*.secret
+*.secrets.*
+secrets.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+*.ovpn
+*.mobileprovision
+.npmrc
+.pnpmrc
+
+# Local/private scripts and one-off automation with machine-specific secrets
+scripts/local/
+scripts/private/
+**/*.local.ps1
+**/*.local.sh
+**/*.local.bat
+**/*.local.cmd
+**/*.local.js
+**/*.local.mjs
+**/*.local.cjs
+**/*.local.ts
 
 # Logs
 logs
