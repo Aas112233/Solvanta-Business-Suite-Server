@@ -150,7 +150,7 @@ export default function ARAging() {
     {
       key: 'customer',
       header: 'Customer',
-      cell: (row: CustomerAging) => (
+      render: (row: CustomerAging) => (
         <div>
           <div className="font-medium text-slate-900">{row.customer.name}</div>
           <div className="text-sm text-slate-500">{row.customer.customerCode}</div>
@@ -161,7 +161,7 @@ export default function ARAging() {
       key: 'current',
       header: 'Current',
       align: 'right' as const,
-      cell: (row: CustomerAging) => (
+      render: (row: CustomerAging) => (
         <div className="text-right text-green-600">
           {row.current > 0 ? row.current.toLocaleString('en-US', {
             style: 'currency',
@@ -174,7 +174,7 @@ export default function ARAging() {
       key: 'days31to60',
       header: '31-60 Days',
       align: 'right' as const,
-      cell: (row: CustomerAging) => (
+      render: (row: CustomerAging) => (
         <div className="text-right text-yellow-600">
           {row.days31to60 > 0 ? row.days31to60.toLocaleString('en-US', {
             style: 'currency',
@@ -187,7 +187,7 @@ export default function ARAging() {
       key: 'days61to90',
       header: '61-90 Days',
       align: 'right' as const,
-      cell: (row: CustomerAging) => (
+      render: (row: CustomerAging) => (
         <div className="text-right text-orange-600">
           {row.days61to90 > 0 ? row.days61to90.toLocaleString('en-US', {
             style: 'currency',
@@ -200,7 +200,7 @@ export default function ARAging() {
       key: 'over90',
       header: 'Over 90 Days',
       align: 'right' as const,
-      cell: (row: CustomerAging) => (
+      render: (row: CustomerAging) => (
         <div className="text-right text-red-600">
           {row.over90 > 0 ? row.over90.toLocaleString('en-US', {
             style: 'currency',
@@ -213,7 +213,7 @@ export default function ARAging() {
       key: 'total',
       header: 'Total Balance',
       align: 'right' as const,
-      cell: (row: CustomerAging) => (
+      render: (row: CustomerAging) => (
         <div className="text-right font-semibold text-slate-900">
           {row.total.toLocaleString('en-US', {
             style: 'currency',
@@ -225,7 +225,7 @@ export default function ARAging() {
     {
       key: 'credit',
       header: 'Credit Status',
-      cell: (row: CustomerAging) => {
+      render: (row: CustomerAging) => {
         const utilization = row.customer.creditLimit > 0 
           ? (row.total / row.customer.creditLimit) * 100 
           : 0;
@@ -267,7 +267,7 @@ export default function ARAging() {
       key: 'actions',
       header: '',
       align: 'right' as const,
-      cell: (row: CustomerAging) => (
+      render: (row: CustomerAging) => (
         <div className="flex items-center justify-end gap-2">
           <button
             onClick={(e: React.MouseEvent) => {
@@ -300,14 +300,14 @@ export default function ARAging() {
     {
       key: 'invoiceNo',
       header: 'Invoice #',
-      cell: (inv: InvoiceAging) => (
+      render: (inv: InvoiceAging) => (
         <div className="font-medium text-slate-900">{inv.invoiceNo}</div>
       ),
     },
     {
       key: 'date',
       header: 'Date',
-      cell: (inv: InvoiceAging) => (
+      render: (inv: InvoiceAging) => (
         <div className="text-sm">
           {new Date(inv.date).toLocaleDateString()}
         </div>
@@ -316,9 +316,9 @@ export default function ARAging() {
     {
       key: 'daysOld',
       header: 'Days Old',
-      cell: (inv: InvoiceAging) => (
+      render: (inv: InvoiceAging) => (
         <Badge 
-          variant={inv.daysOld > 90 ? 'danger' : inv.daysOld > 60 ? 'warning' : 'secondary'}
+          variant={inv.daysOld > 90 ? 'danger' : inv.daysOld > 60 ? 'warning' : 'default'}
           size="sm"
         >
           {inv.daysOld} days
@@ -329,7 +329,7 @@ export default function ARAging() {
       key: 'balance',
       header: 'Balance',
       align: 'right' as const,
-      cell: (inv: InvoiceAging) => (
+      render: (inv: InvoiceAging) => (
         <div className="text-right font-medium">
           {inv.balance.toLocaleString('en-US', {
             style: 'currency',
@@ -503,9 +503,8 @@ export default function ARAging() {
         <DataTable
           columns={columns}
           data={data?.customers || []}
-          keyExtractor={(row) => row.customer.id}
+          keyAccessor={(row: CustomerAging) => row.customer.id}
           emptyState={{
-            icon: <Users size={48} className="text-slate-300" />,
             title: 'No outstanding receivables',
             description: 'All customer invoices are paid up to date',
           }}
@@ -517,7 +516,7 @@ export default function ARAging() {
         isOpen={showDetailModal}
         onClose={() => setShowDetailModal(false)}
         title={selectedCustomer?.customer.name || 'Customer Details'}
-        size="xl"
+        maxWidth="xl"
       >
         {selectedCustomer && (
           <div className="space-y-6">
@@ -598,7 +597,7 @@ export default function ARAging() {
               <DataTable
                 columns={invoiceColumns}
                 data={selectedCustomer.invoices}
-                keyExtractor={(inv) => inv.id}
+                keyAccessor={(inv: InvoiceAging) => inv.id}
               />
             </div>
 

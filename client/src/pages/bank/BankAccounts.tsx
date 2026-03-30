@@ -114,7 +114,7 @@ export default function BankAccounts() {
     {
       key: 'accountName',
       header: 'Account',
-      cell: (account: BankAccount) => (
+      render: (account: BankAccount) => (
         <div className="flex items-center gap-3">
           <div className={clsx(
             'w-10 h-10 rounded-lg flex items-center justify-center',
@@ -132,14 +132,14 @@ export default function BankAccounts() {
     {
       key: 'accountNumber',
       header: 'Account Number',
-      cell: (account: BankAccount) => (
+      render: (account: BankAccount) => (
         <div className="font-mono text-sm">{account.accountNumber}</div>
       ),
     },
     {
       key: 'accountType',
       header: 'Type',
-      cell: (account: BankAccount) => {
+      render: (account: BankAccount) => {
         const typeLabels: Record<string, string> = {
           CHECKING: 'Checking',
           SAVINGS: 'Savings',
@@ -149,7 +149,7 @@ export default function BankAccounts() {
           INVESTMENT: 'Investment',
         };
         return (
-          <Badge variant="secondary" size="sm">
+          <Badge variant="default" size="sm">
             {typeLabels[account.accountType] || account.accountType}
           </Badge>
         );
@@ -159,7 +159,7 @@ export default function BankAccounts() {
       key: 'balance',
       header: 'Balance',
       align: 'right' as const,
-      cell: (account: BankAccount) => (
+      render: (account: BankAccount) => (
         <div className="text-right">
           <div className={clsx(
             'font-medium',
@@ -179,11 +179,11 @@ export default function BankAccounts() {
     {
       key: 'status',
       header: 'Status',
-      cell: (account: BankAccount) => (
+      render: (account: BankAccount) => (
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             {account.isDefault && (
-              <Badge variant="primary" size="sm">Default</Badge>
+              <Badge variant="brand" size="sm">Default</Badge>
             )}
             {!account.isActive && (
               <Badge variant="danger" size="sm">Inactive</Badge>
@@ -201,7 +201,7 @@ export default function BankAccounts() {
       key: 'actions',
       header: '',
       align: 'right' as const,
-      cell: (account: BankAccount) => (
+      render: (account: BankAccount) => (
         <div className="flex items-center justify-end gap-2">
           <button
             onClick={(e: React.MouseEvent) => {
@@ -434,10 +434,9 @@ export default function BankAccounts() {
         <DataTable
           columns={columns}
           data={accounts}
-          keyExtractor={(account) => account.id}
+          keyAccessor={(account: BankAccount) => account.id}
           onRowClick={handleRowClick}
           emptyState={{
-            icon: <Landmark size={48} className="text-slate-300" />,
             title: 'No bank accounts yet',
             description: 'Add your first bank account to start tracking transactions',
             action: (
@@ -458,7 +457,7 @@ export default function BankAccounts() {
         isOpen={showModal}
         onClose={() => setShowModal(false)}
         title={editingAccount ? 'Edit Bank Account' : 'Add Bank Account'}
-        size="lg"
+        maxWidth="lg"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -505,7 +504,7 @@ export default function BankAccounts() {
             <FormField label="Account Type" required>
               <Select
                 value={formData.accountType}
-                onChange={(value) => setFormData({ ...formData, accountType: value })}
+                onChange={(e) => setFormData({ ...formData, accountType: e.target.value })}
                 options={accountTypeOptions}
                 fullWidth
               />
@@ -514,7 +513,7 @@ export default function BankAccounts() {
             <FormField label="Currency" required>
               <Select
                 value={formData.currency}
-                onChange={(value) => setFormData({ ...formData, currency: value })}
+                onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
                 options={currencyOptions}
                 fullWidth
               />

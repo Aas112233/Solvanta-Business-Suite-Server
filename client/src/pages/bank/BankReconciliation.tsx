@@ -49,6 +49,7 @@ interface BankTransaction {
 
 interface Reconciliation {
   id: string;
+  bankAccountId: string;
   statementDate: string;
   statementNumber?: string;
   openingBalance: number;
@@ -59,6 +60,11 @@ interface Reconciliation {
   status: 'UNRECONCILED' | 'PARTIAL' | 'RECONCILED';
   totalTransactions: number;
   reconciledCount: number;
+  bankAccount?: {
+    accountName: string;
+    bankName: string;
+    currency: string;
+  };
 }
 
 export default function BankReconciliation() {
@@ -274,15 +280,8 @@ export default function BankReconciliation() {
   const transactionColumns = useMemo(() => [
     {
       key: 'select',
-      header: (
-        <input
-          type="checkbox"
-          checked={transactions.length > 0 && selectedTransactions.size === transactions.length}
-          onChange={selectAllTransactions}
-          className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
-        />
-      ),
-      cell: (transaction: BankTransaction) => (
+      header: 'Select',
+      render: (transaction: BankTransaction) => (
         <input
           type="checkbox"
           checked={selectedTransactions.has(transaction.id)}
@@ -294,7 +293,7 @@ export default function BankReconciliation() {
     {
       key: 'date',
       header: 'Date',
-      cell: (transaction: BankTransaction) => (
+      render: (transaction: BankTransaction) => (
         <div className="text-sm">
           {new Date(transaction.transactionDate).toLocaleDateString()}
         </div>
@@ -303,7 +302,7 @@ export default function BankReconciliation() {
     {
       key: 'description',
       header: 'Description',
-      cell: (transaction: BankTransaction) => (
+      render: (transaction: BankTransaction) => (
         <div>
           <div className="font-medium text-slate-900">{transaction.description}</div>
           {transaction.reference && (
@@ -315,8 +314,8 @@ export default function BankReconciliation() {
     {
       key: 'type',
       header: 'Type',
-      cell: (transaction: BankTransaction) => (
-        <Badge variant="secondary" size="sm">
+      render: (transaction: BankTransaction) => (
+        <Badge variant="default" size="sm">
           {transaction.transactionType.replace(/_/g, ' ')}
         </Badge>
       ),
@@ -325,7 +324,7 @@ export default function BankReconciliation() {
       key: 'amount',
       header: 'Amount',
       align: 'right' as const,
-      cell: (transaction: BankTransaction) => (
+      render: (transaction: BankTransaction) => (
         <div className={clsx(
           'font-medium text-right',
           transaction.amount >= 0 ? 'text-green-600' : 'text-red-600'
@@ -345,7 +344,7 @@ export default function BankReconciliation() {
     {
       key: 'date',
       header: 'Statement Date',
-      cell: (rec: Reconciliation) => (
+      render: (rec: Reconciliation) => (
         <div className="font-medium">
           {new Date(rec.statementDate).toLocaleDateString()}
         </div>
@@ -354,7 +353,7 @@ export default function BankReconciliation() {
     {
       key: 'account',
       header: 'Account',
-      cell: (rec: Reconciliation) => (
+      render: (rec: Reconciliation) => (
         <div>
           <div className="font-medium">{rec.bankAccount?.accountName}</div>
           <div className="text-sm text-slate-500">{rec.bankAccount?.bankName}</div>
@@ -364,13 +363,13 @@ export default function BankReconciliation() {
     {
       key: 'statementNumber',
       header: 'Statement #',
-      cell: (rec: Reconciliation) => rec.statementNumber || '-',
+      render: (rec: Reconciliation) => rec.statementNumber || '-',
     },
     {
       key: 'closingBalance',
       header: 'Closing Balance',
       align: 'right' as const,
-      cell: (rec: Reconciliation) => (
+      render: (rec: Reconciliation) => (
         <div className="text-right font-medium">
           {rec.closingBalance.toLocaleString('en-US', {
             style: 'currency',
@@ -383,7 +382,7 @@ export default function BankReconciliation() {
       key: 'difference',
       header: 'Difference',
       align: 'right' as const,
-      cell: (rec: Reconciliation) => (
+      render: (rec: Reconciliation) => (
         <div className={clsx(
           'text-right font-medium',
           Math.abs(rec.difference) < 0.01 ? 'text-green-600' : 'text-red-600'
@@ -398,10 +397,10 @@ export default function BankReconciliation() {
     {
       key: 'status',
       header: 'Status',
-      cell: (rec: Reconciliation) => {
+      render: (rec: Reconciliation) => {
         const statusConfig = {
           UNRECONCILED: { variant: 'warning' as const, label: 'Unreconciled' },
-          PARTIAL: { variant: 'primary' as const, label: 'In Progress' },
+          PARTIAL: { variant: 'brand' as const, label: 'In Progress' },
           RECONCILED: { variant: 'success' as const, label: 'Reconciled' },
         };
         const config = statusConfig[rec.status];
@@ -411,7 +410,7 @@ export default function BankReconciliation() {
     {
       key: 'progress',
       header: 'Progress',
-      cell: (rec: Reconciliation) => (
+      render: (rec: Reconciliation) => (
         <div className="flex items-center gap-2">
           <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
             <div 
@@ -548,12 +547,12 @@ export default function BankReconciliation() {
         {/* Unreconciled Transactions */}
         <Section 
           title="Unreconciled Transactions"
-          subtitle={`${transactions.length} transactions waiting to be matched`}
+          description={`${transactions.length} transactions waiting to be matched`}
         >
           <DataTable
             columns={transactionColumns}
             data={transactions}
-            keyExtractor={(t) => t.id}
+            keyAccessor={(t: BankTransaction) => t.id}
           />
         </Section>
       </PageTemplate>
@@ -586,8 +585,8 @@ export default function BankReconciliation() {
         <DataTable
           columns={reconciliationColumns}
           data={reconciliations}
-          keyExtractor={(rec) => rec.id}
-          onRowClick={(rec) => {
+          keyAccessor={(rec: Reconciliation) => rec.id}
+          onRowClick={(rec: Reconciliation) => {
             if (rec.status !== 'RECONCILED') {
               setActiveReconciliation(rec);
               const account = accounts.find(a => a.id === rec.bankAccountId);
@@ -598,7 +597,6 @@ export default function BankReconciliation() {
             }
           }}
           emptyState={{
-            icon: <RefreshCcw size={48} className="text-slate-300" />,
             title: 'No reconciliations yet',
             description: 'Start a new reconciliation to match your bank statement',
             action: (
@@ -619,7 +617,7 @@ export default function BankReconciliation() {
         isOpen={showNewModal}
         onClose={() => setShowNewModal(false)}
         title="New Bank Reconciliation"
-        size="lg"
+        maxWidth="lg"
       >
         <form onSubmit={handleCreateReconciliation} className="space-y-4">
           <FormField label="Bank Account" required>

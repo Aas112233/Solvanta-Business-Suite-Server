@@ -126,7 +126,7 @@ export default function APAging() {
     {
       key: 'supplier',
       header: 'Supplier',
-      cell: (row: SupplierAging) => (
+      render: (row: SupplierAging) => (
         <div>
           <div className="font-medium text-slate-900">{row.supplier.name}</div>
           <div className="text-sm text-slate-500">{row.supplier.supplierCode}</div>
@@ -137,7 +137,7 @@ export default function APAging() {
       key: 'current',
       header: 'Current',
       align: 'right' as const,
-      cell: (row: SupplierAging) => (
+      render: (row: SupplierAging) => (
         <div className="text-right text-green-600">
           {row.current > 0 ? row.current.toLocaleString('en-US', {
             style: 'currency',
@@ -150,7 +150,7 @@ export default function APAging() {
       key: 'days31to60',
       header: '31-60 Days',
       align: 'right' as const,
-      cell: (row: SupplierAging) => (
+      render: (row: SupplierAging) => (
         <div className="text-right text-yellow-600">
           {row.days31to60 > 0 ? row.days31to60.toLocaleString('en-US', {
             style: 'currency',
@@ -163,7 +163,7 @@ export default function APAging() {
       key: 'days61to90',
       header: '61-90 Days',
       align: 'right' as const,
-      cell: (row: SupplierAging) => (
+      render: (row: SupplierAging) => (
         <div className="text-right text-orange-600">
           {row.days61to90 > 0 ? row.days61to90.toLocaleString('en-US', {
             style: 'currency',
@@ -176,7 +176,7 @@ export default function APAging() {
       key: 'over90',
       header: 'Over 90 Days',
       align: 'right' as const,
-      cell: (row: SupplierAging) => (
+      render: (row: SupplierAging) => (
         <div className="text-right text-red-600">
           {row.over90 > 0 ? row.over90.toLocaleString('en-US', {
             style: 'currency',
@@ -189,7 +189,7 @@ export default function APAging() {
       key: 'total',
       header: 'Total Balance',
       align: 'right' as const,
-      cell: (row: SupplierAging) => (
+      render: (row: SupplierAging) => (
         <div className="text-right font-semibold text-slate-900">
           {row.total.toLocaleString('en-US', {
             style: 'currency',
@@ -202,7 +202,7 @@ export default function APAging() {
       key: 'actions',
       header: '',
       align: 'right' as const,
-      cell: (row: SupplierAging) => (
+      render: (row: SupplierAging) => (
         <div className="flex items-center justify-end gap-2">
           <button
             onClick={(e: React.MouseEvent) => {
@@ -235,14 +235,14 @@ export default function APAging() {
     {
       key: 'invoiceNo',
       header: 'Invoice #',
-      cell: (inv: InvoiceAging) => (
+      render: (inv: InvoiceAging) => (
         <div className="font-medium text-slate-900">{inv.invoiceNo}</div>
       ),
     },
     {
       key: 'date',
       header: 'Date',
-      cell: (inv: InvoiceAging) => (
+      render: (inv: InvoiceAging) => (
         <div className="text-sm">
           {new Date(inv.date).toLocaleDateString()}
         </div>
@@ -251,9 +251,9 @@ export default function APAging() {
     {
       key: 'daysOld',
       header: 'Days Old',
-      cell: (inv: InvoiceAging) => (
+      render: (inv: InvoiceAging) => (
         <Badge 
-          variant={inv.daysOld > 90 ? 'danger' : inv.daysOld > 60 ? 'warning' : 'secondary'}
+          variant={inv.daysOld > 90 ? 'danger' : inv.daysOld > 60 ? 'warning' : 'default'}
           size="sm"
         >
           {inv.daysOld} days
@@ -264,7 +264,7 @@ export default function APAging() {
       key: 'balance',
       header: 'Balance',
       align: 'right' as const,
-      cell: (inv: InvoiceAging) => (
+      render: (inv: InvoiceAging) => (
         <div className="text-right font-medium">
           {inv.balance.toLocaleString('en-US', {
             style: 'currency',
@@ -409,9 +409,8 @@ export default function APAging() {
         <DataTable
           columns={columns}
           data={data?.suppliers || []}
-          keyExtractor={(row) => row.supplier.id}
+          keyAccessor={(row: SupplierAging) => row.supplier.id}
           emptyState={{
-            icon: <Truck size={48} className="text-slate-300" />,
             title: 'No outstanding payables',
             description: 'All supplier invoices are paid up to date',
           }}
@@ -423,7 +422,7 @@ export default function APAging() {
         isOpen={showDetailModal}
         onClose={() => setShowDetailModal(false)}
         title={selectedSupplier?.supplier.name || 'Supplier Details'}
-        size="xl"
+        maxWidth="xl"
       >
         {selectedSupplier && (
           <div className="space-y-6">
@@ -495,7 +494,7 @@ export default function APAging() {
               <DataTable
                 columns={invoiceColumns}
                 data={selectedSupplier.invoices}
-                keyExtractor={(inv) => inv.id}
+                keyAccessor={(inv: InvoiceAging) => inv.id}
               />
             </div>
 
