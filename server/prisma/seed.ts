@@ -46,7 +46,6 @@ async function main() {
             vatNumber: '300000000000003',
             currency: 'SAR',
             settings: {
-                nearExpiryDays: 30,
                 lowStockThreshold: 10,
                 invoicePrefix: 'INV',
                 taxRate: 0.15,
@@ -153,36 +152,36 @@ async function main() {
 
     // ═══ PRODUCTS (30) ═══
     const productData = [
-        { name: 'Full Cream Milk 1L', code: 'P001', cat: 1, brand: 0, barcode: '6281048000011', sale: 7.5, cost: 5.5, expiry: true },
-        { name: 'Low Fat Milk 1L', code: 'P002', cat: 1, brand: 0, barcode: '6281048000028', sale: 7.0, cost: 5.0, expiry: true },
-        { name: 'Fresh Laban 2L', code: 'P003', cat: 1, brand: 1, barcode: '6281048000035', sale: 9.0, cost: 6.5, expiry: true },
-        { name: 'Greek Yogurt 400g', code: 'P004', cat: 1, brand: 2, barcode: '6281048000042', sale: 12.0, cost: 8.0, expiry: true },
-        { name: 'Cheddar Cheese 500g', code: 'P005', cat: 1, brand: 0, barcode: '6281048000059', sale: 25.0, cost: 18.0, expiry: true },
-        { name: 'Orange Juice 1L', code: 'P006', cat: 0, brand: 1, barcode: '6281048000066', sale: 8.5, cost: 6.0, expiry: true },
-        { name: 'Apple Juice 1L', code: 'P007', cat: 0, brand: 1, barcode: '6281048000073', sale: 8.5, cost: 6.0, expiry: true },
-        { name: 'Mineral Water 500ml', code: 'P008', cat: 0, brand: null, barcode: '6281048000080', sale: 1.0, cost: 0.5, expiry: false },
-        { name: 'Mineral Water 1.5L', code: 'P009', cat: 0, brand: null, barcode: '6281048000097', sale: 2.0, cost: 1.0, expiry: false },
-        { name: 'Potato Chips Classic 160g', code: 'P010', cat: 2, brand: null, barcode: '6281048000104', sale: 6.0, cost: 4.0, expiry: true },
-        { name: 'Potato Chips BBQ 160g', code: 'P011', cat: 2, brand: null, barcode: '6281048000111', sale: 6.0, cost: 4.0, expiry: true },
-        { name: 'Chocolate Cookies 200g', code: 'P012', cat: 2, brand: null, barcode: '6281048000128', sale: 8.0, cost: 5.5, expiry: true },
-        { name: 'Cream Biscuits 300g', code: 'P013', cat: 2, brand: null, barcode: '6281048000135', sale: 5.0, cost: 3.0, expiry: true },
-        { name: 'Dish Soap 750ml', code: 'P014', cat: 3, brand: 3, barcode: '6281048000142', sale: 9.0, cost: 6.0, expiry: false },
-        { name: 'Laundry Detergent 3kg', code: 'P015', cat: 3, brand: 3, barcode: '6281048000159', sale: 35.0, cost: 25.0, expiry: false },
-        { name: 'Surface Cleaner 1L', code: 'P016', cat: 3, brand: null, barcode: '6281048000166', sale: 12.0, cost: 8.0, expiry: false },
-        { name: 'Toilet Cleaner 750ml', code: 'P017', cat: 3, brand: null, barcode: '6281048000173', sale: 8.0, cost: 5.0, expiry: false },
-        { name: 'Basmati Rice 5kg', code: 'P018', cat: 4, brand: null, barcode: '6281048000180', sale: 45.0, cost: 32.0, expiry: false },
-        { name: 'Egyptian Rice 2kg', code: 'P019', cat: 4, brand: null, barcode: '6281048000197', sale: 15.0, cost: 10.0, expiry: false },
-        { name: 'White Sugar 1kg', code: 'P020', cat: 4, brand: null, barcode: '6281048000204', sale: 6.0, cost: 4.0, expiry: false },
-        { name: 'Flour All Purpose 2kg', code: 'P021', cat: 4, brand: null, barcode: '6281048000211', sale: 8.0, cost: 5.0, expiry: false },
-        { name: 'Vegetable Oil 1.5L', code: 'P022', cat: 4, brand: null, barcode: '6281048000228', sale: 16.0, cost: 11.0, expiry: true },
-        { name: 'Shampoo 400ml', code: 'P023', cat: 5, brand: null, barcode: '6281048000235', sale: 22.0, cost: 15.0, expiry: false },
-        { name: 'Soap Bar 125g', code: 'P024', cat: 5, brand: null, barcode: '6281048000242', sale: 5.0, cost: 3.0, expiry: false },
-        { name: 'Toothpaste 100ml', code: 'P025', cat: 5, brand: null, barcode: '6281048000259', sale: 12.0, cost: 8.0, expiry: true },
-        { name: 'Hand Sanitizer 500ml', code: 'P026', cat: 5, brand: null, barcode: '6281048000266', sale: 15.0, cost: 10.0, expiry: true },
-        { name: 'Tissue Box 200 sheets', code: 'P027', cat: 5, brand: null, barcode: '6281048000273', sale: 8.0, cost: 5.0, expiry: false },
-        { name: 'Instant Coffee 200g', code: 'P028', cat: 0, brand: null, barcode: '6281048000280', sale: 28.0, cost: 20.0, expiry: true },
-        { name: 'Tea Bags 100 pcs', code: 'P029', cat: 0, brand: null, barcode: '6281048000297', sale: 18.0, cost: 12.0, expiry: true },
-        { name: 'Honey Natural 500g', code: 'P030', cat: 0, brand: null, barcode: '6281048000303', sale: 45.0, cost: 30.0, expiry: true },
+        { name: 'Full Cream Milk 1L', code: 'P001', cat: 1, brand: 0, barcode: '6281048000011', sale: 7.5, cost: 5.5 },
+        { name: 'Low Fat Milk 1L', code: 'P002', cat: 1, brand: 0, barcode: '6281048000028', sale: 7.0, cost: 5.0 },
+        { name: 'Fresh Laban 2L', code: 'P003', cat: 1, brand: 1, barcode: '6281048000035', sale: 9.0, cost: 6.5 },
+        { name: 'Greek Yogurt 400g', code: 'P004', cat: 1, brand: 2, barcode: '6281048000042', sale: 12.0, cost: 8.0 },
+        { name: 'Cheddar Cheese 500g', code: 'P005', cat: 1, brand: 0, barcode: '6281048000059', sale: 25.0, cost: 18.0 },
+        { name: 'Orange Juice 1L', code: 'P006', cat: 0, brand: 1, barcode: '6281048000066', sale: 8.5, cost: 6.0 },
+        { name: 'Apple Juice 1L', code: 'P007', cat: 0, brand: 1, barcode: '6281048000073', sale: 8.5, cost: 6.0 },
+        { name: 'Mineral Water 500ml', code: 'P008', cat: 0, brand: null, barcode: '6281048000080', sale: 1.0, cost: 0.5 },
+        { name: 'Mineral Water 1.5L', code: 'P009', cat: 0, brand: null, barcode: '6281048000097', sale: 2.0, cost: 1.0 },
+        { name: 'Potato Chips Classic 160g', code: 'P010', cat: 2, brand: null, barcode: '6281048000104', sale: 6.0, cost: 4.0 },
+        { name: 'Potato Chips BBQ 160g', code: 'P011', cat: 2, brand: null, barcode: '6281048000111', sale: 6.0, cost: 4.0 },
+        { name: 'Chocolate Cookies 200g', code: 'P012', cat: 2, brand: null, barcode: '6281048000128', sale: 8.0, cost: 5.5 },
+        { name: 'Cream Biscuits 300g', code: 'P013', cat: 2, brand: null, barcode: '6281048000135', sale: 5.0, cost: 3.0 },
+        { name: 'Dish Soap 750ml', code: 'P014', cat: 3, brand: 3, barcode: '6281048000142', sale: 9.0, cost: 6.0 },
+        { name: 'Laundry Detergent 3kg', code: 'P015', cat: 3, brand: 3, barcode: '6281048000159', sale: 35.0, cost: 25.0 },
+        { name: 'Surface Cleaner 1L', code: 'P016', cat: 3, brand: null, barcode: '6281048000166', sale: 12.0, cost: 8.0 },
+        { name: 'Toilet Cleaner 750ml', code: 'P017', cat: 3, brand: null, barcode: '6281048000173', sale: 8.0, cost: 5.0 },
+        { name: 'Basmati Rice 5kg', code: 'P018', cat: 4, brand: null, barcode: '6281048000180', sale: 45.0, cost: 32.0 },
+        { name: 'Egyptian Rice 2kg', code: 'P019', cat: 4, brand: null, barcode: '6281048000197', sale: 15.0, cost: 10.0 },
+        { name: 'White Sugar 1kg', code: 'P020', cat: 4, brand: null, barcode: '6281048000204', sale: 6.0, cost: 4.0 },
+        { name: 'Flour All Purpose 2kg', code: 'P021', cat: 4, brand: null, barcode: '6281048000211', sale: 8.0, cost: 5.0 },
+        { name: 'Vegetable Oil 1.5L', code: 'P022', cat: 4, brand: null, barcode: '6281048000228', sale: 16.0, cost: 11.0 },
+        { name: 'Shampoo 400ml', code: 'P023', cat: 5, brand: null, barcode: '6281048000235', sale: 22.0, cost: 15.0 },
+        { name: 'Soap Bar 125g', code: 'P024', cat: 5, brand: null, barcode: '6281048000242', sale: 5.0, cost: 3.0 },
+        { name: 'Toothpaste 100ml', code: 'P025', cat: 5, brand: null, barcode: '6281048000259', sale: 12.0, cost: 8.0 },
+        { name: 'Hand Sanitizer 500ml', code: 'P026', cat: 5, brand: null, barcode: '6281048000266', sale: 15.0, cost: 10.0 },
+        { name: 'Tissue Box 200 sheets', code: 'P027', cat: 5, brand: null, barcode: '6281048000273', sale: 8.0, cost: 5.0 },
+        { name: 'Instant Coffee 200g', code: 'P028', cat: 0, brand: null, barcode: '6281048000280', sale: 28.0, cost: 20.0 },
+        { name: 'Tea Bags 100 pcs', code: 'P029', cat: 0, brand: null, barcode: '6281048000297', sale: 18.0, cost: 12.0 },
+        { name: 'Honey Natural 500g', code: 'P030', cat: 0, brand: null, barcode: '6281048000303', sale: 45.0, cost: 30.0 },
     ];
 
     const products = [];
@@ -304,9 +303,6 @@ async function main() {
         if (!unit) continue;
 
         const qty = Math.floor(Math.random() * 200) + 50;
-        const expDate = product.trackExpiry
-            ? new Date(Date.now() + (Math.floor(Math.random() * 180) + 30) * 24 * 60 * 60 * 1000)
-            : null;
 
         await prisma.inventoryStock.create({
             data: {
@@ -316,7 +312,6 @@ async function main() {
                 unitCode: unit.unitCode, // Using the barcode as the unitCode
                 qtyOnHand: qty,
                 avgCost: Number(unit.costPrice),
-                expDate,
             },
         });
 
@@ -329,7 +324,6 @@ async function main() {
                 unitCode: unit.unitCode, // Using the barcode as the unitCode
                 qtyOnHand: Math.floor(qty * 0.5),
                 avgCost: Number(unit.costPrice),
-                expDate,
             },
         });
     }
@@ -352,3 +346,4 @@ main()
     .finally(async () => {
         await prisma.$disconnect();
     });
+

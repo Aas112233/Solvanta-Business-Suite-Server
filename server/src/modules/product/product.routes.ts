@@ -72,17 +72,17 @@ async function checkCodeUniqueness(companyId: string, code: string, context: str
     });
     if (conflictingProductBarcode) throw AppError.badRequest(`${context} '${normalized}' conflicts with Barcode of product '${conflictingProductBarcode.name}' (ID: ${conflictingProductBarcode.id})`);
 
-    // Check 4: Product Unit Barcodes
+    // Check 4: Product Unit Barcodes (Array)
     const conflictingUnitBarcode = await prisma.productUnit.findFirst({
         where: {
-            barcode: normalized,
+            barcodes: { has: normalized },
             id: excludeUnitId ? { not: excludeUnitId } : undefined,
             product: {
-                companyId, // Manual scoping
+                companyId,
                 ...(excludeProductId ? { id: { not: excludeProductId } } : {}),
-                deletedAt: { isSet: false } // Manual soft-delete check
+                deletedAt: { isSet: false }
             }
-        },
+        } as any,
         include: { product: { select: { id: true, name: true } } }
     });
     if (conflictingUnitBarcode && conflictingUnitBarcode.product) {
@@ -97,9 +97,10 @@ const unitSchema = z.object({
     qtyInBaseUnit: z.number().positive().default(1),
     salePrice: z.number().min(0).default(0),
     costPrice: z.number().min(0).default(0),
-    barcode: z.string().optional().nullable(),
+    barcodes: z.array(z.string()).optional().default([]),
     isDefaultSaleUnit: z.boolean().default(false),
     isBase: z.boolean().default(false),
+    minimumNegotiationPrice: z.number().nullable().optional(),
 });
 
 const unitUpsertSchema = unitSchema.extend({
@@ -113,7 +114,7 @@ const productSchema = z.object({
     categoryId: z.string().min(1, "Category is required"),
     itemGroupId: z.string().min(1, "Group is required"),
     brandId: z.string().optional().nullable(),
-    barcodes: z.array(z.string()).optional().default([]),    taxId: z.string().optional().nullable(),
+    barcodes: z.array(z.string()).optional().default([]), taxId: z.string().optional().nullable(),
     status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
     // Initial units can be passed on creation
     units: z.array(unitSchema).min(1, "At least one unit (Base) is required"),
@@ -126,7 +127,7 @@ const productPatchSchema = z.object({
     categoryId: z.string().min(1).optional(),
     itemGroupId: z.string().min(1).optional(),
     brandId: z.string().optional().nullable(),
-    barcodes: z.array(z.string()).optional(),    taxId: z.string().optional().nullable(),
+    barcodes: z.array(z.string()).optional(), taxId: z.string().optional().nullable(),
     status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
     units: z.array(unitUpsertSchema).optional(),
 });
@@ -137,9 +138,10 @@ const unitPatchSchema = z.object({
     qtyInBaseUnit: z.number().positive().optional(),
     salePrice: z.number().min(0).optional(),
     costPrice: z.number().min(0).optional(),
-    barcode: z.string().nullable().optional(),
+    barcodes: z.array(z.string()).optional(),
     isDefaultSaleUnit: z.boolean().optional(),
     isBase: z.boolean().optional(),
+    minimumNegotiationPrice: z.number().nullable().optional(),
 }).refine((v) => Object.keys(v).length > 0, {
     message: 'At least one field is required',
 });
@@ -192,7 +194,7 @@ productRoutes.get(
                     { itemCode: { contains: query.search, mode: 'insensitive' } },
                     { barcodes: { has: query.search } },
                     { units: { some: { unitCode: { contains: query.search, mode: 'insensitive' } } } },
-                    { units: { some: { barcode: { contains: query.search, mode: 'insensitive' } } } },
+                    { units: { some: { barcodes: { has: query.search } } } } as any,
                 ];
             }
 
@@ -214,7 +216,6 @@ productRoutes.get(
                         units: true,
                         ...(includePricing ? {
                             priceGroupPrices: {
-                                where: priceGroupId ? { priceGroupId } : undefined,
                                 select: { id: true, priceGroupId: true, unitCode: true, salePrice: true },
                             }
                         } : {}),
@@ -253,18 +254,17 @@ productRoutes.post('/', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIO
 
         if (units && Array.isArray(units)) {
             const seenCodes = new Set<string>();
-            const seenBarcodes = new Set<string>();
+            const seenUnitBarcodes = new Set<string>();
             for (const u of units) {
                 const uc = normalizeCode(u.unitCode);
                 if (seenCodes.has(uc)) throw AppError.badRequest(`Duplicate Unit Code '${uc}' in your request`);
                 seenCodes.add(uc);
                 await checkCodeUniqueness(companyId, uc, 'Unit Code');
 
-                if (u.barcode) {
-                    const ub = normalizeCode(u.barcode);
-                    if (ub !== uc) throw AppError.badRequest(`Unit barcode must match unit code for '${uc}'`);
-                    if (seenBarcodes.has(ub)) throw AppError.badRequest(`Duplicate Barcode '${ub}' in your request`);
-                    seenBarcodes.add(ub);
+                const unitBcs = normalizeCodeList(u.barcodes || []);
+                for (const ub of unitBcs) {
+                    if (seenUnitBarcodes.has(ub)) throw AppError.badRequest(`Duplicate Unit Barcode '${ub}' in your request`);
+                    seenUnitBarcodes.add(ub);
                     await checkCodeUniqueness(companyId, ub, 'Unit Barcode');
                 }
             }
@@ -275,29 +275,37 @@ productRoutes.post('/', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIO
         if (baseUnits.length !== 1) throw AppError.badRequest('Exactly one Base Unit (fraction=1) is required');
         if (baseUnits[0].qtyInBaseUnit !== 1) throw AppError.badRequest('Base Unit must have fraction 1');
 
-
         // Transaction
         const result = await prisma.$transaction(async (tx) => {
-            // Ensure all units have barcode = unitCode and collect them
-            const unitBarcodes: string[] = [];
+            // Collect all unit-level barcodes for product-level index
+            const allUnitBarcodes: string[] = [];
             const processedUnits = units.map((u: any) => {
                 const code = normalizeCode(u.unitCode);
-                if (code) unitBarcodes.push(code);
+                const unitBcs = normalizeCodeList(u.barcodes || []);
+                // Always include the unit code itself as a scannable barcode
+                const mergedUnitBarcodes = Array.from(new Set([code, ...unitBcs]));
+                allUnitBarcodes.push(...mergedUnitBarcodes);
                 return {
-                    ...u,
+                    unitName: u.unitName,
                     unitCode: code,
-                    barcode: code // Enforce sync
+                    qtyInBaseUnit: Number(u.qtyInBaseUnit || 1),
+                    salePrice: Number(u.salePrice || 0),
+                    costPrice: Number(u.costPrice || 0),
+                    barcodes: mergedUnitBarcodes,
+                    isDefaultSaleUnit: Boolean(u.isDefaultSaleUnit),
+                    isBase: Boolean(u.isBase),
+                    minimumNegotiationPrice: u.minimumNegotiationPrice !== undefined ? u.minimumNegotiationPrice : null,
                 };
             });
 
-            if (unitBarcodes.includes(normalizedItemCode)) {
+            if (allUnitBarcodes.includes(normalizedItemCode)) {
                 throw AppError.badRequest(`Unit Code '${normalizedItemCode}' cannot match Item Code`);
             }
 
-            // Merge provided barcodes with unit barcodes, ensuring uniqueness
+            // Merge provided barcodes with unit barcodes into product-level array
             const mergedBarcodes = Array.from(new Set([
                 ...normalizedBarcodes,
-                ...unitBarcodes
+                ...allUnitBarcodes
             ]));
 
             const product = await tx.product.create({
@@ -309,7 +317,7 @@ productRoutes.post('/', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIO
             });
 
             if (processedUnits.length > 0) {
-                await tx.productUnit.createMany({
+                await (tx as any).productUnit.createMany({
                     data: processedUnits.map((u: any) => ({ ...u, productId: product.id })),
                 });
             }
@@ -352,12 +360,9 @@ productRoutes.get('/barcode/:code', async (req, res, next) => {
         const productInclude = {
             tax: true,
             units: true,
-            ...(priceGroupId ? {
-                priceGroupPrices: {
-                    where: { priceGroupId },
-                    select: { id: true, priceGroupId: true, unitCode: true, salePrice: true },
-                },
-            } : {}),
+            priceGroupPrices: {
+                select: { id: true, priceGroupId: true, unitCode: true, salePrice: true },
+            },
         } as const;
 
         // Supports scanner input like:
@@ -378,13 +383,13 @@ productRoutes.get('/barcode/:code', async (req, res, next) => {
             include: productInclude,
         });
 
-        // Fast path: ProductUnit barcode is indexed.
+        // Fast path: ProductUnit barcodes array is indexed.
         if (!product) {
-            const matchedUnitRecord = await prisma.productUnit.findFirst({
+            const matchedUnitRecord = await (prisma as any).productUnit.findFirst({
                 where: {
                     OR: [
-                        { barcode: rawCode },
-                        { barcode: normalizedCode },
+                        { barcodes: { has: rawCode } },
+                        { barcodes: { has: normalizedCode } },
                         { unitCode: rawCode },
                         { unitCode: normalizedCode },
                     ],
@@ -393,7 +398,7 @@ productRoutes.get('/barcode/:code', async (req, res, next) => {
                         status: 'ACTIVE',
                         deletedAt: { isSet: false },
                     },
-                } as any,
+                },
                 select: { unitCode: true, productId: true },
             });
 
@@ -441,17 +446,17 @@ productRoutes.get('/barcode/:code', async (req, res, next) => {
 
         if (!product) throw AppError.notFound('Product not found');
 
-        const matchedByUnitBarcode = product.units.find(
-            (u) => (u.barcode || '').toUpperCase() === normalizedCode
+        const matchedByUnitBarcode = (product.units as any[]).find(
+            (u) => (u.barcodes || []).some((b: string) => b.toUpperCase() === normalizedCode)
         );
         const matchedByUnitCode = unitCodePart
-            ? product.units.find((u) => (u.unitCode || '').toUpperCase() === unitCodePart)
+            ? (product.units as any[]).find((u) => (u.unitCode || '').toUpperCase() === unitCodePart)
             : null;
 
         const matchedUnit =
             matchedByUnitBarcode ||
             matchedByUnitCode ||
-            product.units.find((u) => u.isBase) ||
+            (product.units as any[]).find((u) => u.isBase) ||
             product.units[0] ||
             null;
 
@@ -504,20 +509,17 @@ productRoutes.get(
                             unitName: true,
                             qtyInBaseUnit: true,
                             salePrice: true,
-                            barcode: true,
+                            barcodes: true,
                             isBase: true,
                         },
                     },
-                    ...(query.priceGroupId ? {
-                        priceGroupPrices: {
-                            where: { priceGroupId: query.priceGroupId },
-                            select: {
-                                unitCode: true,
-                                salePrice: true,
-                                priceGroupId: true,
-                            },
+                    priceGroupPrices: {
+                        select: {
+                            unitCode: true,
+                            salePrice: true,
+                            priceGroupId: true,
                         },
-                    } : {}),
+                    },
                 } as any,
                 orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
             });
@@ -642,10 +644,10 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
 
         if (hasItemCodePatch && normalizedItemCode) {
             await checkCodeUniqueness(companyId, normalizedItemCode, 'Item Code', productId);
-            const ownUnitConflict = existing.units.some((u: any) => {
+            const ownUnitConflict = (existing.units as any[]).some((u: any) => {
                 const unitCode = normalizeCode(u.unitCode);
-                const unitBarcode = normalizeCode(u.barcode);
-                return unitCode === normalizedItemCode || unitBarcode === normalizedItemCode;
+                const unitBarcodes = normalizeCodeList(u.barcodes || []);
+                return unitCode === normalizedItemCode || unitBarcodes.includes(normalizedItemCode);
             });
             if (ownUnitConflict) {
                 throw AppError.badRequest(`Item Code '${normalizedItemCode}' conflicts with an existing unit code/barcode of this item`);
@@ -671,18 +673,24 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
 
             const finalItemCode = normalizedItemCode || normalizeCode(existing.itemCode);
             product = await prisma.$transaction(async (tx) => {
-                // Collect all unit codes/barcodes for synchronization
-                const unitBarcodes: string[] = [];
+                // Collect all unit-level barcodes for product-level index
+                const allUnitBarcodes: string[] = [];
                 const processedUnits = units.map((u: any) => {
                     const code = normalizeCode(u.unitCode);
-                    if (u.barcode && normalizeCode(u.barcode) !== code) {
-                        throw AppError.badRequest(`Unit barcode must match unit code for '${code}'`);
-                    }
-                    if (code) unitBarcodes.push(code);
+                    const unitBcs = normalizeCodeList(u.barcodes || []);
+                    const mergedUnitBarcodes = Array.from(new Set([code, ...unitBcs]));
+                    allUnitBarcodes.push(...mergedUnitBarcodes);
                     return {
-                        ...u,
+                        unitName: u.unitName,
                         unitCode: code,
-                        barcode: code // Enforce sync
+                        qtyInBaseUnit: Number(u.qtyInBaseUnit || 1),
+                        salePrice: Number(u.salePrice || 0),
+                        costPrice: Number(u.costPrice || 0),
+                        barcodes: mergedUnitBarcodes,
+                        isDefaultSaleUnit: Boolean(u.isDefaultSaleUnit),
+                        isBase: Boolean(u.isBase),
+                        id: u.id,
+                        minimumNegotiationPrice: u.minimumNegotiationPrice !== undefined ? u.minimumNegotiationPrice : null,
                     };
                 });
 
@@ -692,14 +700,16 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
                         throw AppError.badRequest(`Unit Code '${u.unitCode}' cannot match Item Code`);
                     }
                     await checkCodeUniqueness(companyId, u.unitCode, 'Unit Code', productId, u.id || undefined);
+                    for (const bc of u.barcodes.filter((b: string) => b !== u.unitCode)) {
+                        await checkCodeUniqueness(companyId, bc, 'Unit Barcode', productId, u.id || undefined);
+                    }
                 }
 
                 // Merge and update master barcodes
-                const existingBarcodes = normalizeCodeList(existing.barcodes || []);
                 const { barcodes: _ignoredBarcodes, ...restData } = data;
                 const mergedBarcodes = Array.from(new Set([
-                    ...(hasBarcodesPatch ? (normalizedRequestedBarcodes || []) : existingBarcodes),
-                    ...unitBarcodes
+                    ...(hasBarcodesPatch ? (normalizedRequestedBarcodes || []) : normalizeCodeList(existing.barcodes || [])),
+                    ...allUnitBarcodes
                 ]));
 
                 await tx.product.update({
@@ -718,7 +728,7 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
                 // Update existing units
                 for (const [unitId, incoming] of incomingById.entries()) {
                     if (!existingIds.has(unitId)) continue;
-                    await tx.productUnit.update({
+                    await (tx as any).productUnit.update({
                         where: { id: unitId },
                         data: {
                             unitName: incoming.unitName,
@@ -726,9 +736,10 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
                             qtyInBaseUnit: Number(incoming.qtyInBaseUnit),
                             salePrice: Number(incoming.salePrice),
                             costPrice: Number(incoming.costPrice),
-                            barcode: incoming.barcode,
+                            barcodes: incoming.barcodes,
                             isDefaultSaleUnit: Boolean(incoming.isDefaultSaleUnit),
                             isBase: Boolean(incoming.isBase),
+                            minimumNegotiationPrice: incoming.minimumNegotiationPrice !== undefined ? incoming.minimumNegotiationPrice : null,
                         },
                     });
                 }
@@ -736,7 +747,7 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
                 // Create new units
                 const newUnits = processedUnits.filter((u: any) => !u.id);
                 if (newUnits.length > 0) {
-                    await tx.productUnit.createMany({
+                    await (tx as any).productUnit.createMany({
                         data: newUnits.map((u: any) => ({
                             productId,
                             unitName: u.unitName,
@@ -744,9 +755,10 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
                             qtyInBaseUnit: Number(u.qtyInBaseUnit),
                             salePrice: Number(u.salePrice),
                             costPrice: Number(u.costPrice),
-                            barcode: u.barcode,
+                            barcodes: u.barcodes,
                             isDefaultSaleUnit: Boolean(u.isDefaultSaleUnit),
                             isBase: Boolean(u.isBase),
+                            minimumNegotiationPrice: u.minimumNegotiationPrice !== undefined ? u.minimumNegotiationPrice : null,
                         })),
                     });
                 }
@@ -757,7 +769,7 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
                     .filter((u: any) => !incomingIds.has(u.id))
                     .map((u: any) => u.id);
                 if (removedIds.length > 0) {
-                    await tx.productUnit.deleteMany({ where: { id: { in: removedIds } } });
+                    await (tx as any).productUnit.deleteMany({ where: { id: { in: removedIds } } });
                 }
 
                 return tx.product.findUnique({
@@ -813,30 +825,37 @@ productRoutes.post('/:id/units', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, 
         }
 
         const unitCode = normalizeCode(req.body.unitCode);
-        const providedBarcode = req.body.barcode ? normalizeCode(req.body.barcode) : null;
-        if (providedBarcode && providedBarcode !== unitCode) {
-            throw AppError.badRequest('Unit barcode must match unit code');
-        }
+        const requestedBarcodes = normalizeCodeList(req.body.barcodes || []);
+        // Always include unitCode itself as a scannable barcode
+        const mergedUnitBarcodes = Array.from(new Set([unitCode, ...requestedBarcodes]));
         if (unitCode === normalizeCode(product.itemCode)) {
             throw AppError.badRequest(`Unit Code '${unitCode}' cannot match Item Code`);
         }
 
-        // Strict Uniqueness Check
+        // Strict Uniqueness Check on unit code and each extra barcode
         await checkCodeUniqueness(companyId, unitCode, 'Unit Code');
+        for (const bc of requestedBarcodes) {
+            await checkCodeUniqueness(companyId, bc, 'Unit Barcode');
+        }
 
         const unit = await prisma.$transaction(async (tx) => {
-            const created = await tx.productUnit.create({
+            const created = await (tx as any).productUnit.create({
                 data: {
-                    ...req.body,
                     productId: req.params.id as string,
+                    unitName: req.body.unitName,
                     unitCode,
-                    barcode: unitCode,
+                    qtyInBaseUnit: Number(req.body.qtyInBaseUnit || 1),
+                    salePrice: Number(req.body.salePrice || 0),
+                    costPrice: Number(req.body.costPrice || 0),
+                    barcodes: mergedUnitBarcodes,
+                    isDefaultSaleUnit: Boolean(req.body.isDefaultSaleUnit),
+                    isBase: Boolean(req.body.isBase),
                 },
             });
 
             const mergedBarcodes = Array.from(new Set([
                 ...normalizeCodeList((product as any).barcodes || []),
-                unitCode,
+                ...mergedUnitBarcodes,
             ]));
             await tx.product.update({
                 where: { id: product.id },
@@ -895,6 +914,7 @@ productRoutes.patch('/:productId/units/:unitId', requireAnyPermission(PERMISSION
         if (typeof req.body.costPrice === 'number') updateData.costPrice = Number(req.body.costPrice);
         if (typeof req.body.isDefaultSaleUnit === 'boolean') updateData.isDefaultSaleUnit = req.body.isDefaultSaleUnit;
         if (typeof req.body.isBase === 'boolean') updateData.isBase = req.body.isBase;
+        if (req.body.minimumNegotiationPrice !== undefined) updateData.minimumNegotiationPrice = req.body.minimumNegotiationPrice;
 
         const requestedUnitCode = typeof req.body.unitCode === 'string' ? normalizeCode(req.body.unitCode) : undefined;
         const currentUnitCode = normalizeCode(unit.unitCode);
@@ -915,7 +935,24 @@ productRoutes.patch('/:productId/units/:unitId', requireAnyPermission(PERMISSION
         if (requestedUnitCode) {
             await checkCodeUniqueness(companyId, requestedUnitCode, 'Unit Code', productId, unit.id);
             updateData.unitCode = requestedUnitCode;
-            updateData.barcode = requestedUnitCode;
+        }
+
+        // Handle barcodes array update
+        if (Array.isArray(req.body.barcodes)) {
+            const requestedBarcodes = normalizeCodeList(req.body.barcodes);
+            const effectiveUnitCode = requestedUnitCode || normalizeCode(unit.unitCode);
+            const mergedUnitBarcodes = Array.from(new Set([effectiveUnitCode, ...requestedBarcodes]));
+            for (const bc of requestedBarcodes) {
+                await checkCodeUniqueness(companyId, bc, 'Unit Barcode', productId, unit.id);
+            }
+            updateData.barcodes = mergedUnitBarcodes;
+        } else if (requestedUnitCode) {
+            // If unit code changed but no explicit barcodes given, update the unit code barcode entry
+            const currentBarcodes: string[] = normalizeCodeList((unit as any).barcodes || []);
+            updateData.barcodes = Array.from(new Set([
+                requestedUnitCode,
+                ...currentBarcodes.filter((b) => b !== normalizeCode(unit.unitCode))
+            ]));
         }
 
         if (Object.keys(updateData).length === 0) {
@@ -965,11 +1002,13 @@ productRoutes.delete('/:productId/units/:unitId', requireAnyPermission(PERMISSIO
         if ((unit as any)?.isBase) throw AppError.badRequest('Cannot delete Base Unit. Modify structure instead.');
 
         const unitCode = normalizeCode(unit.unitCode);
-        const unitBarcode = normalizeCode(unit.barcode);
+        const unitBarcodes = normalizeCodeList((unit as any).barcodes || []);
 
         await prisma.$transaction(async (tx) => {
-            await tx.productUnit.delete({ where: { id: unit.id } });
-            const remainingBarcodes = normalizeCodeList((unit.product as any).barcodes || []).filter((bc) => bc !== unitCode && bc !== unitBarcode);
+            await (tx as any).productUnit.delete({ where: { id: unit.id } });
+            const remainingBarcodes = normalizeCodeList((unit.product as any).barcodes || []).filter(
+                (bc) => !unitBarcodes.includes(bc) && bc !== unitCode
+            );
             await tx.product.update({
                 where: { id: unit.product.id },
                 data: { barcodes: remainingBarcodes },
@@ -1002,10 +1041,12 @@ productRoutes.put('/:id/pricing', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT,
                         productId: req.params.id as string,
                         priceGroupId: p.priceGroupId,
                         unitCode: p.unitCode,
-                        salePrice: p.salePrice
+                        salePrice: p.salePrice,
+                        minimumNegotiationPrice: p.minimumNegotiationPrice !== undefined ? p.minimumNegotiationPrice : null
                     },
                     update: {
-                        salePrice: p.salePrice
+                        salePrice: p.salePrice,
+                        minimumNegotiationPrice: p.minimumNegotiationPrice !== undefined ? p.minimumNegotiationPrice : null
                     }
                 })
             )

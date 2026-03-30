@@ -34,6 +34,54 @@ function nextItemCode(): string {
     return `${String(Date.now()).slice(-10)}${String(seq).padStart(6, '0')}`;
 }
 
+async function seedDefaultAccounting(companyId: string): Promise<void> {
+    const [
+        cash,
+        bank,
+        ar,
+        ap,
+        inventory,
+        salesRevenue,
+        salesReturn,
+        cogs,
+        outputTax,
+        inputTax,
+    ] = await Promise.all([
+        db.account.create({ data: { companyId, code: '1100', name: 'Cash', type: 'ASSET', isSystem: true } }),
+        db.account.create({ data: { companyId, code: '1200', name: 'Bank', type: 'ASSET', isSystem: true } }),
+        db.account.create({ data: { companyId, code: '1110', name: 'Accounts Receivable', type: 'ASSET', isSystem: true } }),
+        db.account.create({ data: { companyId, code: '2100', name: 'Accounts Payable', type: 'LIABILITY', isSystem: true } }),
+        db.account.create({ data: { companyId, code: '1300', name: 'Inventory', type: 'ASSET', isSystem: true } }),
+        db.account.create({ data: { companyId, code: '4100', name: 'Sales Revenue', type: 'REVENUE', isSystem: true } }),
+        db.account.create({ data: { companyId, code: '4150', name: 'Sales Return', type: 'REVENUE', isSystem: true } }),
+        db.account.create({ data: { companyId, code: '5400', name: 'COGS', type: 'EXPENSE', isSystem: true } }),
+        db.account.create({ data: { companyId, code: '2200', name: 'Output Tax', type: 'LIABILITY', isSystem: true } }),
+        db.account.create({ data: { companyId, code: '1400', name: 'Input Tax', type: 'ASSET', isSystem: true } }),
+    ]);
+
+    const mappings = [
+        { mappingType: 'CASH', accountId: cash.id },
+        { mappingType: 'BANK', accountId: bank.id },
+        { mappingType: 'ACCOUNT_RECEIVABLE', accountId: ar.id },
+        { mappingType: 'ACCOUNT_PAYABLE', accountId: ap.id },
+        { mappingType: 'INVENTORY_ASSET', accountId: inventory.id },
+        { mappingType: 'SALES_REVENUE', accountId: salesRevenue.id },
+        { mappingType: 'SALES_RETURN', accountId: salesReturn.id },
+        { mappingType: 'COGS_EXPENSE', accountId: cogs.id },
+        { mappingType: 'OUTPUT_TAX', accountId: outputTax.id },
+        { mappingType: 'INPUT_TAX', accountId: inputTax.id },
+    ];
+
+    await db.accountMapping.createMany({
+        data: mappings.map((mapping) => ({
+            companyId,
+            mappingType: mapping.mappingType,
+            entityType: 'GLOBAL',
+            accountId: mapping.accountId,
+        })),
+    });
+}
+
 async function apiRequest(
     method: string,
     path: string,
@@ -46,10 +94,6 @@ async function apiRequest(
     const headers: Record<string, string> = {
         Authorization: `Bearer ${options.token}`,
     };
-
-    if (options.branchId) {
-        headers['x-branch-id'] = options.branchId;
-    }
 
     let body: string | undefined;
     if (options.body !== undefined) {
@@ -87,6 +131,7 @@ async function createTestUserContext(params: {
         },
     });
     createdCompanyIds.add(company.id);
+    await seedDefaultAccounting(company.id);
 
     const branches: Array<{ id: string }> = [];
     for (let i = 0; i < branchCount; i += 1) {
@@ -226,8 +271,6 @@ async function upsertStock(params: {
             branchId: params.branchId,
             productId: params.productId,
             unitCode: params.unitCode,
-            batchNo: null,
-            expDate: null,
         },
         select: { id: true },
     });
@@ -250,8 +293,6 @@ async function upsertStock(params: {
             unitCode: params.unitCode,
             qtyOnHand: params.qty,
             avgCost: params.avgCost ?? 0,
-            batchNo: null,
-            expDate: null,
         },
     });
 }
@@ -343,8 +384,6 @@ describe.sequential('Critical Integration Flows', { timeout: 120000 }, () => {
                 branchId,
                 productId: product.id,
                 unitCode: product.unitCode,
-                batchNo: null,
-                expDate: null,
             },
             data: {
                 qtyOnHand: { increment: 10 },
@@ -375,12 +414,74 @@ describe.sequential('Critical Integration Flows', { timeout: 120000 }, () => {
                 branchId,
                 productId: product.id,
                 unitCode: product.unitCode,
-                batchNo: null,
-                expDate: null,
             },
             select: { qtyOnHand: true },
         });
         expect(Number(stockAfter?.qtyOnHand)).toBe(6);
+    });
+
+    it('POS unposted list should include non-terminal invoices across accessible branches when no branch filter is provided', async () => {
+        const ctx = await createTestUserContext({
+            branchCount: 2,
+            accessibleBranchIndexes: [0, 1],
+            permissions: [PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS],
+        });
+        const activeBranchId = ctx.branchIds[0]!;
+        const otherBranchId = ctx.branchIds[1]!;
+        const product = await createProduct({
+            companyId: ctx.companyId,
+            name: unique('Cross Branch Product'),
+            salePrice: 25,
+            costPrice: 10,
+            taxRate: 0,
+        });
+
+        const invoiceNo = unique('INV');
+        const unpostedInvoice = await db.pOSInvoice.create({
+            data: {
+                companyId: ctx.companyId,
+                branchId: otherBranchId,
+                invoiceNo,
+                subtotal: 100,
+                discountTotal: 0,
+                taxTotal: 0,
+                grandTotal: 100,
+                paymentMethod: 'CASH',
+                cashReceived: 0,
+                changeGiven: 0,
+                status: 'UNPOSTED',
+                isPosted: false,
+                createdById: ctx.userId,
+                posTerminalId: null,
+                notes: 'Created from non-terminal flow',
+                items: {
+                    create: [
+                        {
+                            productId: product.id,
+                            unitCode: product.unitCode,
+                            qty: 4,
+                            unitPrice: 25,
+                            discount: 0,
+                            taxAmount: 0,
+                            lineTotal: 100,
+                        },
+                    ],
+                },
+            },
+            select: { id: true },
+        });
+
+        const unpostedList = await apiRequest('GET', '/pos/unposted', {
+            token: ctx.token,
+            branchId: activeBranchId,
+        });
+
+        expect(unpostedList.status).toBe(200);
+        expect(unpostedList.body.success).toBe(true);
+        expect(Array.isArray(unpostedList.body.data)).toBe(true);
+
+        const listedIds = (unpostedList.body.data || []).map((row: any) => row.id);
+        expect(listedIds).toContain(unpostedInvoice.id);
     });
 
     it('Purchase + return + payment should produce consistent totals and stock', async () => {
@@ -433,8 +534,6 @@ describe.sequential('Critical Integration Flows', { timeout: 120000 }, () => {
                 branchId,
                 productId: product.id,
                 unitCode: product.unitCode,
-                batchNo: null,
-                expDate: null,
             },
             select: { qtyOnHand: true },
         });
@@ -463,8 +562,6 @@ describe.sequential('Critical Integration Flows', { timeout: 120000 }, () => {
                 branchId,
                 productId: product.id,
                 unitCode: product.unitCode,
-                batchNo: null,
-                expDate: null,
             },
             select: { qtyOnHand: true },
         });
@@ -550,8 +647,6 @@ describe.sequential('Critical Integration Flows', { timeout: 120000 }, () => {
                 branchId: fromBranchId,
                 productId: product.id,
                 unitCode: product.unitCode,
-                batchNo: null,
-                expDate: null,
             },
             select: { qtyOnHand: true },
         });
@@ -570,8 +665,6 @@ describe.sequential('Critical Integration Flows', { timeout: 120000 }, () => {
                 branchId: toBranchId,
                 productId: product.id,
                 unitCode: product.unitCode,
-                batchNo: null,
-                expDate: null,
             },
             select: { qtyOnHand: true },
         });

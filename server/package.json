@@ -1,11 +1,12 @@
 {
-    "name": "enterprise-erp-server",
+    "name": "SOLVANTA-erp-server",
     "version": "1.0.0",
-    "description": "Enterprise CRM + ERP + POS + Accounting API Server",
+    "description": "SOLVANTA CRM + ERP + POS + Accounting API Server",
     "main": "dist/index.js",
     "scripts": {
         "dev": "tsx watch src/index.ts",
         "build": "tsc",
+        "typecheck": "tsc --pretty false",
         "start": "node dist/index.js",
         "seed": "tsx prisma/seed.ts",
         "db:generate": "prisma generate",
@@ -13,6 +14,7 @@
         "db:migrate": "prisma migrate dev",
         "db:studio": "prisma studio",
         "bootstrap:super-admin": "tsx scripts/bootstrap-super-admin.ts",
+        "sync:admin-role-permissions": "tsx scripts/sync-admin-role-permissions.ts",
         "test": "vitest run",
         "test:watch": "vitest"
     },
@@ -37,12 +39,14 @@
         "jsonwebtoken": "^9.0.2",
         "morgan": "^1.10.0",
         "prisma": "^6.3.1",
+        "sanitize-html": "^2.17.2",
         "tsx": "^4.19.2",
         "typescript": "^5.7.3",
         "winston": "^3.17.0",
         "zod": "^3.24.1"
     },
     "devDependencies": {
+        "@types/sanitize-html": "^2.16.1",
         "vitest": "^3.0.5"
     }
 }

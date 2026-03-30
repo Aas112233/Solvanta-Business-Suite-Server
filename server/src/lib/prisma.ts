@@ -33,7 +33,7 @@ export const prisma = basePrisma.$extends({
                     'PurchaseInvoice', 'PurchaseReturn', 'PurchasePayment', 'Transfer', 'StockCount',
                     'SalesOrder', 'SalesOrderItem',
                     'Account', 'JournalEntry', 'Expense', 'PeriodClose', 'AuditLog', 'GlobalString',
-                    'DocumentCounter'
+                    'DocumentCounter', 'Bom', 'ProductionOrder', 'ProductionMaterialConsumption', 'ProductionCompletion'
                 ]);
                 const isCompanyScoped = companyScopedModels.has(model);
 

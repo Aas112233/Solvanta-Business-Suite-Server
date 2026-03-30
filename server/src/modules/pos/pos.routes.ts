@@ -35,13 +35,15 @@ async function assertBranchAccessible(req: any, branchId: string): Promise<void>
 }
 
 const posItemSchema = z.object({
-    productId: z.string().min(1),
-    unitCode: z.string().min(1),
+    productId: z.string().optional().nullable(),
+    serviceId: z.string().optional().nullable(),
+    unitCode: z.string().optional().nullable(),
     qty: z.number().positive(),
-    unitPrice: z.number().min(0).optional(),
+    unitPrice: z.number().min(0).optional().nullable(),
     discount: z.number().min(0).optional().default(0),
     taxAmount: z.number().min(0).optional().default(0),
-    lineTotal: z.number().min(0).optional(),});
+    lineTotal: z.number().min(0).optional().nullable(),
+});
 
 const posInvoiceSchema = z.object({
     customerId: z.string().optional().nullable(),
@@ -1159,11 +1161,19 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
             }
         }
 
+        const requestingUser: any = await prisma.user.findFirst({
+            where: { id: userId, companyId },
+            include: { role: { select: { name: true, permissions: true } } }
+        });
+        const managerOrAdmin = requestingUser ? isManagerOrAdmin(requestingUser.role?.name || '', requestingUser.role?.permissions || []) : false;
+
         const result = await prisma.$transaction(async (tx) => {
             const requestedItems = items as Array<{
                 productId: string;
+                serviceId?: string;
                 unitCode: string;
                 qty: number;
+                unitPrice?: number;
                 discount?: number;
             }>;
 
@@ -1214,7 +1224,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
             const activeSalesTaxById = new Map(activeSalesTaxes.map((tax) => [tax.id, tax]));
             const defaultSalesTax = activeSalesTaxes.find((tax) => tax.isDefault) || activeSalesTaxes[0];
 
-            const priceOverrides = new Map<string, number>();
+            const priceOverrides = new Map<string, { salePrice: number; minPrice: number | null }>();
             const customerPriceGroupId = customer?.priceGroupId || null;
             const terminalPriceGroupId = posSession?.terminalPriceGroupId || null;
             const effectivePriceGroupId = posSession?.policy?.pricePriority === 'TERMINAL_FIRST'
@@ -1226,16 +1236,50 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                         priceGroupId: effectivePriceGroupId,
                         productId: { in: productIds },
                     },
-                    select: { productId: true, unitCode: true, salePrice: true },
+                    select: { productId: true, unitCode: true, salePrice: true, minimumNegotiationPrice: true },
                 });
                 for (const row of rows) {
                     const key = `${row.productId}::${String(row.unitCode).toUpperCase()}`;
-                    priceOverrides.set(key, Number(row.salePrice));
+                    priceOverrides.set(key, {
+                        salePrice: Number(row.salePrice),
+                        minPrice: row.minimumNegotiationPrice != null ? Number(row.minimumNegotiationPrice) : null,
+                    });
                 }
             }
 
             const taxConfigErrors = new Set<string>();
             const computedItems = requestedItems.map((item) => {
+                // Handle SERVICE items
+                if (item.serviceId) {
+                    const qty = Number(item.qty);
+                    if (!Number.isFinite(qty) || qty <= 0) throw AppError.badRequest('Invalid quantity');
+
+                    const unitPrice = Number(item.unitPrice || 0);
+                    const discount = Number(item.discount || 0);
+                    if (!Number.isFinite(unitPrice) || unitPrice < 0) throw AppError.badRequest('Invalid unit price');
+                    if (!Number.isFinite(discount) || discount < 0) throw AppError.badRequest('Invalid discount');
+
+                    const gross = unitPrice * qty;
+                    if (discount > gross) throw AppError.badRequest('Discount cannot exceed Total Amount');
+
+                    const lineSubtotal = gross - discount;
+                    // Services use default tax rate
+                    const taxRate = defaultSalesTax ? Number(defaultSalesTax.rate) : 0;
+                    const taxAmount = lineSubtotal * taxRate;
+
+                    return {
+                        serviceId: item.serviceId,
+                        unitCode: item.unitCode || 'SERVICE',
+                        qty,
+                        unitPrice,
+                        taxRate,
+                        discount,
+                        taxAmount,
+                        lineTotal: lineSubtotal,
+                    };
+                }
+
+                // Handle PRODUCT items (existing logic)
                 const product = productById.get(item.productId);
                 if (!product) throw AppError.badRequest(`Product ${item.productId} not found`);
 
@@ -1248,14 +1292,27 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                 if (!Number.isFinite(qty) || qty <= 0) throw AppError.badRequest('Invalid quantity');
 
                 const overrideKey = `${item.productId}::${String(unit.unitCode).toUpperCase()}`;
-                const unitPrice = priceOverrides.has(overrideKey)
-                    ? Number(priceOverrides.get(overrideKey))
+                const hasOverride = priceOverrides.has(overrideKey);
+                const overrideData = priceOverrides.get(overrideKey);
+                const unitPrice = hasOverride && overrideData
+                    ? Number(overrideData.salePrice)
                     : Number(unit.salePrice);
+                const minPrice = hasOverride && overrideData
+                    ? (overrideData.minPrice ?? unit.minimumNegotiationPrice)
+                    : unit.minimumNegotiationPrice;
                 const discount = Number(item.discount || 0);
                 if (!Number.isFinite(discount) || discount < 0) throw AppError.badRequest('Invalid discount');
 
                 const gross = unitPrice * qty;
-                if (discount > gross) throw AppError.badRequest('Discount cannot exceed line amount');
+                if (discount > gross) throw AppError.badRequest('Discount cannot exceed Total Amount');
+
+                const lineSubtotalPreview = gross - discount;
+                const effectiveUnitPrice = lineSubtotalPreview / qty;
+                if (minPrice != null && effectiveUnitPrice < minPrice) {
+                    if (!managerOrAdmin) {
+                        throw AppError.badRequest(`Price cannot be lower than the minimum allowed price (${minPrice} SAR) for item ${product.name}`);
+                    }
+                }
                 if (usePosSession) {
                     const maxPct = Number(posSession!.policy.maxDiscountPct || 0);
                     const maxAllowed = gross * (maxPct / 100);
@@ -1301,7 +1358,8 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     lineTotal: lineSubtotal,
                 };
             }).filter(Boolean) as Array<{
-                productId: string;
+                productId?: string;
+                serviceId?: string;
                 unitCode: string;
                 qty: number;
                 unitPrice: number;
@@ -1474,11 +1532,12 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
 
             // Check stock availability for all items
             for (const item of computedItems) {
+                if (item.serviceId) continue;
                 const qtyAvailable = await InventoryService.getAvailableStockQty(tx as any, {
                     companyId,
                     branchId,
-                    productId: item.productId,
-                    unitCode: item.unitCode,
+                    productId: item.productId as string,
+                    unitCode: item.unitCode as string,
                 });
 
                 if (qtyAvailable < item.qty) {
@@ -1519,13 +1578,14 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     loyaltyPointsRedeemed: effectivePointsRedeemed,
                     items: {
                         create: computedItems.map((item) => ({
-                            productId: item.productId,
+                            productId: item.productId || null,
+                            serviceId: item.serviceId || null,
                             unitCode: item.unitCode,
                             qty: item.qty,
                             unitPrice: item.unitPrice,
                             discount: item.discount,
                             taxAmount: item.taxAmount,
-                            lineTotal: item.lineTotal, // This is already lineSubtotal in computedItems
+                            lineTotal: item.lineTotal,
                         })),
                     },
                 } as any,
@@ -1569,23 +1629,26 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
 
             // Only process stock and accounting if posted
             if (isPosted) {
-                // Deduct inventory stock for each item
+                // Deduct inventory stock for each PRODUCT item (skip services)
                 for (const item of computedItems) {
+                    // Skip service items - they don't have inventory impact
+                    if (item.serviceId) continue;
+
                     const qtyAvailable = await InventoryService.getAvailableStockQty(tx as any, {
                         companyId,
                         branchId,
-                        productId: item.productId,
+                        productId: item.productId!,
                         unitCode: item.unitCode,
-                });
+                    });
 
-                if (qtyAvailable < item.qty) {
+                    if (qtyAvailable < item.qty) {
                         throw AppError.badRequest(`Insufficient stock for product ${item.productId}`);
                     }
 
                     const { movement } = await InventoryService.mutateStock(tx, {
                         companyId,
                         branchId,
-                        productId: item.productId,
+                        productId: item.productId!,
                         unitCode: item.unitCode,
                         qtyChange: -item.qty,
                         cost: 0,
@@ -1610,10 +1673,13 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     subtotal: invoice.subtotal,
                     taxTotal: invoice.taxTotal,
                     grandTotal: invoice.grandTotal,
+                    cashReceived: invoice.cashReceived,
+                    changeGiven: invoice.changeGiven,
                     createdById: invoice.createdById,
                     createdAt: invoice.createdAt,
                     items: computedItems.map(i => ({
-                        productId: i.productId,
+                        productId: i.productId || '',
+                        serviceId: i.serviceId || '',
                         qty: i.qty,
                         unitPrice: i.unitPrice,
                         lineTotal: i.lineTotal,
@@ -1655,6 +1721,8 @@ posRoutes.get('/unposted', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSION
         if (branchId) {
             await assertBranchAccessible(req, String(branchId));
             where.branchId = String(branchId);
+        } else if (Array.isArray(req.userBranchIds) && req.userBranchIds.length > 0) {
+            where.branchId = { in: req.userBranchIds };
         } else {
             where.branchId = req.activeBranchId!;
         }
@@ -1722,7 +1790,8 @@ posRoutes.get('/unposted', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSION
                     companyId: req.user!.companyId,
                     branchId: inv.branchId,
                     productId: item.productId,
-                    unitCode: item.unitCode,                });
+                    unitCode: item.unitCode,
+                });
                 return { ...item, currentStock };
             }));
             return { ...inv, items: itemsWithStock };
@@ -1744,13 +1813,23 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
 
         for (const id of invoiceIds) {
             try {
-                await prisma.$transaction(async (tx) => {                    const invoice = await (tx as any).pOSInvoice.findFirst({
+                await prisma.$transaction(async (tx) => {
+                    const invoice = await (tx as any).pOSInvoice.findFirst({
                         where: { id, companyId, isPosted: false },
                         include: { items: true },
                     });
 
                     if (!invoice) throw AppError.notFound(`Invoice ${id} not found or already posted`);
                     await assertBranchAccessible(req, invoice.branchId);
+
+                    const accountingItems: Array<{
+                        productId: string;
+                        qty: number;
+                        unitPrice: number;
+                        lineTotal: number;
+                        taxAmount: number;
+                        cost: number;
+                    }> = [];
 
                     // Check stock again
                     for (const item of invoice.items) {
@@ -1759,13 +1838,13 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
                             branchId: invoice.branchId,
                             productId: item.productId,
                             unitCode: item.unitCode,
-                });
+                        });
 
-                if (qtyAvailable < item.qty) {
+                        if (qtyAvailable < item.qty) {
                             throw AppError.badRequest(`Insufficient stock for product ${item.productId} in invoice ${invoice.invoiceNo}`);
                         }
 
-                        await InventoryService.mutateStock(tx as any, {
+                        const { movement } = await InventoryService.mutateStock(tx as any, {
                             companyId,
                             branchId: invoice.branchId,
                             productId: item.productId,
@@ -1778,59 +1857,33 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
                             referenceId: invoice.id,
                             createdById: userId,
                         });
-                    }
-
-                    // Accounting
-                    const accounts = await tx.account.findMany({
-                        where: { companyId, code: { in: ['1100', '1200', '1110', '4100', '2200'] } },
-                    });
-                    const cashAcct = accounts.find((a) => a.code === '1100');
-                    const bankAcct = accounts.find((a) => a.code === '1200');
-                    const arAcct = accounts.find((a) => a.code === '1110');
-                    const salesAcct = accounts.find((a) => a.code === '4100');
-                    const vatPayableAcct = accounts.find((a) => a.code === '2200');
-
-                    if (salesAcct) {
-                        const entryNo = formatDocNo('JE', await nextCounter(tx as any, companyId, 'JOURNAL_ENTRY'));
-                        const lines: any[] = [];
-                        const netSales = new Decimal(invoice.grandTotal.toString()).minus(invoice.taxTotal || 0);
-
-                        if (invoice.paymentMethod === 'CASH' && cashAcct) {
-                            lines.push({ accountId: cashAcct.id, debit: invoice.grandTotal, credit: 0 });
-                        } else if (invoice.paymentMethod === 'CARD' && bankAcct) {
-                            lines.push({ accountId: bankAcct.id, debit: invoice.grandTotal, credit: 0 });
-                        } else if (invoice.paymentMethod === 'CREDIT' && arAcct) {
-                            lines.push({ accountId: arAcct.id, debit: invoice.grandTotal, credit: 0, partyType: 'CUSTOMER', partyId: invoice.customerId });
-                        } else if (invoice.paymentMethod === 'MIXED') {
-                            const netCash = new Decimal((invoice.cashReceived || 0).toString()).minus(invoice.changeGiven || 0);
-                            if (cashAcct && netCash.gt(0)) lines.push({ accountId: cashAcct.id, debit: netCash, credit: 0 });
-                            if (bankAcct) {
-                                const cardAmount = new Decimal(invoice.grandTotal.toString()).minus(netCash);
-                                if (cardAmount.gt(0)) lines.push({ accountId: bankAcct.id, debit: cardAmount, credit: 0 });
-                            }
-                        } else if (cashAcct) {
-                            lines.push({ accountId: cashAcct.id, debit: invoice.grandTotal, credit: 0 });
-                        }
-
-                        lines.push({ accountId: salesAcct.id, debit: 0, credit: netSales });
-                        if (vatPayableAcct && new Decimal((invoice.taxTotal || 0).toString()).gt(0)) {
-                            lines.push({ accountId: vatPayableAcct.id, debit: 0, credit: invoice.taxTotal });
-                        }
-
-                        await tx.journalEntry.create({
-                            data: {
-                                companyId,
-                                branchId: invoice.branchId,
-                                entryNo,
-                                date: new Date(),
-                                memo: `POS Batch Post - ${invoice.invoiceNo}`,
-                                sourceType: 'POSInvoice',
-                                sourceId: invoice.id,
-                                postedById: userId,
-                                lines: { create: lines },
-                            },
+                        accountingItems.push({
+                            productId: String(item.productId),
+                            qty: Number(item.qty || 0),
+                            unitPrice: Number(item.unitPrice || 0),
+                            lineTotal: Number(item.lineTotal || 0),
+                            taxAmount: Number(item.taxAmount || 0),
+                            cost: Number(movement?.cost || 0),
                         });
                     }
+
+                    // Strict accounting posting (mapping-driven + balanced journal enforced).
+                    await CoreAccountingService.recordPOSSale(tx as any, {
+                        id: invoice.id,
+                        companyId: invoice.companyId,
+                        branchId: invoice.branchId,
+                        invoiceNo: invoice.invoiceNo,
+                        customerId: invoice.customerId,
+                        paymentMethod: invoice.paymentMethod,
+                        subtotal: Number(invoice.subtotal || 0),
+                        taxTotal: Number(invoice.taxTotal || 0),
+                        grandTotal: Number(invoice.grandTotal || 0),
+                        cashReceived: Number(invoice.cashReceived || 0),
+                        changeGiven: Number(invoice.changeGiven || 0),
+                        createdById: invoice.createdById,
+                        createdAt: invoice.createdAt,
+                        items: accountingItems,
+                    });
 
                     // Mark as posted
                     await (tx as any).pOSInvoice.update({

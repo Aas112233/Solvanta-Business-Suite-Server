@@ -36,3 +36,18 @@ prisma/generated-client
 .cursor/
 .Agent/
 .agent/
+
+# Local-only app modules (not tracked in backend repo)
+# NOTE: client/ is now tracked - see below for exclusions
+# pos-electron/ remains excluded for now
+pos-electron/
+
+# Client-specific exclusions (tracked in this repo)
+client/node_modules/
+client/dist/
+client/build/
+client/.env
+client/.env.*
+client/*.log
+client/coverage/
+client/.cache/

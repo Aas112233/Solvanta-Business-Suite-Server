@@ -156,17 +156,50 @@ accountingRoutes.get('/journal-entries', requirePermission(PERMISSIONS.ACCOUNTIN
             if (endDate) where.date.lte = new Date(endDate as string);
         }
 
+        // First fetch entries without including lines
         const entries = await prisma.journalEntry.findMany({
             where,
-            include: { lines: { include: { account: true } } },
             orderBy: { date: 'desc' },
             skip: Number(skip),
             take: Number(take),
         });
 
+        // Then fetch lines separately (without include to avoid relation error)
+        const entryIds = entries.map(e => e.id);
+        const lines = entryIds.length > 0
+            ? await prisma.journalEntryLine.findMany({
+                where: { journalEntryId: { in: entryIds } }
+            })
+            : [];
+
+        // Fetch all accounts referenced by these lines
+        const accountIds = [...new Set(lines.map(l => l.accountId))];
+        const accounts = accountIds.length > 0
+            ? await prisma.account.findMany({
+                where: { id: { in: accountIds } }
+            })
+            : [];
+
+        // Create account lookup map
+        const accountMap = new Map(accounts.map(a => [a.id, a]));
+
+        // Build lines with accounts (only include lines with valid accounts)
+        const linesWithAccounts = lines
+            .filter(l => accountMap.has(l.accountId))
+            .map(l => ({
+                ...l,
+                account: accountMap.get(l.accountId)!
+            }));
+
+        // Group lines by entry
+        const entriesWithLines = entries.map(entry => ({
+            ...entry,
+            lines: linesWithAccounts.filter(l => l.journalEntryId === entry.id)
+        }));
+
         const count = await prisma.journalEntry.count({ where });
 
-        sendSuccess(res, { data: entries, meta: { total: count, skip: Number(skip), take: Number(take) } });
+        sendSuccess(res, { data: entriesWithLines, meta: { total: count, skip: Number(skip), take: Number(take) } });
     } catch (error) { next(error); }
 });
 

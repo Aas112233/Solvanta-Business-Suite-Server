@@ -11,6 +11,8 @@ export const globalStringRoutes = Router();
 globalStringRoutes.use(authenticate);
 
 // ── Validation Schemas ──────────────────────────────────────────
+const PAYMENT_METHOD_GROUPS = new Set(['SALE_PAYMENT_METHOD', 'PURCHASE_PAYMENT_METHOD']);
+
 const createSchema = z.object({
     group: z.string().min(1),
     value: z.string().min(1),
@@ -23,11 +25,13 @@ const createSchema = z.object({
 
 const updateSchema = z.object({
     value: z.string().min(1).optional(),
+    systemKey: z.string().min(1).optional(),
     link: z.string().optional(),
     color: z.string().optional(),
     description: z.string().optional(),
     isActive: z.boolean().optional(),
 });
+
 
 // ── GET / ───────────────────────────────────────────────────────
 // List all global strings for a group
@@ -49,12 +53,20 @@ globalStringRoutes.get('/', async (req, res, next) => {
 // Create a new global string. If a duplicate exists, return it instead of 409.
 globalStringRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_STRINGS), validate({ body: createSchema }), async (req, res, next) => {
     try {
-        const data = req.body;
+        const data = req.body as any;
         const companyId = req.user!.companyId;
+
+        // Normalize / validate for payment-method groups
+        if (PAYMENT_METHOD_GROUPS.has(String(data.group))) {
+            const sysKey = String(data.systemKey || '').trim().toUpperCase();
+            if (!sysKey) throw AppError.badRequest('systemKey is required for payment method groups');
+            data.systemKey = sysKey;
+        }
 
         // Check for existing record by systemKey or value
         const orConditions: any[] = [{ value: data.value }];
         if (data.systemKey) orConditions.push({ systemKey: data.systemKey });
+
 
         const existing = await (prisma as any).globalString.findFirst({
             where: { companyId, group: data.group, OR: orConditions }
@@ -97,7 +109,7 @@ globalStringRoutes.put('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_STRING
     try {
         const { id } = req.params;
         const companyId = req.user!.companyId;
-        const data = req.body;
+        const data = req.body as any;
 
         // Verify the record exists and belongs to this company
         const existing = await (prisma as any).globalString.findFirst({
@@ -107,13 +119,25 @@ globalStringRoutes.put('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_STRING
             throw new AppError('Global string not found', 404);
         }
 
+        if (PAYMENT_METHOD_GROUPS.has(String(existing.group))) {
+            if (data.systemKey !== undefined) {
+                const sysKey = String(data.systemKey || '').trim().toUpperCase();
+                if (!sysKey) throw AppError.badRequest('systemKey is required for payment method groups');
+                data.systemKey = sysKey;
+            } else if (!existing.systemKey) {
+                throw AppError.badRequest('systemKey is required for payment method groups');
+            }
+        }
+
         // Build update payload — only include fields that were sent
         const updatePayload: any = {};
         if (data.value !== undefined) updatePayload.value = data.value;
+        if (data.systemKey !== undefined) updatePayload.systemKey = data.systemKey;
         if (data.color !== undefined) updatePayload.color = data.color;
         if (data.link !== undefined) updatePayload.link = data.link;
         if (data.description !== undefined) updatePayload.description = data.description;
         if (data.isActive !== undefined) updatePayload.isActive = data.isActive;
+
 
         const result = await (prisma as any).globalString.update({
             where: { id },

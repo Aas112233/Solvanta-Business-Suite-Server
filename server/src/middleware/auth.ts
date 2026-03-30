@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 import { prisma, basePrisma } from '../lib/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { tenantStorage } from '../lib/tenantContext.js';
-import type { Permission } from '../config/permissions.js';
+import { ALL_PERMISSIONS, type Permission } from '../config/permissions.js';
 import { isEmailSuperAdmin } from './superAdmin.js';
 import {
     type FeatureFlags,
@@ -36,6 +36,7 @@ declare global {
         interface Request {
             user?: AuthUser;
             activeBranchId?: string;
+            userBranchIds?: string[];
         }
     }
 }
@@ -109,6 +110,7 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
         const moduleAccess = resolveFeatureFlags(superAdminSettings.featureFlags);
         const tenantStatus = sanitizeTenantStatus(superAdminSettings.status) ?? 'Active';
         const maintenance = resolveTenantMaintenance(superAdminSettings.maintenance);
+        const assignedBranchIds = user.branches.map((b) => b.branchId);
 
         if (!isSuperAdmin && tenantStatus === 'Suspended') {
             throw AppError.forbidden(superAdminSettings.statusReason || 'Tenant access is suspended by super admin');
@@ -118,30 +120,33 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
             throw AppError.forbidden(maintenance.message || 'Tenant access is temporarily disabled for maintenance');
         }
 
+        const superAdminBranchIds = isSuperAdmin
+            ? (await basePrisma.branch.findMany({
+                where: { companyId: user.companyId },
+                select: { id: true },
+            })).map((branch) => branch.id)
+            : [];
+
+        const effectiveBranchIds = isSuperAdmin
+            ? (superAdminBranchIds.length > 0 ? superAdminBranchIds : assignedBranchIds)
+            : assignedBranchIds;
+
         req.user = {
             id: user.id,
             companyId: userCoId,
             email: user.email,
             name: user.name,
             roleId: user.roleId,
-            permissions: user.role.permissions || [],
-            branchIds: user.branches.map((b) => b.branchId),
+            permissions: isSuperAdmin ? [...ALL_PERMISSIONS] : (user.role.permissions || []),
+            branchIds: effectiveBranchIds,
             isSuperAdmin,
             moduleAccess,
             tenantStatus,
             maintenance,
         };
 
-        // Extract active branch from header
-        const branchId = req.headers['x-branch-id'] as string | undefined;
-        if (branchId) {
-            const isAdmin = req.user.permissions.includes('admin.manageBranches');
-            if (!isAdmin && !req.user.branchIds.includes(branchId)) {
-                console.error('[Auth Error] Branch access denied:', { user: user.email, branchId });
-                throw AppError.forbidden('You do not have access to this branch');
-            }
-            req.activeBranchId = branchId;
-        }
+        // Global branch context is always resolved from the user's assigned branches.
+        req.activeBranchId = req.user.branchIds[0];
 
         // Setup Tenant Context for the rest of the request
         tenantStorage.run({
@@ -165,6 +170,11 @@ export function requirePermission(...permissions: Permission[]) {
     return (req: Request, _res: Response, next: NextFunction): void => {
         if (!req.user) {
             next(AppError.unauthorized());
+            return;
+        }
+
+        if (req.user.isSuperAdmin) {
+            next();
             return;
         }
 
@@ -209,6 +219,11 @@ export function requireAnyPermission(...permissions: Permission[]) {
             return;
         }
 
+        if (req.user.isSuperAdmin) {
+            next();
+            return;
+        }
+
         let effectivePermissions = permissions;
 
         if (!req.user.isSuperAdmin) {
@@ -243,9 +258,23 @@ export function requireAnyPermission(...permissions: Permission[]) {
 }
 
 export function requireBranch(req: Request, _res: Response, next: NextFunction): void {
-    if (!req.activeBranchId) {
-        next(AppError.badRequest('x-branch-id header is required for this operation'));
+    if (!req.user) {
+        next(AppError.unauthorized());
         return;
     }
+
+    // Always populate all assigned branch IDs for list endpoints
+    req.userBranchIds = req.user.branchIds;
+
+    // Auto-default activeBranchId to first assigned branch
+    if (!req.activeBranchId) {
+        if (req.user.branchIds.length > 0) {
+            req.activeBranchId = req.user.branchIds[0];
+        } else {
+            next(AppError.badRequest('No branch assigned to your account'));
+            return;
+        }
+    }
+
     next();
 }

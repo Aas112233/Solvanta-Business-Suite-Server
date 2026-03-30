@@ -256,7 +256,8 @@ purchaseRoutes.get('/orders/:id', requirePermission(PERMISSIONS.PURCHASE_VIEW), 
                                 nameArabic: true,
                                 taxRate: true,
                                 tax: { select: { rate: true } },
-                                units: { select: { unitCode: true, unitName: true, barcode: true, qtyInBaseUnit: true } }
+                                // @ts-ignore – barcodes[] added to schema, Prisma client regeneration required
+                                units: { select: { unitCode: true, unitName: true, barcodes: true, qtyInBaseUnit: true } }
                             }
                         }
                     }
@@ -466,7 +467,6 @@ purchaseRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.PURCHAS
                             unitCost: item.unitCost,
                             taxAmount: item.taxAmount,
                             lineTotal: item.lineTotal,
-                            // batches/expiry usually added at receipt, but we'll default for simplicity if needed
                         }))
                     }
                 },
@@ -493,16 +493,24 @@ purchaseRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.PURCHAS
                 });
             }
 
-            // TODO(Accounting): Record Purchase Receipt for PO Conversion
-            // await CoreAccountingService.recordJournalEntry(tx as any, {
-            //     type: 'PURCHASE_RECEIPT',
-            //     companyId,
-            //     branchId: po.branchId,
-            //     referenceType: 'PurchaseInvoice',
-            //     referenceId: invoice.id,
-            //     totalAmount: invoice.grandTotal,
-            //     description: `Purchase Invoice ${purchaseNo} converted from PO ${po.poNo}`
-            // });
+            await CoreAccountingService.recordPurchaseReceipt(tx as any, {
+                id: invoice.id,
+                companyId,
+                branchId: po.branchId,
+                supplierId: po.supplierId,
+                purchaseNo: invoice.purchaseNo,
+                grandTotal: Number(invoice.grandTotal || 0),
+                taxTotal: Number(invoice.taxTotal || 0),
+                createdAt: invoice.createdAt,
+                createdById: userId,
+                items: (invoice.items || []).map((item: any) => ({
+                    productId: item.productId,
+                    qty: Number(item.qty || 0),
+                    unitCost: Number(item.unitCost || 0),
+                    taxAmount: Number(item.taxAmount || 0),
+                    lineTotal: Number(item.lineTotal || 0),
+                })),
+            });
 
             return invoice;
         });
@@ -627,11 +635,14 @@ purchaseRoutes.get('/control/overview', requirePermission(PERMISSIONS.PURCHASE_V
         const { branchId, productId, supplierId, unitCode, historyLimit } = query;
 
         if (branchId) await assertBranchAccessible(req, branchId);
+        const branchScope = branchId
+            ? { branchId }
+            : (isBranchAdmin(req) ? {} : { branchId: { in: req.user!.branchIds } });
 
         const invoiceScope: any = {
             companyId,
             status: { not: 'CANCELLED' } as any,
-            ...(branchId ? { branchId } : {}),
+            ...branchScope,
             ...(supplierId ? { supplierId } : {}),
         };
 
@@ -676,7 +687,7 @@ purchaseRoutes.get('/control/overview', requirePermission(PERMISSIONS.PURCHASE_V
             prisma.purchaseOrder.findMany({
                 where: {
                     companyId,
-                    ...(branchId ? { branchId } : {}),
+                    ...branchScope,
                     status: { in: ['DRAFT', 'PENDING'] },
                 },
                 include: {
@@ -691,7 +702,7 @@ purchaseRoutes.get('/control/overview', requirePermission(PERMISSIONS.PURCHASE_V
             prisma.purchaseOrder.findMany({
                 where: {
                     companyId,
-                    ...(branchId ? { branchId } : {}),
+                    ...branchScope,
                     status: { in: ['PENDING', 'ORDERED', 'PARTIAL'] },
                 },
                 include: {
@@ -923,16 +934,24 @@ purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), validat
                 });
             }
 
-            // TODO(Accounting): Record Purchase Receipt
-            // await CoreAccountingService.recordJournalEntry(tx as any, {
-            //     type: 'PURCHASE_RECEIPT',
-            //     companyId,
-            //     branchId,
-            //     referenceType: 'PurchaseInvoice',
-            //     referenceId: invoice.id,
-            //     totalAmount: invoice.grandTotal,
-            //     description: `Purchase Invoice ${invoice.purchaseNo} created`
-            // });
+            await CoreAccountingService.recordPurchaseReceipt(tx as any, {
+                id: invoice.id,
+                companyId,
+                branchId,
+                supplierId,
+                purchaseNo: invoice.purchaseNo,
+                grandTotal: Number(invoice.grandTotal || 0),
+                taxTotal: Number(invoice.taxTotal || 0),
+                createdAt: invoice.createdAt,
+                createdById: userId,
+                items: (invoice.items || []).map((item: any) => ({
+                    productId: item.productId,
+                    qty: Number(item.qty || 0),
+                    unitCost: Number(item.unitCost || 0),
+                    taxAmount: Number(item.taxAmount || 0),
+                    lineTotal: Number(item.lineTotal || 0),
+                })),
+            });
 
             return invoice;
         }, { maxWait: 10000, timeout: 20000 });
@@ -1107,21 +1126,28 @@ purchaseRoutes.put('/:id', requirePermission(PERMISSIONS.PURCHASE_CREATE), valid
                 });
             }
 
-            // 7. Accounting 
-            // TODO(Accounting): Record Purchase Update
-            // await CoreAccountingService.recordJournalEntry(tx as any, {
-            //     type: 'PURCHASE_RECEIPT',
-            //     companyId,
-            //     branchId: branchId,
-            //     referenceType: 'PurchaseInvoice',
-            //     referenceId: id,
-            //     totalAmount: newGrandTotal,
-            //     description: `Purchase Invoice ${existing.purchaseNo} updated`
-            // });
-
-            // Delete old JE
+            // 7. Accounting: replace old receipt JE atomically with new strict posting.
             await tx.journalEntry.deleteMany({
                 where: { sourceType: 'PurchaseInvoice', sourceId: id }
+            });
+
+            await CoreAccountingService.recordPurchaseReceipt(tx as any, {
+                id,
+                companyId,
+                branchId,
+                supplierId,
+                purchaseNo: existing.purchaseNo,
+                grandTotal: newGrandTotal,
+                taxTotal: newTaxTotal,
+                createdAt: new Date(),
+                createdById: userId,
+                items: sanitizedNewItems.map((item: any) => ({
+                    productId: item.productId,
+                    qty: Number(item.qty || 0),
+                    unitCost: Number(item.unitCost || 0),
+                    taxAmount: Number(item.taxAmount || 0),
+                    lineTotal: Number(item.lineTotal || 0),
+                })),
             });
 
             return { id, message: 'Purchase Invoice updated successfully' };
@@ -1204,7 +1230,7 @@ purchaseRoutes.get('/returns/:id', requirePermission(PERMISSIONS.PURCHASE_VIEW),
                                 nameArabic: true,
                                 taxRate: true,
                                 tax: { select: { rate: true } },
-                                units: { select: { unitCode: true, unitName: true, barcode: true, qtyInBaseUnit: true } }
+                                units: { select: { unitCode: true, unitName: true, barcodes: true, qtyInBaseUnit: true } }
                             }
                         },
                         purchaseItem: {
@@ -1322,6 +1348,10 @@ purchaseRoutes.post('/:id/payments', requirePermission(PERMISSIONS.PURCHASE_PAYM
         const companyId = req.user!.companyId;
         const userId = req.user!.id;
         const { amount, paymentMethod, paymentDate, referenceNo, notes } = req.body as z.infer<typeof purchasePaymentSchema>;
+        const normalizedPaymentMethod = String(paymentMethod || '').trim().toUpperCase();
+        if (!['CASH', 'CARD', 'BANK_TRANSFER'].includes(normalizedPaymentMethod)) {
+            throw AppError.badRequest('Payment method must be CASH, CARD, or BANK_TRANSFER');
+        }
 
         const result = await prisma.$transaction(async (tx) => {
             const branchScope = isBranchAdmin(req) ? {} : { branchId: { in: req.user!.branchIds } };
@@ -1364,7 +1394,7 @@ purchaseRoutes.post('/:id/payments', requirePermission(PERMISSIONS.PURCHASE_PAYM
                     paymentNo,
                     paymentDate: postedAt,
                     amount: Number(amount),
-                    paymentMethod,
+                    paymentMethod: normalizedPaymentMethod,
                     referenceNo,
                     notes,
                     status: 'POSTED',
@@ -1388,18 +1418,22 @@ purchaseRoutes.post('/:id/payments', requirePermission(PERMISSIONS.PURCHASE_PAYM
                 });
             }
 
-            // TODO(Accounting): Record Purchase Payment
-            // await CoreAccountingService.recordJournalEntry(tx, {
-            //     type: 'PURCHASE_PAYMENT',
-            //     companyId,
-            //     branchId: invoice.branchId,
-            //     referenceType: 'PurchasePayment',
-            //     referenceId: payment.id,
-            //     totalAmount: payment.amount,
-            //     description: `Payment ${paymentNo} made against invoice ${invoice.purchaseNo}`
-            // });
+            const journalEntry = await CoreAccountingService.recordPurchasePayment(tx as any, {
+                id: payment.id,
+                companyId,
+                branchId: invoice.branchId,
+                supplierId: invoice.supplierId,
+                purchaseNo: invoice.purchaseNo,
+                paymentNo: payment.paymentNo,
+                amount: Number(payment.amount || 0),
+                paymentMethod: normalizedPaymentMethod,
+                paymentDate: payment.paymentDate,
+                postedById: userId,
+                referenceNo: payment.referenceNo,
+                notes: payment.notes,
+            });
 
-            return payment;
+            return { ...payment, journalEntryNo: journalEntry.entryNo };
         }, { maxWait: 10000, timeout: 20000 });
 
         sendSuccess(res, result, undefined, 201);
@@ -1526,25 +1560,33 @@ purchaseRoutes.post('/:id/returns', requirePermission(PERMISSIONS.PURCHASE_RETUR
                     unitCode: item.unitCode,
                     qtyChange: -Math.abs(item.qty), // Drop stock
                     cost: Number(item.unitCost || 0),
-                    type: 'PURCHASE_RETURN',
+                    type: 'RETURN',
                     referenceType: 'PurchaseReturn',
                     referenceId: purchaseReturn.id,
                     createdById: userId,
                 });
             }
 
-            // TODO(Accounting): Record Purchase Return
-            // await CoreAccountingService.recordJournalEntry(tx, {
-            //     type: 'PURCHASE_RETURN',
-            //     companyId,
-            //     branchId: invoice.branchId,
-            //     referenceType: 'PurchaseReturn',
-            //     referenceId: purchaseReturn.id,
-            //     totalAmount: purchaseReturn.grandTotal,
-            //     description: `Purchase Return ${returnNo} posted`
-            // });
+            const journalEntry = await CoreAccountingService.recordPurchaseReturn(tx as any, {
+                id: purchaseReturn.id,
+                companyId,
+                branchId: invoice.branchId,
+                supplierId: invoice.supplierId,
+                returnNo,
+                purchaseNo: invoice.purchaseNo,
+                grandTotal: Number(purchaseReturn.grandTotal || 0),
+                taxTotal: Number(purchaseReturn.taxTotal || 0),
+                postedAt,
+                postedById: userId,
+                items: preparedItems.map((item) => ({
+                    productId: item.productId,
+                    qty: Number(item.qty || 0),
+                    unitCost: Number(item.unitCost || 0),
+                    lineTotal: Number(item.lineTotal || 0),
+                })),
+            });
 
-            return purchaseReturn;
+            return { ...purchaseReturn, journalEntryNo: journalEntry.entryNo };
         }, { maxWait: 10000, timeout: 20000 });
 
         sendSuccess(res, result, undefined, 201);
@@ -1700,6 +1742,32 @@ purchaseRoutes.put('/returns/:id', requirePermission(PERMISSIONS.PURCHASE_RETURN
                 });
             }
 
+            await tx.journalEntry.deleteMany({
+                where: {
+                    sourceType: 'PurchaseReturn',
+                    sourceId: existing.id,
+                },
+            });
+
+            await CoreAccountingService.recordPurchaseReturn(tx as any, {
+                id: existing.id,
+                companyId,
+                branchId: existing.branchId,
+                supplierId: existing.supplierId,
+                returnNo: existing.returnNo,
+                purchaseNo: invoice.purchaseNo,
+                grandTotal,
+                taxTotal,
+                postedAt,
+                postedById: userId,
+                items: preparedItems.map((item) => ({
+                    productId: item.productId,
+                    qty: Number(item.qty || 0),
+                    unitCost: Number(item.unitCost || 0),
+                    lineTotal: Number(item.lineTotal || 0),
+                })),
+            });
+
             const updated = await (tx as any).purchaseReturn.findFirst({
                 where: { id: existing.id, companyId },
                 include: {
@@ -1765,6 +1833,13 @@ purchaseRoutes.delete('/returns/:id', requirePermission(PERMISSIONS.PURCHASE_RET
                 },
             });
 
+            await tx.journalEntry.deleteMany({
+                where: {
+                    sourceType: 'PurchaseReturn',
+                    sourceId: existing.id,
+                },
+            });
+
             return { alreadyCancelled: false };
         }, { maxWait: 10000, timeout: 20000 });
 
@@ -1812,7 +1887,7 @@ purchaseRoutes.get('/:id/return-candidates', requirePermission(PERMISSIONS.PURCH
                                 nameArabic: true,
                                 taxRate: true,
                                 tax: { select: { rate: true } },
-                                units: { select: { unitCode: true, unitName: true, barcode: true, qtyInBaseUnit: true } }
+                                units: { select: { unitCode: true, unitName: true, barcodes: true, qtyInBaseUnit: true, isBase: true } }
                             }
                         },
                     },
@@ -1837,9 +1912,31 @@ purchaseRoutes.get('/:id/return-candidates', requirePermission(PERMISSIONS.PURCH
         });
         const returnedMap = new Map(existingReturned.map((r: any) => [r.purchaseItemId, Number(r._sum.qty || 0)]));
 
+        const productIds = purchase.items.map(i => i.productId);
+        const stocks = await prisma.inventoryStock.findMany({
+            where: {
+                companyId,
+                branchId: purchase.branchId,
+                productId: { in: productIds }
+            }
+        });
+        const stockMap = new Map(stocks.map(s => [s.productId, Number(s.qtyOnHand || 0)]));
+
         const items = purchase.items.map((item) => {
+            const product = item.product as any;
             const purchasedQty = Number(item.qty);
             const returnedQty = returnedMap.get(item.id) || 0;
+            const invoiceQtyAvailable = purchasedQty - Number(returnedQty);
+
+            const baseUnit = product.units?.find((u: any) => u.isBase);
+            const currentUnit = product.units?.find((u: any) => u.unitCode === item.unitCode);
+
+            let physicalQtyAvailable = 999999999;
+            if (baseUnit && currentUnit) {
+                const stockInBase = stockMap.get(item.productId) || 0;
+                physicalQtyAvailable = stockInBase / Number(currentUnit.qtyInBaseUnit || 1);
+            }
+
             return {
                 id: item.id,
                 productId: item.productId,
@@ -1847,7 +1944,9 @@ purchaseRoutes.get('/:id/return-candidates', requirePermission(PERMISSIONS.PURCH
                 unitCode: item.unitCode,
                 qtyPurchased: purchasedQty,
                 qtyReturned: returnedQty,
-                qtyAvailable: purchasedQty - Number(returnedQty),
+                qtyAvailable: Math.max(0, Math.min(invoiceQtyAvailable, physicalQtyAvailable)),
+                invoiceQtyAvailable,
+                physicalQtyAvailable,
                 unitCost: item.unitCost,
                 taxAmount: item.taxAmount,
                 lineTotal: item.lineTotal,
@@ -1890,7 +1989,7 @@ purchaseRoutes.get('/:id', requirePermission(PERMISSIONS.PURCHASE_VIEW), async (
                                 nameArabic: true,
                                 taxRate: true,
                                 tax: { select: { rate: true } },
-                                units: { select: { unitCode: true, unitName: true, barcode: true, qtyInBaseUnit: true } }
+                                units: { select: { unitCode: true, unitName: true, barcodes: true, qtyInBaseUnit: true } }
                             }
                         }
                     }
@@ -1899,5 +1998,241 @@ purchaseRoutes.get('/:id', requirePermission(PERMISSIONS.PURCHASE_VIEW), async (
         });
         if (!purchase) throw AppError.notFound('Purchase Invoice');
         sendSuccess(res, purchase);
+    } catch (error) { next(error) }
+});
+
+// ══════════════════════════════════════════════════════════════
+// EXPENSE PURCHASE ROUTES (Non-Stock Purchases)
+// ══════════════════════════════════════════════════════════════
+
+const expensePurchaseItemSchema = z.object({
+    description: z.string().min(1),
+    expenseAccountId: z.string().min(1),
+    amount: z.number().positive(),
+    quantity: z.number().int().positive().optional().default(1),
+});
+
+const expensePurchaseSchema = z.object({
+    vendorName: z.string().min(1),
+    branchId: z.string().min(1),
+    invoiceNo: z.string().optional(),
+    date: z.string().optional(),
+    paymentMethod: z.enum(['CASH', 'BANK', 'BANK_TRANSFER', 'CREDIT']),
+    items: z.array(expensePurchaseItemSchema).min(1),
+    notes: z.string().optional(),
+});
+
+// GET /expense-purchases
+purchaseRoutes.get('/expense-purchases', requirePermission(PERMISSIONS.PURCHASE_VIEW), async (req, res, next) => {
+    try {
+        const query = paginationSchema.parse(req.query);
+        const { skip, take, page, limit } = getPaginationParams(query);
+        const { branchId, status, search } = req.query as any;
+        const companyId = req.user!.companyId;
+
+        const where: any = applyUserBranchScope(req, { companyId });
+        if (branchId) {
+            await assertBranchAccessible(req, branchId);
+            where.branchId = branchId;
+        }
+        if (status) where.status = status;
+        if (search && typeof search === 'string') {
+            where.OR = [
+                { vendorName: { contains: search, mode: 'insensitive' } },
+                { invoiceNo: { contains: search, mode: 'insensitive' } },
+            ];
+        }
+
+        const [expenses, total] = await Promise.all([
+            prisma.expensePurchase.findMany({
+                where,
+                skip,
+                take,
+                include: {
+                    branch: { select: { id: true, name: true } },
+                    createdBy: { select: { id: true, name: true } },
+                    _count: { select: { items: true } },
+                },
+                orderBy: { createdAt: 'desc' },
+            }),
+            prisma.expensePurchase.count({ where }),
+        ]);
+
+        sendPaginated(res, expenses, total, page, limit);
     } catch (error) { next(error); }
+});
+
+// GET /expense-purchases/:id
+purchaseRoutes.get('/expense-purchases/:id', requirePermission(PERMISSIONS.PURCHASE_VIEW), async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+        const branchScope = isBranchAdmin(req) ? {} : { branchId: { in: req.user!.branchIds } };
+        const expense = await prisma.expensePurchase.findFirst({
+            where: { id: req.params.id as string, companyId, ...branchScope },
+            include: {
+                branch: true,
+                createdBy: { select: { id: true, name: true } },
+                items: true,
+                journalEntry: { select: { id: true, entryNo: true } },
+            },
+        });
+
+        if (!expense) throw AppError.notFound('Expense Purchase');
+        sendSuccess(res, expense);
+    } catch (error) { next(error); }
+});
+
+// POST /expense-purchases
+purchaseRoutes.post('/expense-purchases', requirePermission(PERMISSIONS.PURCHASE_CREATE), validate({ body: expensePurchaseSchema }), async (req, res, next) => {
+    try {
+        const { vendorName, branchId, invoiceNo, date, paymentMethod, items, notes } = req.body;
+        const companyId = req.user!.companyId;
+        const userId = req.user!.id;
+        await assertBranchAccessible(req, branchId);
+        const normalizedPaymentMethod = String(paymentMethod || '').trim().toUpperCase() === 'BANK'
+            ? 'BANK_TRANSFER'
+            : String(paymentMethod || '').trim().toUpperCase();
+
+        const result = await prisma.$transaction(async (tx) => {
+            // Calculate total amount
+            const totalAmount = items.reduce((sum: number, item: any) => {
+                return sum + (Number(item.amount) * Number(item.quantity || 1));
+            }, 0);
+
+            // Create expense purchase
+            const expensePurchase = await (tx as any).expensePurchase.create({
+                data: {
+                    companyId,
+                    branchId,
+                    vendorName,
+                    invoiceNo,
+                    date: date ? new Date(date) : new Date(),
+                    totalAmount,
+                    paymentMethod: normalizedPaymentMethod,
+                    status: 'POSTED',
+                    notes,
+                    createdById: userId,
+                    items: {
+                        create: items.map((item: any) => ({
+                            description: item.description,
+                            expenseAccountId: item.expenseAccountId,
+                            amount: Number(item.amount),
+                            quantity: Number(item.quantity || 1),
+                        })),
+                    },
+                },
+                include: { items: true },
+            });
+
+            // Create journal entry
+            const journalEntryLines: any[] = [];
+
+            // Debit: Expense accounts (one line per item)
+            for (const item of expensePurchase.items) {
+                journalEntryLines.push({
+                    accountId: item.expenseAccountId,
+                    debit: Number(item.amount) * Number(item.quantity || 1),
+                    credit: 0,
+                    description: item.description,
+                });
+            }
+
+            // Credit: Cash/Bank account (depends on payment method)
+            let creditAccountId: string;
+            if (normalizedPaymentMethod === 'CASH') {
+                // Find cash account (you may want to make this configurable)
+                const cashAccount = await (tx as any).account.findFirst({
+                    where: { companyId, accountType: 'ASSET', name: { contains: 'Cash', mode: 'insensitive' } },
+                });
+                creditAccountId = cashAccount?.id;
+                if (!creditAccountId) {
+                    throw AppError.badRequest('Cash account not found. Please create a Cash account first.');
+                }
+            } else if (normalizedPaymentMethod === 'BANK_TRANSFER') {
+                // Find bank account
+                const bankAccount = await (tx as any).account.findFirst({
+                    where: { companyId, accountType: 'ASSET', name: { contains: 'Bank', mode: 'insensitive' } },
+                });
+                creditAccountId = bankAccount?.id;
+                if (!creditAccountId) {
+                    throw AppError.badRequest('Bank account not found. Please create a Bank account first.');
+                }
+            } else {
+                // Credit - use Accounts Payable
+                const payableAccount = await (tx as any).account.findFirst({
+                    where: { companyId, accountType: 'LIABILITY', name: { contains: 'Payable', mode: 'insensitive' } },
+                });
+                creditAccountId = payableAccount?.id;
+                if (!creditAccountId) {
+                    throw AppError.badRequest('Accounts Payable account not found.');
+                }
+            }
+
+            journalEntryLines.push({
+                accountId: creditAccountId,
+                debit: 0,
+                credit: totalAmount,
+                description: `Payment to ${vendorName}`,
+            });
+
+            // Create journal entry via CoreAccountingService
+            const journalEntry = await (CoreAccountingService as any).createJournalEntryStrict(tx as any, {
+                companyId,
+                branchId,
+                date: expensePurchase.date,
+                memo: `Expense Purchase - ${vendorName} (Invoice: ${invoiceNo || 'N/A'})`,
+                lines: journalEntryLines,
+                sourceType: 'ExpensePurchase',
+                sourceId: expensePurchase.id,
+                postedById: userId,
+            });
+
+            // Update expense purchase with journal entry reference
+            await (tx as any).expensePurchase.update({
+                where: { id: expensePurchase.id },
+                data: { journalEntryId: journalEntry.id, status: normalizedPaymentMethod === 'CREDIT' ? 'DRAFT' : 'PAID' },
+            });
+
+            return expensePurchase;
+        }, { maxWait: 10000, timeout: 20000 });
+
+        sendSuccess(res, result, undefined, 201);
+    } catch (error) {
+        console.error('[Expense Purchase POST Error]:', error);
+        next(error);
+    }
+});
+
+// DELETE /expense-purchases/:id
+purchaseRoutes.delete('/expense-purchases/:id', requirePermission(PERMISSIONS.PURCHASE_CREATE), async (req, res, next) => {
+  try {
+   const id = req.params.id as string;
+   const companyId = req.user!.companyId;
+   const userId = req.user!.id;
+   const branchScope = isBranchAdmin(req) ? {} : { branchId: { in: req.user!.branchIds } };
+
+   const result = await prisma.$transaction(async (tx) => {
+     const expense = await tx.expensePurchase.findFirst({
+        where: { id, companyId, ...branchScope },
+        include: { journalEntry: true },
+      });
+
+      if (!expense) throw AppError.notFound('Expense Purchase');
+
+      // Delete associated journal entry if exists
+      if (expense.journalEntryId) {
+        await tx.journalEntry.delete({ where: { id: expense.journalEntryId } });
+      }
+
+      // Delete expense purchase (items will be cascade deleted)
+      await tx.expensePurchase.delete({ where: { id } });
+
+      return { message: 'Expense purchase deleted successfully' };
+    });
+
+    sendSuccess(res, result);
+  } catch (error) {
+   console.error('[Expense Purchase DELETE Error]:', error);
+    next(error);
+  }
 });

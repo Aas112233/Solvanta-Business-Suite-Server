@@ -1,0 +1,25 @@
+{
+  "name": "solvanta-business-suite",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Workspace wrapper for the SOLVANTA Business Suite client and server applications.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server run dev",
+    "build": "npm run build:server && npm run build:client",
+    "build:client": "npm --prefix client run build",
+    "build:server": "npm --prefix server run build",
+    "typecheck": "npm run typecheck:server && npm run typecheck:client",
+    "typecheck:client": "npm --prefix client run typecheck",
+    "typecheck:server": "npm --prefix server run typecheck",
+    "test:server": "npm --prefix server run test",
+    "db:generate": "npm --prefix server run db:generate",
+    "db:push": "npm --prefix server run db:push",
+    "db:migrate": "npm --prefix server run db:migrate",
+    "seed": "npm --prefix server run seed"
+  }
+}

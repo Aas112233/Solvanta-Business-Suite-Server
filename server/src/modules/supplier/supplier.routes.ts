@@ -64,57 +64,100 @@ supplierRoutes.get('/', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req
             prisma.supplier.count({ where }),
         ]);
 
-        const enriched = await Promise.all(
-            suppliers.map(async (supplier) => {
-                const supplierId = supplier.id;
-                const [purchaseAgg, paymentAgg, lastPurchase] = await Promise.all([
-                    prisma.purchaseInvoice.aggregate({
-                        where: {
-                            companyId,
-                            supplierId,
-                            status: { not: 'CANCELLED' } as any,
-                        },
-                        _sum: { grandTotal: true },
-                        _count: { id: true },
-                    }),
-                    prisma.purchasePayment.aggregate({
-                        where: {
-                            companyId,
-                            supplierId,
-                            status: 'POSTED' as any,
-                        },
-                        _sum: { amount: true },
-                        _count: { id: true },
-                    }),
-                    prisma.purchaseInvoice.findFirst({
-                        where: {
-                            companyId,
-                            supplierId,
-                            status: { not: 'CANCELLED' } as any,
-                        },
-                        orderBy: { createdAt: 'desc' },
-                        select: { id: true, purchaseNo: true, grandTotal: true, createdAt: true, status: true },
-                    }),
-                ]);
+        const supplierIds = suppliers.map((supplier) => supplier.id);
+        const purchaseStatsBySupplier = new Map<string, {
+            purchaseCount: number;
+            totalPurchases: number;
+            lastPurchase: { id: string; purchaseNo: string; grandTotal: number; createdAt: Date; status: string } | null;
+        }>();
+        const paymentStatsBySupplier = new Map<string, { paymentCount: number; totalPaid: number }>();
 
-                const totalPurchases = Number(purchaseAgg._sum.grandTotal || 0);
-                const totalPaid = Number(paymentAgg._sum.amount || 0);
-                const openingBalance = Number(supplier.openingBalance || 0);
-                const outstandingBalance = openingBalance + totalPurchases - totalPaid;
-
-                return {
-                    ...supplier,
-                    metrics: {
-                        purchaseCount: purchaseAgg._count.id || 0,
-                        paymentCount: paymentAgg._count.id || 0,
-                        totalPurchases,
-                        totalPaid,
-                        outstandingBalance,
-                        lastPurchase: lastPurchase || null,
+        if (supplierIds.length > 0) {
+            const [purchaseRows, paymentRows] = await Promise.all([
+                prisma.purchaseInvoice.findMany({
+                    where: {
+                        companyId,
+                        supplierId: { in: supplierIds },
+                        status: { not: 'CANCELLED' } as any,
                     },
+                    select: {
+                        id: true,
+                        supplierId: true,
+                        purchaseNo: true,
+                        grandTotal: true,
+                        createdAt: true,
+                        status: true,
+                    },
+                    orderBy: [{ supplierId: 'asc' }, { createdAt: 'desc' }],
+                }),
+                prisma.purchasePayment.findMany({
+                    where: {
+                        companyId,
+                        supplierId: { in: supplierIds },
+                        status: 'POSTED' as any,
+                    },
+                    select: {
+                        id: true,
+                        supplierId: true,
+                        amount: true,
+                    },
+                }),
+            ]);
+
+            for (const row of purchaseRows) {
+                const current = purchaseStatsBySupplier.get(row.supplierId) ?? {
+                    purchaseCount: 0,
+                    totalPurchases: 0,
+                    lastPurchase: null,
                 };
-            })
-        );
+                current.purchaseCount += 1;
+                current.totalPurchases += Number(row.grandTotal || 0);
+                if (!current.lastPurchase) {
+                    current.lastPurchase = {
+                        id: row.id,
+                        purchaseNo: row.purchaseNo,
+                        grandTotal: row.grandTotal,
+                        createdAt: row.createdAt,
+                        status: String(row.status),
+                    };
+                }
+                purchaseStatsBySupplier.set(row.supplierId, current);
+            }
+
+            for (const row of paymentRows) {
+                const current = paymentStatsBySupplier.get(row.supplierId) ?? { paymentCount: 0, totalPaid: 0 };
+                current.paymentCount += 1;
+                current.totalPaid += Number(row.amount || 0);
+                paymentStatsBySupplier.set(row.supplierId, current);
+            }
+        }
+
+        const enriched = suppliers.map((supplier) => {
+            const purchaseStats = purchaseStatsBySupplier.get(supplier.id) ?? {
+                purchaseCount: 0,
+                totalPurchases: 0,
+                lastPurchase: null,
+            };
+            const paymentStats = paymentStatsBySupplier.get(supplier.id) ?? {
+                paymentCount: 0,
+                totalPaid: 0,
+            };
+
+            const openingBalance = Number(supplier.openingBalance || 0);
+            const outstandingBalance = openingBalance + purchaseStats.totalPurchases - paymentStats.totalPaid;
+
+            return {
+                ...supplier,
+                metrics: {
+                    purchaseCount: purchaseStats.purchaseCount,
+                    paymentCount: paymentStats.paymentCount,
+                    totalPurchases: purchaseStats.totalPurchases,
+                    totalPaid: paymentStats.totalPaid,
+                    outstandingBalance,
+                    lastPurchase: purchaseStats.lastPurchase,
+                },
+            };
+        });
 
         sendPaginated(res, enriched, total, page, limit);
     } catch (error) { next(error); }

@@ -12,21 +12,16 @@ companyRoutes.use(authenticate);
 
 const companySettingsSchema = z.object({
     contact: z.object({
-        phone: z.string().trim().max(40).optional(),
-        email: z.string().trim().email().optional(),
-        website: z.string().trim().max(200).optional(),
-        address: z.string().trim().max(500).optional(),
+        phone: z.union([z.string().trim().max(40), z.literal(''), z.null()]).optional(),
+        email: z.union([z.string().trim().email(), z.literal(''), z.null()]).optional(),
+        website: z.union([z.string().trim().max(200), z.literal(''), z.null()]).optional(),
+        address: z.union([z.string().trim().max(500), z.literal(''), z.null()]).optional(),
     }).partial().optional(),
     regional: z.object({
         timezone: z.string().trim().max(80).optional(),
         dateFormat: z.string().trim().max(30).optional(),
         timeFormat: z.enum(['12H', '24H']).optional(),
         language: z.string().trim().max(20).optional(),
-    }).partial().optional(),
-    tax: z.object({
-        label: z.string().trim().max(30).optional(),
-        defaultRate: z.number().min(0).max(1).optional(),
-        inclusivePricing: z.boolean().optional(),
     }).partial().optional(),
     inventory: z.object({ lowStockThreshold: z.number().min(0).max(1000000).optional(), }).partial().optional(),
     documents: z.object({
@@ -73,11 +68,9 @@ companyRoutes.patch('/me', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS),
             ...incoming,
             contact: { ...(currentSettings.contact || {}), ...(incoming.contact || {}) },
             regional: { ...(currentSettings.regional || {}), ...(incoming.regional || {}) },
-            tax: { ...(currentSettings.tax || {}), ...(incoming.tax || {}) },
             inventory: { ...(currentSettings.inventory || {}), ...(incoming.inventory || {}) },
             documents: { ...(currentSettings.documents || {}), ...(incoming.documents || {}) },
-            // Backward compatibility with legacy flat keys used in older seeds/builds.            lowStockThreshold: incoming.inventory?.lowStockThreshold ?? currentSettings.lowStockThreshold,            taxRate: incoming.tax?.defaultRate ?? currentSettings.taxRate,
-            taxLabel: incoming.tax?.label ?? currentSettings.taxLabel,
+            // Backward compatibility with legacy flat keys used in older seeds/builds.            lowStockThreshold: incoming.inventory?.lowStockThreshold ?? currentSettings.lowStockThreshold,
         } : currentSettings;
 
         const company = await prisma.company.update({

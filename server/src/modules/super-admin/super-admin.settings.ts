@@ -1,6 +1,6 @@
 export type TenantStatus = 'Active' | 'Trial' | 'Suspended';
-export type TenantPlan = 'Starter' | 'Growth' | 'Enterprise';
-export type ModuleKey = 'crm' | 'inventory' | 'purchases' | 'accounting' | 'pos' | 'reports';
+export type TenantPlan = 'Starter' | 'Growth' | 'SOLVANTA';
+export type ModuleKey = 'crm' | 'inventory' | 'purchases' | 'accounting' | 'pos' | 'reports' | 'bom' | 'production';
 
 export interface FeatureFlags {
     crm: boolean;
@@ -9,6 +9,8 @@ export interface FeatureFlags {
     accounting: boolean;
     pos: boolean;
     reports: boolean;
+    bom: boolean;
+    production: boolean;
 }
 
 export interface TenantBilling {
@@ -45,6 +47,8 @@ export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {
     accounting: true,
     pos: true,
     reports: true,
+    bom: true,
+    production: true,
 };
 
 const DEFAULT_BILLING: TenantBilling = {
@@ -103,7 +107,7 @@ export function sanitizeTenantStatus(rawStatus: unknown): TenantStatus | undefin
 }
 
 export function sanitizeTenantPlan(rawPlan: unknown): TenantPlan | undefined {
-    if (rawPlan === 'Starter' || rawPlan === 'Growth' || rawPlan === 'Enterprise') {
+    if (rawPlan === 'Starter' || rawPlan === 'Growth' || rawPlan === 'SOLVANTA') {
         return rawPlan;
     }
     return undefined;
@@ -150,5 +154,7 @@ export function permissionToModule(permission: string): ModuleKey | null {
     if (module === 'accounting') return 'accounting';
     if (module === 'pos') return 'pos';
     if (module === 'reports') return 'reports';
+    if (module === 'bom') return 'bom';
+    if (module === 'production') return 'production';
     return null;
 }

@@ -1,0 +1,62 @@
+{
+  "id": "69ad7f966e5f7b58b45baa6f",
+  "companyId": "69945c50c73e046174143f96",
+  "branchId": "69945c50c73e046174143f98",
+  "invoiceNo": "MW-000031",
+  "customerId": "69945c50c73e046174144026",
+  "posTerminalId": null,
+  "posShiftId": null,
+  "salesOrderId": null,
+  "clientRequestId": null,
+  "subtotal": 3320,
+  "discountTotal": 103,
+  "taxTotal": 498,
+  "grandTotal": 3818,
+  "paymentMethod": "CREDIT",
+  "cashReceived": 0,
+  "changeGiven": 0,
+  "status": "CREDIT",
+  "isPosted": true,
+  "notes": "",
+  "createdById": "69959e92e59695fbe9b8c19f",
+  "createdAt": "2026-03-08T13:54:30.612Z",
+  "updatedAt": "2026-03-08T13:54:30.612Z",
+  "loyaltyCustomerId": null,
+  "loyaltyPointsEarned": 3818,
+  "loyaltyPointsRedeemed": 0,
+  "items": [
+    {
+      "id": "69ad7f966e5f7b58b45baa70",
+      "invoiceId": "69ad7f966e5f7b58b45baa6f",
+      "productId": "69945c50c73e046174144002",
+      "unitCode": "5505474147793",
+      "qty": 20,
+      "unitPrice": 12,
+      "discount": 1,
+      "taxAmount": 35.85,
+      "lineTotal": 239
+    },
+    {
+      "id": "69ad7f966e5f7b58b45baa71",
+      "invoiceId": "69ad7f966e5f7b58b45baa6f",
+      "productId": "69945c50c73e04617414400e",
+      "unitCode": "5347064261947",
+      "qty": 16,
+      "unitPrice": 198,
+      "discount": 100,
+      "taxAmount": 460.2,
+      "lineTotal": 3068
+    },
+    {
+      "id": "69ad7f966e5f7b58b45baa72",
+      "invoiceId": "69ad7f966e5f7b58b45baa6f",
+      "productId": "69945c50c73e046174143fba",
+      "unitCode": "7432495075116",
+      "qty": 2,
+      "unitPrice": 7.5,
+      "discount": 2,
+      "taxAmount": 1.95,
+      "lineTotal": 13
+    }
+  ]
+}

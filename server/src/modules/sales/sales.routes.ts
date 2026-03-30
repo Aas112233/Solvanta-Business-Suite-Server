@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { prisma } from '../../lib/prisma.js';
-import { authenticate, requirePermission, requireBranch } from '../../middleware/auth.js';
+import { authenticate, requirePermission, requireAnyPermission, requireBranch } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { PERMISSIONS } from '../../config/permissions.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
@@ -9,6 +9,8 @@ import { paginationSchema, getPaginationParams } from '../../utils/pagination.js
 import { formatDocNo, nextCounter } from '../../utils/documentCounter.js';
 import { z } from 'zod';
 import { getPosTerminalPolicy } from '../pos/pos-policy.js';
+import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
+import { InventoryService } from '../inventory/InventoryService.js';
 
 export const salesRoutes = Router();
 salesRoutes.use(authenticate);
@@ -26,6 +28,7 @@ const salesInvoiceQuerySchema = paginationSchema.extend({
     startDate: z.string().optional(),
     endDate: z.string().optional(),
     paymentMethod: z.string().optional(),
+    status: z.string().optional(),
 });
 
 const topSellingItemsQuerySchema = z.object({
@@ -252,6 +255,92 @@ function withLoyaltyDiscountValue<T extends { loyaltyPointsRedeemed?: number | n
     };
 }
 
+async function validateAndCalculateTaxes(
+    companyId: string,
+    items: { productId?: string | null; description: string; qty: number; unitPrice: number; discount?: number; unitCode?: string | null }[]
+) {
+    const taxes = await (prisma as any).tax.findMany({
+        where: { companyId, isActive: true, type: { in: ['SALES', 'BOTH'] } }
+    });
+
+    const activeSalesTaxById = new Map<string, any>(taxes.map((t: any) => [t.id, t]));
+    const defaultSalesTax = taxes.find((t: any) => t.isDefault) || null;
+
+    const productIds = items.map(i => i.productId).filter(Boolean) as string[];
+    const products = productIds.length > 0 ? await (prisma as any).product.findMany({
+        where: { id: { in: productIds }, companyId }
+    }) : [];
+    const productById = new Map<string, any>(products.map((p: any) => [p.id, p]));
+
+    const taxConfigErrors = new Set<string>();
+
+    let subtotal = 0;
+    let taxTotal = 0;
+    let discountTotal = 0;
+
+    const computedItems = items.map(item => {
+        const qty = Number(item.qty);
+        const unitPrice = Number(item.unitPrice);
+        const discount = Number(item.discount || 0);
+
+        const lineSubtotal = (qty * unitPrice) - discount;
+        const product = item.productId ? (productById.get(item.productId) as any) : null;
+        const productLabel = product ? `${product.itemCode} (${product.name})` : item.description;
+
+        let appliedTax = null;
+        if (product && product.taxId) {
+            appliedTax = activeSalesTaxById.get(product.taxId) || null;
+            if (!appliedTax) {
+                taxConfigErrors.add(`${productLabel}: assigned tax is inactive or not valid for sales`);
+                return null;
+            }
+        } else if (defaultSalesTax) {
+            appliedTax = defaultSalesTax;
+        }
+
+        if (!appliedTax) {
+            taxConfigErrors.add(`${productLabel}: no tax assigned and no default sales tax configured`);
+            return null;
+        }
+
+        const taxRate = Number(appliedTax.rate);
+        if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 1) {
+            taxConfigErrors.add(`${productLabel}: tax rate is invalid`);
+            return null;
+        }
+
+        const taxAmount = lineSubtotal * taxRate;
+        subtotal += lineSubtotal;
+        taxTotal += taxAmount;
+        discountTotal += discount;
+
+        return {
+            productId: item.productId || null,
+            description: item.description,
+            unitCode: item.unitCode || null,
+            qty,
+            unitPrice,
+            discount,
+            taxAmount,
+            lineTotal: lineSubtotal
+        };
+    }).filter(Boolean);
+
+    if (taxConfigErrors.size > 0) {
+        const errors = Array.from(taxConfigErrors);
+        const preview = errors.slice(0, 3).join('; ');
+        const suffix = errors.length > 3 ? `; and ${errors.length - 3} more item(s)` : '';
+        throw AppError.badRequest(`Tax configuration is incomplete: ${preview}${suffix}`);
+    }
+
+    return {
+        preparedItems: computedItems as NonNullable<typeof computedItems[0]>[],
+        subtotal,
+        taxTotal,
+        discountTotal
+    };
+}
+
 async function isManagerOrAdminUser(req: any): Promise<boolean> {
     const role = await prisma.role.findFirst({
         where: { id: req.user!.roleId, companyId: req.user!.companyId },
@@ -270,11 +359,12 @@ salesRoutes.get('/invoices', requirePermission(PERMISSIONS.SALES_VIEW), requireB
 
         const where: any = {
             companyId: req.user!.companyId,
-            branchId: req.activeBranchId!,
+            branchId: { in: req.userBranchIds! },
         };
         const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
         if (createdAt) where.createdAt = createdAt;
         if (query.paymentMethod) where.paymentMethod = query.paymentMethod;
+        if (query.status) where.status = query.status;
 
         if (query.search?.trim()) {
             const search = query.search.trim();
@@ -311,11 +401,15 @@ salesRoutes.get('/invoices', requirePermission(PERMISSIONS.SALES_VIEW), requireB
 });
 
 // GET /sales/invoices/:id - Detailed invoice view
-salesRoutes.get('/invoices/:id', requirePermission(PERMISSIONS.SALES_VIEW), async (req: Request, res: Response, next: NextFunction) => {
+salesRoutes.get('/invoices/:id', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { id } = req.params;
         const invoice = await (prisma as any).pOSInvoice.findFirst({
-            where: { id, companyId: req.user!.companyId },
+            where: {
+                id,
+                companyId: req.user!.companyId,
+                branchId: { in: req.userBranchIds! },
+            },
             include: {
                 customer: { select: { id: true, name: true, phone: true, email: true } },
                 loyaltyCustomer: { select: { id: true, name: true, phone: true } },
@@ -339,11 +433,11 @@ salesRoutes.get('/invoices/:id', requirePermission(PERMISSIONS.SALES_VIEW), asyn
 salesRoutes.get('/summary', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
+        const branchIds = req.userBranchIds!;
         const startDate = typeof req.query.startDate === 'string' ? req.query.startDate : undefined;
         const endDate = typeof req.query.endDate === 'string' ? req.query.endDate : undefined;
         const createdAt = getCreatedAtDateRange(startDate, endDate);
-        const whereBase: any = { companyId, branchId };
+        const whereBase: any = { companyId, branchId: { in: branchIds } };
         if (createdAt) whereBase.createdAt = createdAt;
         if (req.query.paymentMethod) whereBase.paymentMethod = String(req.query.paymentMethod);
 
@@ -370,11 +464,11 @@ salesRoutes.get('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_VIE
         const query = salesQuotationQuerySchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
+        const branchIds = req.userBranchIds!;
 
         const where: any = {
             companyId,
-            branchId,
+            branchId: { in: branchIds },
         };
 
         if (query.state === 'active') {
@@ -418,7 +512,7 @@ salesRoutes.get('/quotations/:id', requirePermission(PERMISSIONS.SALES_QUOTATION
             where: {
                 id: req.params.id,
                 companyId: req.user!.companyId,
-                branchId: req.activeBranchId!,
+                branchId: { in: req.userBranchIds! },
             },
             include: {
                 customer: { select: { id: true, name: true, customerCode: true, phone: true, email: true, allowCreditSales: true } },
@@ -444,32 +538,7 @@ salesRoutes.post('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_CR
         const userId = req.user!.id;
         const body = req.body as z.infer<typeof salesQuotationCreateSchema>;
 
-        let subtotal = 0;
-        let taxTotal = 0;
-        let discountTotal = 0;
-
-        const preparedItems = body.items.map(line => {
-            const qty = Number(line.qty);
-            const unitPrice = Number(line.unitPrice);
-            const discount = Number(line.discount || 0);
-            const tax = Number(line.taxAmount || 0);
-            const lineTotal = (qty * unitPrice) - discount;
-
-            subtotal += lineTotal;
-            taxTotal += tax;
-            discountTotal += discount;
-
-            return {
-                productId: line.productId || null,
-                description: line.description,
-                unitCode: line.unitCode || null,
-                qty,
-                unitPrice,
-                discount,
-                taxAmount: tax,
-                lineTotal
-            };
-        });
+        const { preparedItems, subtotal, taxTotal, discountTotal } = await validateAndCalculateTaxes(companyId, body.items);
 
         const quotationNo = formatDocNo('SQ', await nextCounter(prisma as any, companyId, 'SALES_QUOTATION', branchId));
 
@@ -502,17 +571,21 @@ salesRoutes.post('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_CR
 salesRoutes.post('/quotations/:id/convert', requirePermission(PERMISSIONS.SALES_QUOTATION_CONVERT), requireBranch, validate({ body: salesQuotationConvertSchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
         const quotationId = req.params.id;
         const paymentMethod = String(req.body?.paymentMethod || 'CREDIT').toUpperCase();
 
         const result = await prisma.$transaction(async (tx) => {
             const quote: any = await (tx as any).salesQuotation.findFirst({
-                where: { id: quotationId, companyId, branchId },
+                where: {
+                    id: quotationId,
+                    companyId,
+                    branchId: { in: req.userBranchIds! },
+                },
                 include: { items: true }
             });
 
             if (!quote) throw AppError.notFound('Quotation');
+            const quoteBranchId = String(quote.branchId);
             if (quote.status === 'CONVERTED') throw AppError.badRequest('Quotation is already converted');
             if (quote.status === 'CANCELLED') throw AppError.badRequest('Cannot convert a cancelled quotation');
             if (paymentMethod === 'CREDIT' && !quote.customerId) {
@@ -530,43 +603,73 @@ salesRoutes.post('/quotations/:id/convert', requirePermission(PERMISSIONS.SALES_
             }
 
             // 1. Create Invoice
-            const invoiceNo = formatDocNo('SI', await nextCounter(tx as any, companyId, 'SALES_INVOICE', branchId));
-            const invoice = await (tx as any).pOSInvoice.create({
-                data: {
-                    companyId,
-                    branchId,
-                    invoiceNo,
-                    customerId: quote.customerId,
-                    subtotal: quote.subtotal,
-                    taxTotal: quote.taxTotal,
-                    discountTotal: quote.discountTotal,
-                    grandTotal: quote.grandTotal,
-                    paymentMethod,
-                    status: 'UNPOSTED',
-                    isPosted: false,
-                    notes: `Converted from Quotation ${quote.quotationNo}`,
-                    createdById: req.user!.id,
-                    items: {
-                        create: quote.items.map((item: any) => {
-                            if (!item.productId) throw AppError.badRequest(`Quotation line "${item.description}" has no product and cannot be converted to invoice`);
-                            return {
-                                productId: item.productId,
-                                unitCode: item.unitCode || 'UNIT',
-                                qty: item.qty,
-                                unitPrice: item.unitPrice,
-                                discount: item.discount,
-                                taxAmount: item.taxAmount,
-                                lineTotal: item.lineTotal
-                            };
-                        })
-                    }
-                }
-            });
+            let invoice: any;
+            let invoiceNo: string;
+            let retryCount = 0;
+            const maxRetries = 5;
 
-            // 2. Update Quotation Status
+            while (retryCount < maxRetries) {
+                invoiceNo = formatDocNo('SI', await nextCounter(tx as any, companyId, 'SALES_INVOICE', quoteBranchId));
+
+                // Check if this invoice number already exists
+                const existingInvoice = await (tx as any).pOSInvoice.findFirst({
+                    where: {
+                        companyId,
+                        invoiceNo,
+                    },
+                });
+
+                if (existingInvoice) {
+                    retryCount++;
+                    if (retryCount >= maxRetries) {
+                        throw AppError.conflict(`Failed to create invoice: invoice number ${invoiceNo} already exists. Please check the document counter or try again.`);
+                    }
+                    continue; // Try next number
+                }
+
+                // No conflict, proceed to create
+                invoice = await (tx as any).pOSInvoice.create({
+                    data: {
+                        companyId,
+                        branchId: quoteBranchId,
+                        invoiceNo,
+                        customerId: quote.customerId,
+                        subtotal: quote.subtotal,
+                        taxTotal: quote.taxTotal,
+                        discountTotal: quote.discountTotal,
+                        grandTotal: quote.grandTotal,
+                        paymentMethod,
+                        status: 'UNPOSTED',
+                        isPosted: false,
+                        notes: `Converted from Quotation ${quote.quotationNo}`,
+                        createdById: req.user!.id,
+                        items: {
+                            create: quote.items.map((item: any) => {
+                                if (!item.productId) throw AppError.badRequest(`Quotation line "${item.description}" has no product and cannot be converted to invoice`);
+                                return {
+                                    productId: item.productId,
+                                    unitCode: item.unitCode || 'UNIT',
+                                    qty: item.qty,
+                                    unitPrice: item.unitPrice,
+                                    discount: item.discount,
+                                    taxAmount: item.taxAmount,
+                                    lineTotal: item.lineTotal
+                                };
+                            })
+                        }
+                    }
+                });
+                break; // Success, exit retry loop
+            }
+
+            // 2. Update Quotation Status and link invoice
             await (tx as any).salesQuotation.update({
                 where: { id: quotationId },
-                data: { status: 'CONVERTED' }
+                data: { 
+                    status: 'CONVERTED',
+                    convertedInvoiceId: invoice.id,
+                    convertedInvoiceNo: invoice.invoiceNo
+                }
             });
 
             return {
@@ -581,8 +684,8 @@ salesRoutes.post('/quotations/:id/convert', requirePermission(PERMISSIONS.SALES_
     } catch (error) { next(error); }
 });
 
-// GET /sales/pricing/price-groups
-salesRoutes.get('/pricing/price-groups', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
+// GET /sales/pricing/price-groups (Alias: /price-lists)
+salesRoutes.get(['/pricing/price-groups', '/pricing/price-lists'], requireAnyPermission(PERMISSIONS.SALES_PRICING_MANAGE, PERMISSIONS.SALES_VIEW, PERMISSIONS.INVENTORY_AUDIT), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const rows = await (prisma as any).priceGroup.findMany({
             where: { companyId: req.user!.companyId },
@@ -592,6 +695,36 @@ salesRoutes.get('/pricing/price-groups', requirePermission(PERMISSIONS.SALES_PRI
             orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
         });
         sendSuccess(res, rows);
+    } catch (error) { next(error); }
+});
+
+// GET /sales/pricing/price-lists/price - Get specific price for a product/unit/group
+salesRoutes.get('/pricing/price-lists/price', requireAnyPermission(PERMISSIONS.SALES_PRICING_MANAGE, PERMISSIONS.SALES_VIEW, PERMISSIONS.PRODUCT_VIEW, PERMISSIONS.INVENTORY_AUDIT), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { productId, priceGroupId, unitCode } = req.query as { productId: string, priceGroupId?: string, unitCode: string };
+        if (!productId || !unitCode) throw AppError.badRequest('productId and unitCode are required');
+
+        let salePrice = 0;
+
+        // 1. Check Price Group override
+        if (priceGroupId) {
+            const override = await (prisma as any).productPriceGroup.findFirst({
+                where: { productId, priceGroupId, unitCode: String(unitCode).toUpperCase() }
+            });
+            if (override) salePrice = Number(override.salePrice);
+        }
+
+        // 2. Fallback to default product unit price if no override found
+        if (salePrice === 0) {
+            const product = await prisma.product.findFirst({
+                where: { id: productId, companyId: req.user!.companyId },
+                include: { units: true }
+            });
+            const unit = (product as any)?.units?.find((u: any) => String(u.unitCode).toUpperCase() === String(unitCode).toUpperCase());
+            salePrice = Number(unit?.salePrice || 0);
+        }
+
+        sendSuccess(res, { salePrice });
     } catch (error) { next(error); }
 });
 
@@ -1000,13 +1133,13 @@ salesRoutes.delete('/pricing/discount-rules/:id', requirePermission(PERMISSIONS.
 salesRoutes.get('/analytics', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
+        const branchIds = req.userBranchIds!;
         const now = new Date();
         const trendStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
         const [invoices, returns] = await Promise.all([
             (prisma as any).pOSInvoice.findMany({
-                where: { companyId, branchId, createdAt: { gte: trendStart } },
+                where: { companyId, branchId: { in: branchIds }, createdAt: { gte: trendStart } },
                 select: {
                     id: true,
                     createdAt: true,
@@ -1020,7 +1153,7 @@ salesRoutes.get('/analytics', requirePermission(PERMISSIONS.SALES_VIEW), require
                 orderBy: { createdAt: 'asc' },
             }),
             (prisma as any).salesReturn.findMany({
-                where: { companyId, branchId, status: 'POSTED', createdAt: { gte: trendStart } },
+                where: { companyId, branchId: { in: branchIds }, status: 'POSTED', createdAt: { gte: trendStart } },
                 select: { id: true, createdAt: true, grandTotal: true },
                 orderBy: { createdAt: 'asc' },
             }),
@@ -1110,14 +1243,14 @@ salesRoutes.get('/analytics', requirePermission(PERMISSIONS.SALES_VIEW), require
 salesRoutes.get('/top-selling-items', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
+        const branchIds = req.userBranchIds!;
         const query = topSellingItemsQuerySchema.parse(req.query);
         const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
         const search = query.search?.trim();
 
         const invoiceWhere: any = {
             companyId,
-            branchId,
+            branchId: { in: branchIds },
             isPosted: true,
             status: { notIn: ['VOID', 'UNPOSTED'] },
         };
@@ -1220,14 +1353,14 @@ salesRoutes.get('/top-selling-items', requirePermission(PERMISSIONS.SALES_VIEW),
 salesRoutes.get('/pending-payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
+        const branchIds = req.userBranchIds!;
         const query = pendingPaymentsQuerySchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
 
         const where: any = {
             companyId,
-            branchId,
+            branchId: { in: branchIds },
             paymentMethod: 'CREDIT',
             status: { notIn: ['VOID', 'REFUNDED'] },
         };
@@ -1325,14 +1458,14 @@ salesRoutes.get('/pending-payments', requirePermission(PERMISSIONS.SALES_PAYMENT
 salesRoutes.get('/overdue-invoices', requirePermission(PERMISSIONS.SALES_CREDIT_CONTROL), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
+        const branchIds = req.userBranchIds!;
         const query = overdueInvoicesQuerySchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
 
         const where: any = {
             companyId,
-            branchId,
+            branchId: { in: branchIds },
             paymentMethod: 'CREDIT',
             status: { notIn: ['VOID', 'REFUNDED'] },
         };
@@ -1432,14 +1565,14 @@ salesRoutes.get('/overdue-invoices', requirePermission(PERMISSIONS.SALES_CREDIT_
 salesRoutes.get('/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
+        const branchIds = req.userBranchIds!;
         const query = salesPaymentsQuerySchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const createdAt = getCreatedAtDateRange(query.startDate, query.endDate);
 
         const where: any = {
             companyId,
-            branchId,
+            branchId: { in: branchIds },
             isPosted: true,
             paymentMethod: 'CREDIT',
             status: { notIn: ['VOID', 'UNPOSTED', 'REFUNDED'] },
@@ -1522,11 +1655,14 @@ salesRoutes.get('/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), 
 salesRoutes.get('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
         const invoiceId = String(req.params.id);
 
         const invoice = await (prisma as any).pOSInvoice.findFirst({
-            where: { id: invoiceId, companyId, branchId },
+            where: {
+                id: invoiceId,
+                companyId,
+                branchId: { in: req.userBranchIds! },
+            },
             select: {
                 id: true,
                 invoiceNo: true,
@@ -1550,25 +1686,21 @@ salesRoutes.get('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PA
             include: {
                 postedBy: { select: { id: true, name: true } },
                 lines: {
-                    include: { account: { select: { code: true } } },
+                    select: { debit: true, credit: true },
                 },
             },
             orderBy: { date: 'desc' },
         });
 
         const payments = entries.map((entry: any) => {
-            const arCredit = (entry.lines || [])
-                .filter((line: any) => line.account?.code === '1110')
-                .reduce((sum: number, line: any) => sum + Number(line.credit || 0), 0);
-            const cashOrBankDebit = (entry.lines || [])
-                .filter((line: any) => line.account?.code === '1100' || line.account?.code === '1200')
-                .reduce((sum: number, line: any) => sum + Number(line.debit || 0), 0);
+            const totalDebit = (entry.lines || []).reduce((sum: number, line: any) => sum + Number(line.debit || 0), 0);
+            const totalCredit = (entry.lines || []).reduce((sum: number, line: any) => sum + Number(line.credit || 0), 0);
             return {
                 id: entry.id,
                 paymentNo: entry.entryNo,
                 paymentDate: entry.date,
-                amount: arCredit > 0 ? arCredit : cashOrBankDebit,
-                paymentMethod: cashOrBankDebit > 0 ? 'CASH/BANK' : 'MANUAL',
+                amount: totalDebit > 0 ? totalDebit : totalCredit,
+                paymentMethod: 'CASH/BANK',
                 referenceNo: null,
                 notes: entry.memo || null,
                 createdBy: entry.postedBy,
@@ -1600,14 +1732,21 @@ salesRoutes.get('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PA
 salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_RECEIVE), requireBranch, validate({ body: salesReceivePaymentSchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
         const userId = req.user!.id;
         const invoiceId = String(req.params.id);
         const { amount, paymentMethod, paymentDate, referenceNo, notes } = req.body as z.infer<typeof salesReceivePaymentSchema>;
+        const normalizedPaymentMethod = String(paymentMethod || '').trim().toUpperCase();
+        if (!['CASH', 'CARD', 'BANK_TRANSFER', 'STC_PAY'].includes(normalizedPaymentMethod)) {
+            throw AppError.badRequest('Payment method must be CASH, CARD, BANK_TRANSFER, or STC_PAY');
+        }
 
         const result = await prisma.$transaction(async (tx) => {
             const invoice: any = await (tx as any).pOSInvoice.findFirst({
-                where: { id: invoiceId, companyId, branchId },
+                where: {
+                    id: invoiceId,
+                    companyId,
+                    branchId: { in: req.userBranchIds! },
+                },
                 select: {
                     id: true,
                     invoiceNo: true,
@@ -1626,6 +1765,9 @@ salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_P
             }
             if (String(invoice.paymentMethod) !== 'CREDIT') {
                 throw AppError.badRequest('Only CREDIT invoices can receive payment in this module');
+            }
+            if (!invoice.customerId) {
+                throw AppError.badRequest('Customer is required for CREDIT invoice payment');
             }
 
             const totalAmount = Number(invoice.grandTotal || 0);
@@ -1651,46 +1793,26 @@ salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_P
                 },
             });
 
-            const accounts = await tx.account.findMany({
-                where: { companyId, code: { in: ['1100', '1200', '1110'] } },
+            const journalEntry = await CoreAccountingService.recordSalesPayment(tx as any, {
+                companyId,
+                branchId: invoice.branchId,
+                invoiceId: invoice.id,
+                invoiceNo: invoice.invoiceNo,
+                customerId: String(invoice.customerId),
+                amount: Number(amount),
+                paymentMethod: normalizedPaymentMethod,
+                postedAt,
+                postedById: userId,
+                referenceNo: referenceNo || null,
+                notes: notes || null,
             });
-            const cashAcct = accounts.find((a) => a.code === '1100');
-            const bankAcct = accounts.find((a) => a.code === '1200');
-            const arAcct = accounts.find((a) => a.code === '1110');
-
-            let entryNo: string | null = null;
-            if (arAcct && (cashAcct || bankAcct)) {
-                entryNo = formatDocNo('JE', await nextCounter(tx as any, companyId, 'JOURNAL_ENTRY'));
-                const isBank = paymentMethod === 'BANK_TRANSFER' || paymentMethod === 'CARD';
-                const receiptAcct = isBank ? bankAcct : cashAcct;
-                if (!receiptAcct) throw AppError.badRequest('Required payment account is not configured');
-
-                await tx.journalEntry.create({
-                    data: {
-                        companyId,
-                        branchId: invoice.branchId,
-                        entryNo,
-                        date: postedAt,
-                        memo: `Sales payment for ${invoice.invoiceNo}${referenceNo ? ` · Ref ${referenceNo}` : ''}${notes ? ` · ${notes}` : ''}`,
-                        sourceType: 'SalesPayment',
-                        sourceId: invoice.id,
-                        postedById: userId,
-                        lines: {
-                            create: [
-                                { accountId: receiptAcct.id, debit: Number(amount), credit: 0 },
-                                { accountId: arAcct.id, debit: 0, credit: Number(amount), partyType: 'CUSTOMER', partyId: invoice.customerId || undefined },
-                            ],
-                        },
-                    },
-                });
-            }
 
             return {
                 invoiceId: invoice.id,
                 invoiceNo: invoice.invoiceNo,
                 paymentDate: postedAt,
                 amount: Number(amount),
-                paymentMethod,
+                paymentMethod: normalizedPaymentMethod,
                 referenceNo: referenceNo || null,
                 notes: notes || null,
                 totals: {
@@ -1699,7 +1821,7 @@ salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_P
                     outstandingAmount: newOutstanding,
                 },
                 status: newStatus,
-                journalEntryNo: entryNo,
+                journalEntryNo: journalEntry.entryNo,
             };
         }, { maxWait: 10000, timeout: 20000 });
 
@@ -1714,7 +1836,7 @@ salesRoutes.get('/returns', requirePermission(PERMISSIONS.SALES_VIEW), requireBr
         const { skip, take, page, limit } = getPaginationParams(query);
         const where: any = {
             companyId: req.user!.companyId,
-            branchId: req.activeBranchId!,
+            branchId: { in: req.userBranchIds! },
         };
         if (query.search) {
             where.OR = [
@@ -1751,7 +1873,7 @@ salesRoutes.get('/returns/:id', requirePermission(PERMISSIONS.SALES_VIEW), requi
             where: {
                 id: req.params.id,
                 companyId: req.user!.companyId,
-                branchId: req.activeBranchId!,
+                branchId: { in: req.userBranchIds! },
             },
             include: {
                 invoice: { select: { id: true, invoiceNo: true, paymentMethod: true, createdAt: true } },
@@ -1777,13 +1899,13 @@ salesRoutes.get('/invoices/:id/return-candidates', requirePermission(PERMISSIONS
             where: {
                 id: req.params.id,
                 companyId: req.user!.companyId,
-                branchId: req.activeBranchId!,
+                branchId: { in: req.userBranchIds! },
             },
             include: {
                 customer: { select: { id: true, name: true, customerCode: true } },
                 items: {
                     include: {
-                        product: { select: { id: true, itemCode: true, name: true } },
+                        product: { select: { id: true, itemCode: true, name: true, units: { select: { unitCode: true, isBase: true, qtyInBaseUnit: true } } } },
                     },
                 },
             },
@@ -1803,9 +1925,30 @@ salesRoutes.get('/invoices/:id/return-candidates', requirePermission(PERMISSIONS
         });
         const returnedMap = new Map<string, number>(returned.map((x: any) => [x.invoiceItemId, Number(x._sum.qty || 0)]));
 
+        const productIds = invoice.items.map((i: any) => i.productId);
+        const stocks = await prisma.inventoryStock.findMany({
+            where: {
+                companyId: req.user!.companyId,
+                branchId: invoice.branchId,
+                productId: { in: productIds }
+            }
+        });
+        const stockMap = new Map(stocks.map(s => [s.productId, Number(s.qtyOnHand || 0)]));
+
         const items = invoice.items.map((item: any) => {
+            const product = item.product as any;
             const returnedQty = returnedMap.get(item.id) || 0;
-            const availableQty = Number(item.qty) - returnedQty;
+            const invoiceQtyAvailable = Number(item.qty) - returnedQty;
+
+            const baseUnit = product.units?.find((u: any) => u.isBase);
+            const currentUnit = product.units?.find((u: any) => u.unitCode === item.unitCode);
+
+            let physicalQtyAvailable = 999999999;
+            if (baseUnit && currentUnit) {
+                const stockInBase = stockMap.get(item.productId) || 0;
+                physicalQtyAvailable = stockInBase / Number(currentUnit.qtyInBaseUnit || 1);
+            }
+
             return {
                 id: item.id,
                 product: item.product,
@@ -1814,9 +1957,12 @@ salesRoutes.get('/invoices/:id/return-candidates', requirePermission(PERMISSIONS
                 unitPrice: item.unitPrice,
                 discount: item.discount,
                 taxAmount: item.taxAmount,
-                lineTotal: item.lineTotal, qtyInvoiced: Number(item.qty),
+                lineTotal: item.lineTotal,
+                qtyInvoiced: Number(item.qty),
                 qtyReturned: returnedQty,
-                qtyAvailable: availableQty,
+                qtyAvailable: Math.max(0, Math.min(invoiceQtyAvailable, physicalQtyAvailable)),
+                invoiceQtyAvailable,
+                physicalQtyAvailable,
             };
         });
 
@@ -1839,7 +1985,6 @@ salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RE
     try {
         const companyId = req.user!.companyId;
         const userId = req.user!.id;
-        const branchId = req.activeBranchId!;
         const invoiceId = req.params.id;
         const { reason, notes, items } = req.body as z.infer<typeof salesReturnSchema>;
         const actorIsManagerOrAdmin = await isManagerOrAdminUser(req);
@@ -1849,16 +1994,13 @@ salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RE
                 where: {
                     id: invoiceId,
                     companyId,
-                    ...(actorIsManagerOrAdmin ? {} : { branchId }),
+                    branchId: { in: req.userBranchIds! },
                 },
                 include: { items: true },
             });
             if (!invoice) throw AppError.notFound('Invoice');
             if (!invoice.isPosted || invoice.status === 'VOID' || invoice.status === 'UNPOSTED') {
                 throw AppError.badRequest('Only posted non-void invoices can be returned');
-            }
-            if (!actorIsManagerOrAdmin && String(invoice.branchId) !== String(branchId)) {
-                throw AppError.forbidden('Invoice branch does not match active branch');
             }
 
             if (invoice.posTerminalId) {
@@ -1936,12 +2078,12 @@ salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RE
             });
 
             const grandTotal = subtotal + taxTotal;
-            const returnNo = formatDocNo('SR', await nextCounter(tx as any, companyId, 'SALES_RETURN', branchId));
+            const returnNo = formatDocNo('SR', await nextCounter(tx as any, companyId, 'SALES_RETURN', String(invoice.branchId)));
 
             const row = await (tx as any).salesReturn.create({
                 data: {
                     companyId,
-                    branchId,
+                    branchId: invoice.branchId,
                     invoiceId: invoice.id,
                     customerId: invoice.customerId,
                     returnNo,
@@ -1962,47 +2104,63 @@ salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RE
                 include: { items: true },
             });
 
+            // Build per-product historical sold cost from the original sale movements.
+            const saleMovements = await (tx as any).stockMovement.findMany({
+                where: {
+                    companyId,
+                    branchId: invoice.branchId,
+                    referenceType: 'POSInvoice',
+                    referenceId: invoice.id,
+                    type: 'POS_SALE',
+                },
+                select: {
+                    productId: true,
+                    unitCode: true,
+                    qty: true,
+                    cost: true,
+                },
+            });
+            const saleCostMap = new Map<string, { qty: number; totalCost: number }>();
+            for (const movement of saleMovements) {
+                const key = `${movement.productId}::${movement.unitCode}`;
+                const qty = Math.abs(Number(movement.qty || 0));
+                const totalCost = qty * Number(movement.cost || 0);
+                const current = saleCostMap.get(key) || { qty: 0, totalCost: 0 };
+                saleCostMap.set(key, {
+                    qty: current.qty + qty,
+                    totalCost: current.totalCost + totalCost,
+                });
+            }
+
+            const restockedItems: Array<{ productId: string; qty: number; unitCost: number; lineTotal: number }> = [];
+
             // Restock + movement
             for (const line of prepared) {
-                const stock = await tx.inventoryStock.findFirst({
-                    where: {
-                        companyId,
-                        branchId,
-                        productId: line.productId,
-                        unitCode: line.unitCode,
-                    },
-                });
-                if (stock) {
-                    await tx.inventoryStock.update({
-                        where: { id: stock.id },
-                        data: { qtyOnHand: { increment: line.qty } },
-                    });
-                } else {
-                    await tx.inventoryStock.create({
-                        data: {
-                            companyId,
-                            branchId,
-                            productId: line.productId,
-                            unitCode: line.unitCode,
-                            qtyOnHand: line.qty,
-                            avgCost: 0,
-                        },
-                    });
-                }
+                const key = `${line.productId}::${line.unitCode}`;
+                const soldCostBag = saleCostMap.get(key);
+                const historicalUnitCost = soldCostBag && soldCostBag.qty > 0
+                    ? soldCostBag.totalCost / soldCostBag.qty
+                    : 0;
 
-                await tx.stockMovement.create({
-                    data: {
-                        companyId,
-                        branchId,
-                        type: 'RETURN',
-                        referenceType: 'SalesReturn',
-                        referenceId: row.id,
-                        productId: line.productId,
-                        unitCode: line.unitCode,
-                        qty: line.qty,
-                        cost: 0,
-                        price: line.unitPrice, createdById: userId,
-                    },
+                const { movement } = await InventoryService.mutateStock(tx, {
+                    companyId,
+                    branchId: invoice.branchId,
+                    productId: line.productId,
+                    unitCode: line.unitCode,
+                    qtyChange: line.qty,
+                    cost: historicalUnitCost,
+                    price: line.unitPrice,
+                    type: 'RETURN',
+                    referenceType: 'SalesReturn',
+                    referenceId: row.id,
+                    createdById: userId,
+                });
+
+                restockedItems.push({
+                    productId: line.productId,
+                    qty: Number(line.qty),
+                    unitCost: Number(movement?.cost || historicalUnitCost || 0),
+                    lineTotal: Number(line.lineTotal || 0),
                 });
             }
 
@@ -2021,48 +2179,42 @@ salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RE
                 data: { status: fullyReturned ? 'REFUNDED' : 'PARTIAL' },
             });
 
-            // Journal reversal (minimal)
-            const accounts = await tx.account.findMany({
-                where: { companyId, code: { in: ['1100', '1200', '1110', '4100', '2200'] } },
-            });
-            const cashAcct = accounts.find((a) => a.code === '1100');
-            const bankAcct = accounts.find((a) => a.code === '1200');
-            const arAcct = accounts.find((a) => a.code === '1110');
-            const salesAcct = accounts.find((a) => a.code === '4100');
-            const vatPayableAcct = accounts.find((a) => a.code === '2200');
-
-            if (salesAcct) {
-                const entryNo = formatDocNo('JE', await nextCounter(tx as any, companyId, 'JOURNAL_ENTRY'));
-                const net = grandTotal - taxTotal;
-                const lines: any[] = [
-                    { accountId: salesAcct.id, debit: net, credit: 0 },
-                ];
-                if (vatPayableAcct && taxTotal > 0) lines.push({ accountId: vatPayableAcct.id, debit: taxTotal, credit: 0 });
-
-                if (invoice.paymentMethod === 'CREDIT' && arAcct) {
-                    lines.push({ accountId: arAcct.id, debit: 0, credit: grandTotal, partyType: 'CUSTOMER', partyId: invoice.customerId });
-                } else if ((invoice.paymentMethod === 'CARD' || invoice.paymentMethod === 'MIXED') && bankAcct) {
-                    lines.push({ accountId: bankAcct.id, debit: 0, credit: grandTotal });
-                } else if (cashAcct) {
-                    lines.push({ accountId: cashAcct.id, debit: 0, credit: grandTotal });
-                }
-
-                await tx.journalEntry.create({
-                    data: {
-                        companyId,
-                        branchId,
-                        entryNo,
-                        date: new Date(),
-                        memo: `Sales return ${row.returnNo} against ${invoice.invoiceNo}`,
-                        sourceType: 'SalesReturn',
-                        sourceId: row.id,
-                        postedById: userId,
-                        lines: { create: lines },
-                    },
-                });
+            const roundMoney = (value: number): number => Math.round(Number(value || 0) * 100) / 100;
+            let cashRefund: number | undefined;
+            let bankRefund: number | undefined;
+            if (String(invoice.paymentMethod || '').toUpperCase() === 'MIXED') {
+                const originalNetCash = roundMoney(
+                    Math.max(0, Number(invoice.cashReceived || 0) - Math.max(0, Number(invoice.changeGiven || 0)))
+                );
+                const originalGrandTotal = roundMoney(Number(invoice.grandTotal || 0));
+                const cashRatio = originalGrandTotal > 0 ? originalNetCash / originalGrandTotal : 0;
+                cashRefund = roundMoney(grandTotal * cashRatio);
+                bankRefund = roundMoney(grandTotal - cashRefund);
             }
 
-            return row;
+            const journalEntry = await CoreAccountingService.recordSalesReturn(tx as any, {
+                id: row.id,
+                companyId,
+                branchId: invoice.branchId,
+                returnNo: row.returnNo,
+                invoiceNo: invoice.invoiceNo,
+                customerId: invoice.customerId || undefined,
+                originalPaymentMethod: invoice.paymentMethod,
+                taxTotal,
+                grandTotal,
+                postedAt: new Date(),
+                postedById: userId,
+                cashRefund,
+                bankRefund,
+                items: restockedItems.map((item) => ({
+                    productId: item.productId,
+                    qty: item.qty,
+                    unitCost: item.unitCost,
+                    lineTotal: item.lineTotal,
+                })),
+            });
+
+            return { ...row, journalEntryNo: journalEntry.entryNo };
         }, { maxWait: 10000, timeout: 30000 });
 
         sendSuccess(res, result, undefined, 201);
@@ -2079,9 +2231,9 @@ salesRoutes.get('/orders', requirePermission(PERMISSIONS.SALES_ORDER_VIEW), requ
         const query = salesOrderQuerySchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
+        const branchIds = req.userBranchIds!;
 
-        const where: any = { companyId, branchId };
+        const where: any = { companyId, branchId: { in: branchIds } };
 
         if (query.state === 'active') {
             where.status = { in: ['DRAFT', 'CONFIRMED', 'PROCESSING', 'SHIPPED'] };
@@ -2129,7 +2281,7 @@ salesRoutes.get('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_VIEW), 
             where: {
                 id: req.params.id,
                 companyId: req.user!.companyId,
-                branchId: req.activeBranchId!,
+                branchId: { in: req.userBranchIds! },
             },
             include: {
                 customer: { select: { id: true, name: true, customerCode: true, phone: true, email: true, allowCreditSales: true } },
@@ -2156,32 +2308,7 @@ salesRoutes.post('/orders', requirePermission(PERMISSIONS.SALES_ORDER_CREATE), r
         const userId = req.user!.id;
         const body = req.body as z.infer<typeof salesOrderCreateSchema>;
 
-        let subtotal = 0;
-        let taxTotal = 0;
-        let discountTotal = 0;
-
-        const preparedItems = body.items.map(line => {
-            const qty = Number(line.qty);
-            const unitPrice = Number(line.unitPrice);
-            const discount = Number(line.discount || 0);
-            const tax = Number(line.taxAmount || 0);
-            const lineTotal = (qty * unitPrice) - discount;
-
-            subtotal += lineTotal;
-            taxTotal += tax;
-            discountTotal += discount;
-
-            return {
-                productId: line.productId || null,
-                description: line.description,
-                unitCode: line.unitCode || null,
-                qty,
-                unitPrice,
-                discount,
-                taxAmount: tax,
-                lineTotal
-            };
-        });
+        const { preparedItems, subtotal, taxTotal, discountTotal } = await validateAndCalculateTaxes(companyId, body.items);
 
         const orderNo = formatDocNo('SO', await nextCounter(prisma as any, companyId, 'SALES_ORDER', branchId));
 
@@ -2216,10 +2343,11 @@ salesRoutes.patch('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_CREAT
     try {
         const id = req.params.id;
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
         const body = req.body as z.infer<typeof salesOrderUpdateSchema>;
 
-        const existing = await (prisma as any).salesOrder.findFirst({ where: { id, companyId, branchId } });
+        const existing = await (prisma as any).salesOrder.findFirst({
+            where: { id, companyId, branchId: { in: req.userBranchIds! } },
+        });
         if (!existing) throw AppError.notFound('Sales Order');
         if (existing.status === 'INVOICED' || existing.status === 'CANCELLED') throw AppError.badRequest(`Cannot edit order in ${existing.status} status`);
 
@@ -2232,36 +2360,12 @@ salesRoutes.patch('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_CREAT
         if (body.customerName !== undefined) data.customerName = body.customerName;
 
         if (body.items) {
-            let subtotal = 0;
-            let taxTotal = 0;
-            let discountTotal = 0;
-
-            const preparedItems = body.items.map(line => {
-                const qty = Number(line.qty);
-                const unitPrice = Number(line.unitPrice);
-                const discount = Number(line.discount || 0);
-                const tax = Number(line.taxAmount || 0);
-                const lineTotal = (qty * unitPrice) - discount;
-
-                subtotal += lineTotal;
-                taxTotal += tax;
-                discountTotal += discount;
-
-                return {
-                    productId: line.productId || null,
-                    description: line.description,
-                    unitCode: line.unitCode || null,
-                    qty,
-                    unitPrice,
-                    discount,
-                    taxAmount: tax,
-                    lineTotal
-                };
-            });
-            data.subtotal = subtotal;
-            data.taxTotal = taxTotal;
-            data.discountTotal = discountTotal;
-            data.grandTotal = subtotal + taxTotal;
+            const taxRes = await validateAndCalculateTaxes(companyId, body.items);
+            const preparedItems = taxRes.preparedItems;
+            data.subtotal = taxRes.subtotal;
+            data.taxTotal = taxRes.taxTotal;
+            data.discountTotal = taxRes.discountTotal;
+            data.grandTotal = taxRes.subtotal + taxRes.taxTotal;
 
             await prisma.$transaction(async (tx) => {
                 await (tx as any).salesOrderItem.deleteMany({ where: { orderId: id } });
@@ -2269,7 +2373,7 @@ salesRoutes.patch('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_CREAT
                     where: { id },
                     data: {
                         ...data,
-                        items: { create: preparedItems }
+                        items: { create: preparedItems as any[] }
                     }
                 });
             });
@@ -2285,13 +2389,16 @@ salesRoutes.patch('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_CREAT
 salesRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.SALES_QUOTATION_CONVERT), requireBranch, validate({ body: salesOrderConvertSchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = req.user!.companyId;
-        const branchId = req.activeBranchId!;
         const orderId = req.params.id;
         const paymentMethod = String(req.body?.paymentMethod || 'CREDIT').toUpperCase();
 
         const result = await prisma.$transaction(async (tx) => {
             const order: any = await (tx as any).salesOrder.findFirst({
-                where: { id: orderId, companyId, branchId },
+                where: {
+                    id: orderId,
+                    companyId,
+                    branchId: { in: req.userBranchIds! },
+                },
                 include: { items: true }
             });
 
@@ -2313,11 +2420,11 @@ salesRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.SALES_QUOT
             }
 
             // Create Invoice
-            const invoiceNo = formatDocNo('SI', await nextCounter(tx as any, companyId, 'SALES_INVOICE', branchId));
+            const invoiceNo = formatDocNo('SI', await nextCounter(tx as any, companyId, 'SALES_INVOICE', String(order.branchId)));
             const invoice = await (tx as any).pOSInvoice.create({
                 data: {
                     companyId,
-                    branchId,
+                    branchId: order.branchId,
                     invoiceNo,
                     customerId: order.customerId,
                     salesOrderId: order.id,
@@ -2331,15 +2438,18 @@ salesRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.SALES_QUOT
                     notes: `Converted from Sales Order ${order.orderNo}`,
                     createdById: req.user!.id,
                     items: {
-                        create: order.items.map((item: any) => ({
-                            productId: item.productId,
-                            unitCode: item.unitCode || 'UNIT',
-                            qty: item.qty,
-                            unitPrice: item.unitPrice,
-                            discount: item.discount,
-                            taxAmount: item.taxAmount,
-                            lineTotal: item.lineTotal
-                        }))
+                        create: order.items.map((item: any) => {
+                            if (!item.productId) throw AppError.badRequest(`Order line "${item.description}" has no product and cannot be converted to invoice`);
+                            return {
+                                productId: item.productId,
+                                unitCode: item.unitCode || 'UNIT',
+                                qty: item.qty,
+                                unitPrice: item.unitPrice,
+                                discount: item.discount,
+                                taxAmount: item.taxAmount,
+                                lineTotal: item.lineTotal
+                            };
+                        })
                     }
                 }
             });

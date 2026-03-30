@@ -51,8 +51,10 @@ export class InventoryService {
         // NORMALIZE TO BASE UNIT
         const multiplier = Number(inputUnit.qtyInBaseUnit || 1);
         const baseQtyChange = params.qtyChange * multiplier;
-        // Cost normalization: if unit cost is provided, convert to base unit cost
-        const baseUnitCost = (params.cost || 0) / multiplier;
+        // Movement cost is stored in requested unit. If sale/issue call does not provide cost,
+        // fallback to current weighted average cost from stock bucket.
+        let movementUnitCost = Number(params.cost || 0);
+        let baseUnitCost = movementUnitCost / multiplier;
 
         const scopedWhere = {
             companyId: params.companyId,
@@ -75,6 +77,11 @@ export class InventoryService {
                 if (nextQty < 0) {
                     const availableInUserUnit = Number(stock.qtyOnHand) / multiplier;
                     throw AppError.badRequest(`Insufficient stock for "${product.name}". Available: ${availableInUserUnit.toFixed(2)} ${params.unitCode}`);
+                }
+
+                if (movementUnitCost <= 0) {
+                    movementUnitCost = Number(stock.avgCost || 0) * multiplier;
+                    baseUnitCost = movementUnitCost / multiplier;
                 }
             }
 
@@ -119,7 +126,7 @@ export class InventoryService {
                 unitCode: params.unitCode,
                 type: params.type,
                 qty: params.qtyChange,
-                cost: params.cost,
+                cost: movementUnitCost,
                 price: Number(params.price || 0),
                 referenceType: params.referenceType,
                 referenceId: params.referenceId,

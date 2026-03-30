@@ -1,0 +1,159 @@
+// Add these models to your schema.prisma
+
+enum BankAccountType {
+  CHECKING
+  SAVINGS
+  CASH
+  CREDIT_CARD
+  LOAN
+  INVESTMENT
+}
+
+enum BankTransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER_IN
+  TRANSFER_OUT
+  FEE
+  INTEREST
+  DIRECT_DEBIT
+  CHECK
+  POS
+  ADJUSTMENT
+}
+
+enum ReconciliationStatus {
+  UNRECONCILED
+  PARTIAL
+  RECONCILED
+}
+
+model BankAccount {
+  id                String              @id @default(auto()) @map("_id") @db.ObjectId
+  companyId         String              @db.ObjectId
+  branchId          String?             @db.ObjectId
+  accountName       String
+  accountNumber     String
+  bankName          String
+  branchName        String?
+  iban              String?
+  swiftCode         String?
+  accountType       BankAccountType     @default(CHECKING)
+  currency          String              @default("SAR")
+  openingBalance    Float               @default(0)
+  currentBalance    Float               @default(0)
+  isActive          Boolean             @default(true)
+  isDefault         Boolean             @default(false)
+  glAccountId       String?             @db.ObjectId  // Link to Chart of Accounts
+  notes             String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  company           Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch            Branch?             @relation(fields: [branchId], references: [id])
+  glAccount         Account?            @relation(fields: [glAccountId], references: [id])
+  transactions      BankTransaction[]
+  reconciliations   BankReconciliation[]
+  deposits          CashBankDeposit[]
+
+  @@unique([companyId, accountNumber])
+  @@index([companyId, isActive])
+  @@index([branchId])
+  @@map("bank_accounts")
+}
+
+model BankTransaction {
+  id                  String              @id @default(auto()) @map("_id") @db.ObjectId
+  companyId           String              @db.ObjectId
+  bankAccountId       String              @db.ObjectId
+  transactionDate     DateTime
+  valueDate           DateTime?
+  description         String
+  reference           String?             // Check number, reference, etc.
+  transactionType     BankTransactionType
+  amount              Float
+  isReconciled        Boolean             @default(false)
+  reconciledAt        DateTime?
+  reconciliationId    String?             @db.ObjectId
+  
+  // Link to source document
+  sourceType          String?             // INVOICE, PAYMENT, JOURNAL, etc.
+  sourceId            String?             @db.ObjectId
+  journalEntryId      String?             @db.ObjectId
+  
+  notes               String?
+  createdById         String              @db.ObjectId
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  company             Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bankAccount         BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  reconciliation      BankReconciliation? @relation(fields: [reconciliationId], references: [id])
+  journalEntry        JournalEntry?       @relation(fields: [journalEntryId], references: [id])
+  createdBy           User                @relation(fields: [createdById], references: [id])
+
+  @@index([companyId, bankAccountId])
+  @@index([bankAccountId, transactionDate])
+  @@index([isReconciled])
+  @@index([sourceType, sourceId])
+  @@map("bank_transactions")
+}
+
+model BankReconciliation {
+  id                  String              @id @default(auto()) @map("_id") @db.ObjectId
+  companyId           String              @db.ObjectId
+  bankAccountId       String              @db.ObjectId
+  statementDate       DateTime
+  statementNumber     String?
+  openingBalance      Float
+  closingBalance      Float               // From bank statement
+  statementBalance    Float               // What bank says
+  systemBalance       Float               // What system says
+  difference          Float               // Reconciliation difference
+  status              ReconciliationStatus @default(UNRECONCILED)
+  
+  // Summary counts
+  totalTransactions   Int                 @default(0)
+  reconciledCount     Int                 @default(0)
+  
+  notes               String?
+  preparedById        String              @db.ObjectId
+  reviewedById        String?             @db.ObjectId
+  preparedAt          DateTime            @default(now())
+  reviewedAt          DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  company             Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bankAccount         BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transactions        BankTransaction[]
+  preparedBy          User                @relation(fields: [preparedById], references: [id], name: "ReconciliationPreparedBy")
+  reviewedBy          User?               @relation(fields: [reviewedById], references: [id], name: "ReconciliationReviewedBy")
+
+  @@unique([companyId, bankAccountId, statementDate])
+  @@index([companyId, bankAccountId])
+  @@index([status])
+  @@map("bank_reconciliations")
+}
+
+model BankStatementImport {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  companyId       String   @db.ObjectId
+  bankAccountId   String   @db.ObjectId
+  fileName        String
+  importDate      DateTime @default(now())
+  rowCount        Int
+  importedCount   Int      @default(0)
+  skippedCount    Int      @default(0)
+  errorCount      Int      @default(0)
+  errors          Json?    // Array of error details
+  importedById    String   @db.ObjectId
+  
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bankAccount     BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  importedBy      User     @relation(fields: [importedById], references: [id])
+
+  @@index([companyId, bankAccountId])
+  @@index([importDate])
+  @@map("bank_statement_imports")
+}

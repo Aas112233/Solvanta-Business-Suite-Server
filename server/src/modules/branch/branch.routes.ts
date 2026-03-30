@@ -80,6 +80,16 @@ branchRoutes.patch('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES),
 branchRoutes.delete('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES), async (req, res, next) => {
     try {
         const branchId = String(req.params.id);
+
+        // CHECK FOR STOCK BEFORE DELETING/DEACTIVATING
+        const stockCount = await prisma.inventoryStock.count({
+            where: { branchId, qtyOnHand: { gt: 0 } }
+        });
+
+        if (stockCount > 0) {
+            throw AppError.badRequest(`Cannot delete/deactivate warehouse because it still has ${stockCount} items in stock. Please transfer or adjust stock to zero first.`);
+        }
+
         const result = await prisma.branch.updateMany({
             where: { id: branchId, companyId: req.user!.companyId, isActive: true },
             data: { isActive: false },

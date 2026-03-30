@@ -174,6 +174,16 @@ customerRoutes.get('/:id', requirePermission(PERMISSIONS.CRM_VIEW), async (req, 
 
 function parseOptionalDate(value: unknown): Date | undefined {
     if (typeof value !== 'string' || !value.trim()) return undefined;
+    
+    // Try parsing DD/MM/YYYY format (common in many regions)
+    const ddmmyyyy = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (ddmmyyyy) {
+        const [, day, month, year] = ddmmyyyy;
+        const d = new Date(Number(year), Number(month) - 1, Number(day));
+        if (!Number.isNaN(d.getTime())) return d;
+    }
+    
+    // Try standard date formats
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return undefined;
     return d;
@@ -192,13 +202,12 @@ customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async
         });
         if (!customer) throw AppError.notFound('Customer');
 
-        // Fetch all transactions: Invoices, Returns
+        // Fetch all transactions: Invoices, Returns, and Payment Receipts
         const [invoices, returns] = await Promise.all([
             prisma.pOSInvoice.findMany({
                 where: {
                     customerId,
                     companyId,
-                    status: { not: 'CANCELLED' } as any,
                 },
                 orderBy: { createdAt: 'asc' },
             }),
@@ -206,13 +215,34 @@ customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async
                 where: {
                     customerId,
                     companyId,
-                    status: { not: 'CANCELLED' } as any,
                 },
                 orderBy: { createdAt: 'asc' },
             }),
         ]);
 
-        // Merge and sort
+        console.log(`[Ledger] Customer ${customerId}: Found ${invoices.length} invoices, ${returns.length} returns`);
+
+        // Get all invoice IDs for this customer to fetch payment journal entries
+        const invoiceIds = invoices.map(i => i.id);
+        
+        // Fetch journal entries for payments
+        let journalEntries: any[] = [];
+        if (invoiceIds.length > 0) {
+            journalEntries = await (prisma as any).journalEntry.findMany({
+                where: {
+                    companyId,
+                    sourceType: 'SALES_PAYMENT',
+                    sourceId: { in: invoiceIds },
+                },
+                include: {
+                    lines: { include: { account: true } },
+                },
+                orderBy: { date: 'asc' },
+            });
+            console.log(`[Ledger] Found ${journalEntries.length} payment journal entries`);
+        }
+
+        // Merge and sort all transactions
         const transactions: any[] = [
             ...invoices.map(i => ({
                 id: i.id,
@@ -222,16 +252,6 @@ customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async
                 description: `Sales Invoice: ${i.invoiceNo}`,
                 debit: Number(i.grandTotal), // Invoice increases what customer owes
                 credit: 0,
-            })),
-            // Map payments directly from invoices that had cashReceived
-            ...invoices.filter(i => i.cashReceived > 0).map(i => ({
-                id: `${i.id}-payment`,
-                date: i.createdAt,
-                type: 'PAYMENT',
-                reference: i.invoiceNo,
-                description: `Payment against Invoice: ${i.invoiceNo}`,
-                debit: 0,
-                credit: Number(i.cashReceived), // Payment decreases what customer owes
             })),
             ...returns.map(r => ({
                 id: r.id,
@@ -244,22 +264,42 @@ customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async
             })),
         ];
 
+        // Add payment journal entries
+        journalEntries.forEach((je: any) => {
+            // Find the credit line (Accounts Receivable - customer account)
+            const creditLine = je.lines?.find((line: any) => line.credit > 0);
+            const debitLine = je.lines?.find((line: any) => line.debit > 0);
+            
+            transactions.push({
+                id: je.id,
+                date: je.date,
+                type: 'PAYMENT',
+                reference: je.entryNo,
+                description: `Payment Receipt: ${je.entryNo}${je.memo ? ` - ${je.memo}` : ''}`,
+                debit: 0,
+                credit: creditLine ? Number(creditLine.credit) : debitLine ? Number(debitLine.debit) : 0,
+            });
+        });
+
         transactions.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        // Calculate running balance
+        // Calculate running balance starting from opening balance
         let balance = Number(customer.openingBalance || 0);
         const ledger = transactions.map(t => {
             balance += (t.debit - t.credit);
             return { ...t, balance };
         });
 
-        // Filter by date if provided
-        const filteredLedger = ledger.filter(t => {
-            const tDate = new Date(t.date);
-            if (dateFrom && tDate < dateFrom) return false;
-            if (dateTo && tDate > dateTo) return false;
-            return true;
-        });
+        // Filter by date if provided (filter AFTER calculating running balance)
+        let filteredLedger = ledger;
+        if (dateFrom || dateTo) {
+            filteredLedger = ledger.filter(t => {
+                const tDate = new Date(t.date);
+                if (dateFrom && tDate < dateFrom) return false;
+                if (dateTo && tDate > dateTo) return false;
+                return true;
+            });
+        }
 
         sendSuccess(res, {
             customer: { id: customer.id, name: customer.name, customerCode: customer.customerCode, openingBalance: customer.openingBalance },

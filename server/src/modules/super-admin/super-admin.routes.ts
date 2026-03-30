@@ -43,6 +43,8 @@ const featureSchema = z.object({
         accounting: z.boolean(),
         pos: z.boolean(),
         reports: z.boolean(),
+        bom: z.boolean(),
+        production: z.boolean(),
     }),
 });
 
@@ -72,7 +74,7 @@ const announcementUpdateSchema = z.object({
 });
 
 const planSchema = z.object({
-    plan: z.enum(['Starter', 'Growth', 'Enterprise']),
+    plan: z.enum(['Starter', 'Growth', 'SOLVANTA']),
     monthlyRevenue: z.number().min(0).max(1_000_000).optional(),
     failedPayments: z.number().int().min(0).max(100_000).optional(),
     nextBillingDate: z
@@ -126,7 +128,7 @@ const createTenantSchema = z.object({
         address: z.string().trim().max(300).optional(),
         phone: z.string().trim().max(40).optional(),
     }).optional(),
-    plan: z.enum(['Starter', 'Growth', 'Enterprise']).optional(),
+    plan: z.enum(['Starter', 'Growth', 'SOLVANTA']).optional(),
     featureFlags: z.object({
         crm: z.boolean(),
         inventory: z.boolean(),
@@ -134,6 +136,8 @@ const createTenantSchema = z.object({
         accounting: z.boolean(),
         pos: z.boolean(),
         reports: z.boolean(),
+        bom: z.boolean(),
+        production: z.boolean(),
     }).optional(),
 });
 
@@ -149,7 +153,7 @@ function inferTenantStatus(createdAt: Date, activeUserCount: number): TenantStat
 }
 
 function inferTenantPlan(totalUsers: number): TenantPlan {
-    if (totalUsers >= 50) return 'Enterprise';
+    if (totalUsers >= 50) return 'SOLVANTA';
     if (totalUsers >= 10) return 'Growth';
     return 'Starter';
 }

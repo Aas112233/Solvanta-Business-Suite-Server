@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { logger } from './lib/logger.js';
+import { basePrisma } from './lib/prisma.js';
 
 // Import routes
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -31,6 +32,13 @@ import { salesCashRoutes } from './modules/sales/cash.routes.js';
 import { posTerminalRoutes } from './modules/pos-terminal/pos-terminal.routes.js';
 import { superAdminRoutes } from './modules/super-admin/super-admin.routes.js';
 import { taxRoutes } from './modules/tax/tax.routes.js';
+import { hrRoutes } from './modules/hr/hr.routes.js';
+import { serviceRoutes } from './modules/service/service.routes.js';
+import { serviceInvoiceRoutes } from './modules/service-invoice/service-invoice.routes.js';
+import { bankRoutes } from './modules/bank/bank.routes.js';
+import { agingRoutes } from './modules/aging/aging.routes.js';
+import { bomRoutes } from './modules/bom/bom.routes.js';
+import { productionRoutes } from './modules/production/production.routes.js';
 
 export const app = express();
 
@@ -115,8 +123,40 @@ const morganStream = { write: (msg: string) => logger.http(msg.trim()) };
 app.use(morgan('short', { stream: morganStream }));
 
 // ── Health check ────────────────────────────────────────────
-app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async (_req, res) => {
+    const startTime = Date.now();
+    const healthStatus: {
+        status: 'ok' | 'degraded' | 'unhealthy';
+        timestamp: string;
+        uptime: number;
+        database: {
+            status: 'connected' | 'disconnected';
+            responseTime?: number;
+        };
+    } = {
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        database: {
+            status: 'disconnected',
+        },
+    };
+
+    // Check database connection
+    try {
+        await basePrisma.$runCommandRaw({ ping: 1 });
+        healthStatus.database.status = 'connected';
+        healthStatus.database.responseTime = Date.now() - startTime;
+        logger.info(`Health check: OK (db=${healthStatus.database.status}, responseTime=${healthStatus.database.responseTime}ms)`);
+    } catch (error: any) {
+        healthStatus.database.status = 'disconnected';
+        healthStatus.status = 'degraded';
+        const errorMessage = error?.message || error?.toString() || 'Unknown error';
+        logger.warn(`Health check: DEGRADED (db=${healthStatus.database.status}, error=${errorMessage})`);
+    }
+
+    const httpStatus = healthStatus.status === 'unhealthy' ? 503 : 200;
+    res.status(httpStatus).json(healthStatus);
 });
 
 // ── API v1 Routes ───────────────────────────────────────────
@@ -142,6 +182,13 @@ v1.use('/super-admin', superAdminRoutes);
 v1.use('/accounting', accountingRoutes);
 v1.use('/taxes', taxRoutes);
 v1.use('/unit-management', unitManagementRoutes);
+v1.use('/hr', hrRoutes);
+v1.use('/services', serviceRoutes);
+v1.use('/service-invoices', serviceInvoiceRoutes);
+v1.use('/bank', bankRoutes);
+v1.use('/aging', agingRoutes);
+v1.use('/bom', bomRoutes);
+v1.use('/production', productionRoutes);
 
 app.use('/api/v1', v1);
 

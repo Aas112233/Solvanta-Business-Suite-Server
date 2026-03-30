@@ -1050,16 +1050,17 @@ salesCashRoutes.get(
     }
 );
 
-// GET /sales/cash/branch-pending (active branch snapshot)
+// GET /sales/cash/branch-pending (assigned branches snapshot)
 salesCashRoutes.get(
     '/branch-pending',
     requirePermission(PERMISSIONS.SALES_CASH_VIEW),
     requireBranch,
     async (req, res, next) => {
         try {
+            const branchIds = await getAccessibleBranchIds(req);
             const where = {
                 companyId: req.user!.companyId,
-                branchId: req.activeBranchId!,
+                branchId: { in: branchIds },
                 status: { in: ['DECLARED', 'PICKUP_ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'VAULT_RECEIVED', 'DEPOSITED'] },
             };
             const [rows, agg] = await Promise.all([

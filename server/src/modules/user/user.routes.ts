@@ -1,13 +1,14 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
-import { PERMISSIONS } from '../../config/permissions.js';
+import { ALL_PERMISSIONS, PERMISSIONS } from '../../config/permissions.js';
 import { prisma } from '../../lib/prisma.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
 import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
+import { isEmailSuperAdmin } from '../../middleware/superAdmin.js';
 
 export const userRoutes = Router();
 userRoutes.use(authenticate);
@@ -99,7 +100,25 @@ userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) =>
             logoUrl: safe.company.logoUrl,
             setupCompleted: companySettings.setupCompleted !== false, // default true for existing companies
         };
-        sendSuccess(res, { ...safe, company: companyData, branches: safe.branches.map((ub) => ub.branch) });
+        const isSuperAdmin = isEmailSuperAdmin(safe.email);
+        const effectiveBranches = isSuperAdmin
+            ? await prisma.branch.findMany({
+                where: { companyId: req.user!.companyId },
+                select: { id: true, name: true, code: true },
+                orderBy: { name: 'asc' },
+            })
+            : safe.branches.map((ub) => ub.branch);
+
+        sendSuccess(res, {
+            ...safe,
+            role: safe.role ? {
+                ...safe.role,
+                permissions: isSuperAdmin ? [...ALL_PERMISSIONS] : safe.role.permissions,
+            } : safe.role,
+            company: companyData,
+            branches: effectiveBranches,
+            isSuperAdmin,
+        });
     } catch (error) { next(error); }
 });
 

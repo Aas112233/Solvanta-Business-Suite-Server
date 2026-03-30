@@ -3,6 +3,8 @@ import jwt from 'jsonwebtoken';
 import { prisma } from '../../lib/prisma.js';
 import { env } from '../../config/env.js';
 import { AppError } from '../../utils/AppError.js';
+import { ALL_PERMISSIONS } from '../../config/permissions.js';
+import { isEmailSuperAdmin } from '../../middleware/superAdmin.js';
 
 const jwtExpiry = env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'];
 const jwtRefreshExpiry = env.JWT_REFRESH_EXPIRES_IN as jwt.SignOptions['expiresIn'];
@@ -48,6 +50,14 @@ export class AuthService {
         const companySettings = (fullUser.company?.settings && typeof fullUser.company.settings === 'object' && !Array.isArray(fullUser.company.settings))
             ? fullUser.company.settings as Record<string, any>
             : {};
+        const isSuperAdmin = isEmailSuperAdmin(fullUser.email);
+        const effectiveBranches = isSuperAdmin
+            ? await prisma.branch.findMany({
+                where: { companyId: fullUser.companyId },
+                select: { id: true, name: true, code: true },
+                orderBy: { name: 'asc' },
+            })
+            : fullUser.branches.map((ub) => ub.branch);
 
         const accessToken = jwt.sign(
             { userId: user.id, companyId: user.companyId },
@@ -81,7 +91,10 @@ export class AuthService {
                 id: fullUser.id,
                 name: fullUser.name,
                 email: fullUser.email,
-                role: fullUser.role,
+                role: fullUser.role ? {
+                    ...fullUser.role,
+                    permissions: isSuperAdmin ? [...ALL_PERMISSIONS] : fullUser.role.permissions,
+                } : fullUser.role,
                 company: {
                     id: fullUser.company.id,
                     name: fullUser.company.name,
@@ -89,7 +102,8 @@ export class AuthService {
                     logoUrl: fullUser.company.logoUrl,
                     setupCompleted: companySettings.setupCompleted !== false, // default true for existing companies
                 },
-                branches: fullUser.branches.map((ub) => ub.branch),
+                branches: effectiveBranches,
+                isSuperAdmin,
             },
         };
     }

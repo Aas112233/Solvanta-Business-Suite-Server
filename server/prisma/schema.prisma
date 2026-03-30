@@ -1,4 +1,4 @@
-// ─── Prisma Schema: Enterprise CRM + ERP + POS + Accounting (MongoDB) ───
+// ─── Prisma Schema: SOLVANTA CRM + ERP + POS + Accounting (MongoDB) ───
 generator client {
   provider = "prisma-client-js"
 }
@@ -17,6 +17,14 @@ enum ProductStatus {
   INACTIVE
 }
 
+enum ProductKind {
+  MERCHANDISE
+  RAW_MATERIAL
+  FINISHED_GOOD
+  SEMI_FINISHED
+  CONSUMABLE
+}
+
 enum TaxType {
   SALES
   PURCHASE
@@ -32,6 +40,8 @@ enum StockMovementType {
   DAMAGE
   EXPIRED
   RETURN
+  PRODUCTION_ISSUE
+  PRODUCTION_RECEIPT
 }
 
 enum PaymentMethod {
@@ -122,6 +132,23 @@ enum AccountMappingType {
   SHRINKAGE_EXPENSE
   DAMAGED_GOODS_EXPENSE
   TRANSFER_IN_TRANSIT
+  WIP_ASSET
+  PRODUCTION_VARIANCE
+}
+
+enum BOMStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum ProductionOrderStatus {
+  DRAFT
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
 }
 
 enum AccountEntityType {
@@ -176,6 +203,13 @@ enum CashCollectionBagStatus {
   CANCELLED
 }
 
+enum PayrollPaymentStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELLED
+}
+
 // ══════════════════════════════════════════════════════════════
 // COMPANY & BRANCH
 // ══════════════════════════════════════════════════════════════
@@ -190,48 +224,66 @@ model Company {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  branches         Branch[]
-  users            User[]
-  roles            Role[]
-  customers        Customer[]
-  suppliers        Supplier[]
-  categories       Category[]
-  brands           Brand[]
-  itemGroups       ItemGroup[]
-  unitMasters      UnitMaster[]
-  products         Product[]
-  taxes            Tax[]
-  priceGroups      PriceGroup[]
-  accounts         Account[]
-  accountMappings  AccountMapping[]
-  journalEntries   JournalEntry[]
-  posInvoices      POSInvoice[]
-  salesReturns     SalesReturn[]
-  purchaseInvoices PurchaseInvoice[]
-  purchaseReturns  PurchaseReturn[]
-  purchasePayments PurchasePayment[]
-  transfers        Transfer[]
-  inventoryStocks  InventoryStock[]
-  stockMovements   StockMovement[]
-  expenses         Expense[]
-  periodCloses     PeriodClose[]
-  stockCounts      StockCount[]
-  auditLogs        AuditLog[]
-  globalStrings    GlobalString[]
-  documentCounters DocumentCounter[]
-  posTerminals     POSTerminal[]
-  posShifts        POSShift[]
-  purchaseOrders   PurchaseOrder[]
-  salesQuotations  SalesQuotation[]
-  salesOrders      SalesOrder[]
-  cashCollectionRuns CashCollectionRun[]
-  cashCollectionBags CashCollectionBag[]
-  cashBankDeposits   CashBankDeposit[]
+  branches             Branch[]
+  users                User[]
+  roles                Role[]
+  customers            Customer[]
+  suppliers            Supplier[]
+  categories           Category[]
+  brands               Brand[]
+  itemGroups           ItemGroup[]
+  unitMasters          UnitMaster[]
+  products             Product[]
+  taxes                Tax[]
+  priceGroups          PriceGroup[]
+  accounts             Account[]
+  accountMappings      AccountMapping[]
+  journalEntries       JournalEntry[]
+  posInvoices          POSInvoice[]
+  salesReturns         SalesReturn[]
+  purchaseInvoices     PurchaseInvoice[]
+  purchaseReturns      PurchaseReturn[]
+  purchasePayments     PurchasePayment[]
+  transfers            Transfer[]
+  inventoryStocks      InventoryStock[]
+  stockMovements       StockMovement[]
+  expenses             Expense[]
+  periodCloses         PeriodClose[]
+  stockCounts          StockCount[]
+  auditLogs            AuditLog[]
+  globalStrings        GlobalString[]
+  documentCounters     DocumentCounter[]
+  posTerminals         POSTerminal[]
+  posShifts            POSShift[]
+  purchaseOrders       PurchaseOrder[]
+  salesQuotations      SalesQuotation[]
+  salesOrders          SalesOrder[]
+  cashCollectionRuns   CashCollectionRun[]
+  cashCollectionBags   CashCollectionBag[]
+  cashBankDeposits     CashBankDeposit[]
   cashCollectionEvents CashCollectionEvent[]
-  loyaltyCustomers   LoyaltyCustomer[]
-  loyaltyPointHistory LoyaltyPointHistory[]
+  loyaltyCustomers     LoyaltyCustomer[]
+  loyaltyPointHistory  LoyaltyPointHistory[]
+  hrDepartments        Department[]
+  hrPositions          Position[]
+  hrEmployees          Employee[]
+  expensePurchases     ExpensePurchase[]
+  serviceMasters       ServiceMaster[]
+  bankAccounts         BankAccount[]
+  bankTransactions     BankTransaction[]
+  bankReconciliations  BankReconciliation[]
+  bankStatementImports BankStatementImport[]
+  payrollPayments      PayrollPayment[]
+  boms                 Bom[]
+  productionOrders     ProductionOrder[]
+  productionConsumptions ProductionMaterialConsumption[]
+  productionCompletions ProductionCompletion[]
 
-  defaultTaxAccountId        String? @db.ObjectId
+  defaultTaxAccountId String?      @db.ObjectId
+  shifts              Shift[]
+  attendances         Attendance[]
+  leaveTypes          LeaveType[]
+  leaves              Leave[]
 
   @@index([createdAt])
   @@map("companies")
@@ -262,28 +314,36 @@ model Branch {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  company          Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  userBranches     UserBranch[]
-  inventoryStocks  InventoryStock[]
-  stockMovements   StockMovement[]
-  posInvoices      POSInvoice[]
-  salesReturns     SalesReturn[]
-  purchaseInvoices PurchaseInvoice[]
-  purchaseReturns  PurchaseReturn[]
-  purchasePayments PurchasePayment[]
-  journalEntries   JournalEntry[]
-  journalCostCenters JournalEntry[]    @relation("JournalEntryCostCenter")
-  expenses         Expense[]
-  transfersFrom    Transfer[]        @relation("TransferFrom")
-  transfersTo      Transfer[]        @relation("TransferTo")
-  stockCounts      StockCount[]
-  auditLogs        AuditLog[]
-  posTerminals     POSTerminal[]
-  purchaseOrders   PurchaseOrder[]
-  salesQuotations  SalesQuotation[]
-  salesOrders      SalesOrder[]
-  cashCollectionBags CashCollectionBag[]
+  company              Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userBranches         UserBranch[]
+  inventoryStocks      InventoryStock[]
+  stockMovements       StockMovement[]
+  posInvoices          POSInvoice[]
+  salesReturns         SalesReturn[]
+  purchaseInvoices     PurchaseInvoice[]
+  purchaseReturns      PurchaseReturn[]
+  purchasePayments     PurchasePayment[]
+  journalEntries       JournalEntry[]
+  journalCostCenters   JournalEntry[]        @relation("JournalEntryCostCenter")
+  expenses             Expense[]
+  transfersFrom        Transfer[]            @relation("TransferFrom")
+  transfersTo          Transfer[]            @relation("TransferTo")
+  stockCounts          StockCount[]
+  auditLogs            AuditLog[]
+  posTerminals         POSTerminal[]
+  purchaseOrders       PurchaseOrder[]
+  salesQuotations      SalesQuotation[]
+  salesOrders          SalesOrder[]
+  cashCollectionBags   CashCollectionBag[]
   cashCollectionEvents CashCollectionEvent[]
+  hrEmployees          Employee[]
+  expensePurchases     ExpensePurchase[]
+  attendances          Attendance[]
+  bankAccounts         BankAccount[]
+  payrollPayments      PayrollPayment[]
+  productionOrders     ProductionOrder[]
+  productionConsumptions ProductionMaterialConsumption[]
+  productionCompletions ProductionCompletion[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -324,37 +384,47 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  company              Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  role                 Role              @relation(fields: [roleId], references: [id])
+  company              Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  role                 Role                  @relation(fields: [roleId], references: [id])
   branches             UserBranch[]
-  posInvoices          POSInvoice[]      @relation("CreatedBy")
-  salesReturns         SalesReturn[]     @relation("SalesReturnCreatedBy")
-  purchaseInvoices     PurchaseInvoice[] @relation("PurchaseCreatedBy")
-  purchaseReturns      PurchaseReturn[]  @relation("PurchaseReturnCreatedBy")
-  purchasePayments     PurchasePayment[] @relation("PurchasePaymentCreatedBy")
-  stockMovements       StockMovement[]   @relation("MovementCreatedBy")
-  journalEntries       JournalEntry[]    @relation("JournalPostedBy")
-  expenses             Expense[]         @relation("ExpenseCreatedBy")
-  periodCloses         PeriodClose[]     @relation("PeriodClosedBy")
-  transfersCreated     Transfer[]        @relation("TransferCreatedBy")
-  transfersApproved    Transfer[]        @relation("TransferApprovedBy")
-  stockCountsCreated   StockCount[]      @relation("StockCountCreatedBy")
-  stockCountsCommitted StockCount[]      @relation("StockCountCommittedBy")
+  posInvoices          POSInvoice[]          @relation("CreatedBy")
+  salesReturns         SalesReturn[]         @relation("SalesReturnCreatedBy")
+  purchaseInvoices     PurchaseInvoice[]     @relation("PurchaseCreatedBy")
+  purchaseReturns      PurchaseReturn[]      @relation("PurchaseReturnCreatedBy")
+  purchasePayments     PurchasePayment[]     @relation("PurchasePaymentCreatedBy")
+  stockMovements       StockMovement[]       @relation("MovementCreatedBy")
+  journalEntries       JournalEntry[]        @relation("JournalPostedBy")
+  expenses             Expense[]             @relation("ExpenseCreatedBy")
+  periodCloses         PeriodClose[]         @relation("PeriodClosedBy")
+  transfersCreated     Transfer[]            @relation("TransferCreatedBy")
+  transfersApproved    Transfer[]            @relation("TransferApprovedBy")
+  stockCountsCreated   StockCount[]          @relation("StockCountCreatedBy")
+  stockCountsCommitted StockCount[]          @relation("StockCountCommittedBy")
   auditLogs            AuditLog[]
-  posShifts            POSShift[]        @relation("ShiftUser")
-  purchaseOrders       PurchaseOrder[]   @relation("PurchaseOrderCreatedBy")
-  posTerminals         POSTerminal[]     @relation("TerminalDefaultUser")
-  salesQuotations      SalesQuotation[]  @relation("QuotationCreatedBy")
-  salesOrders          SalesOrder[]      @relation("SalesOrderCreatedBy")
-  cashRunsCreated      CashCollectionRun[] @relation("CashRunCreatedBy")
-  cashRunsCollected    CashCollectionRun[] @relation("CashRunCollector")
-  cashBagsCreated      CashCollectionBag[] @relation("CashBagCreatedBy")
-  cashBagsPicked       CashCollectionBag[] @relation("CashBagPickedBy")
-  cashBagsVaulted      CashCollectionBag[] @relation("CashBagVaultedBy")
-  cashBagsDeposited    CashCollectionBag[] @relation("CashBagDepositedBy")
-  cashBagsReconciled   CashCollectionBag[] @relation("CashBagReconciledBy")
-  cashDeposits         CashBankDeposit[]   @relation("CashDepositCreatedBy")
+  posShifts            POSShift[]            @relation("ShiftUser")
+  purchaseOrders       PurchaseOrder[]       @relation("PurchaseOrderCreatedBy")
+  posTerminals         POSTerminal[]         @relation("TerminalDefaultUser")
+  salesQuotations      SalesQuotation[]      @relation("QuotationCreatedBy")
+  salesOrders          SalesOrder[]          @relation("SalesOrderCreatedBy")
+  cashRunsCreated      CashCollectionRun[]   @relation("CashRunCreatedBy")
+  cashRunsCollected    CashCollectionRun[]   @relation("CashRunCollector")
+  cashBagsCreated      CashCollectionBag[]   @relation("CashBagCreatedBy")
+  cashBagsPicked       CashCollectionBag[]   @relation("CashBagPickedBy")
+  cashBagsVaulted      CashCollectionBag[]   @relation("CashBagVaultedBy")
+  cashBagsDeposited    CashCollectionBag[]   @relation("CashBagDepositedBy")
+  cashBagsReconciled   CashCollectionBag[]   @relation("CashBagReconciledBy")
+  cashDeposits         CashBankDeposit[]     @relation("CashDepositCreatedBy")
   cashCollectionEvents CashCollectionEvent[] @relation("CashEventActor")
+  expensePurchases     ExpensePurchase[]     @relation("ExpensePurchaseCreatedBy")
+  hrLeavesApproved     Leave[]               @relation("LeaveApprovedBy")
+  bankTransactions     BankTransaction[]     @relation("BankTransactionCreatedBy")
+  reconciliationsPrepared BankReconciliation[] @relation("ReconciliationPreparedBy")
+  reconciliationsReviewed BankReconciliation[] @relation("ReconciliationReviewedBy")
+  bankStatementImports BankStatementImport[] @relation("BankStatementImportedBy")
+  bomsCreated          Bom[]                 @relation("BomCreatedBy")
+  productionOrdersCreated ProductionOrder[]  @relation("ProductionOrderCreatedBy")
+  productionConsumptions ProductionMaterialConsumption[] @relation("ProductionConsumptionCreatedBy")
+  productionCompletions ProductionCompletion[] @relation("ProductionCompletionCreatedBy")
 
   @@index([companyId, email])
   @@map("users")
@@ -379,23 +449,23 @@ model UserBranch {
 // ══════════════════════════════════════════════════════════════
 
 model Customer {
-  id             String    @id @default(auto()) @map("_id") @db.ObjectId
-  companyId      String    @db.ObjectId
-  customerCode   String
-  name           String
-  phone          String?
-  email          String?
-  vatNumber      String?
-  address        Json?
-  creditLimit    Float     @default(0)
-  allowCreditSales Boolean  @default(true)
-  openingBalance Float     @default(0)
-  priceGroupId   String?   @db.ObjectId
-  tags           String[]
-  notes          String?
-  deletedAt      DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  companyId        String    @db.ObjectId
+  customerCode     String
+  name             String
+  phone            String?
+  email            String?
+  vatNumber        String?
+  address          Json?
+  creditLimit      Float     @default(0)
+  allowCreditSales Boolean   @default(true)
+  openingBalance   Float     @default(0)
+  priceGroupId     String?   @db.ObjectId
+  tags             String[]
+  notes            String?
+  deletedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   company         Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   priceGroup      PriceGroup?      @relation(fields: [priceGroupId], references: [id])
@@ -438,18 +508,18 @@ model Supplier {
 // ══════════════════════════════════════════════════════════════
 
 model Tax {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  companyId   String   @db.ObjectId
-  name        String
-  rate        Float    // e.g. 0.15 for 15%
-  type        TaxType  @default(BOTH)
-  isActive    Boolean  @default(true)
-  isDefault   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  companyId String   @db.ObjectId
+  name      String
+  rate      Float // e.g. 0.15 for 15%
+  type      TaxType  @default(BOTH)
+  isActive  Boolean  @default(true)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  products    Product[]
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products Product[]
 
   @@unique([companyId, name])
   @@index([companyId])
@@ -522,22 +592,23 @@ model UnitMaster {
 }
 
 model Product {
-  id          String        @id @default(auto()) @map("_id") @db.ObjectId
-  companyId   String        @db.ObjectId
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  companyId   String   @db.ObjectId
   itemCode    String // 16 digits
   name        String
   nameArabic  String?
-  categoryId  String?       @db.ObjectId
-  itemGroupId String?       @db.ObjectId
-  brandId     String?       @db.ObjectId
+  categoryId  String?  @db.ObjectId
+  itemGroupId String?  @db.ObjectId
+  brandId     String?  @db.ObjectId
   barcodes    String[]
+  kind        ProductKind @default(MERCHANDISE)
 
-  taxId       String?       @db.ObjectId
-  taxRate     Float         @default(0.15) // Legacy field, keeping for fallback
-  status      ProductStatus @default(ACTIVE)
-  deletedAt   DateTime?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  taxId     String?       @db.ObjectId
+  taxRate   Float         @default(0.15) // Legacy field, keeping for fallback
+  status    ProductStatus @default(ACTIVE)
+  deletedAt DateTime?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
   company              Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
   category             Category?             @relation(fields: [categoryId], references: [id])
@@ -557,30 +628,180 @@ model Product {
   stockCountItems      StockCountItem[]
   salesQuotationItems  SalesQuotationItem[]
   salesOrderItems      SalesOrderItem[]
+  bomDefinitions       Bom[]                         @relation("BomFinishedGood")
+  bomComponents        BomItem[]                     @relation("BomComponent")
+  productionOrders     ProductionOrder[]             @relation("ProductionFinishedGood")
+  productionMaterials  ProductionOrderMaterial[]     @relation("ProductionMaterialProduct")
+  productionConsumptions ProductionMaterialConsumption[] @relation("ProductionConsumptionProduct")
+  productionCompletions ProductionCompletion[]       @relation("ProductionCompletionProduct")
 
   @@unique([companyId, itemCode])
   @@index([companyId, deletedAt])
   @@index([companyId, status])
+  @@index([companyId, kind])
   @@map("products")
 }
 
+model Bom {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  companyId      String    @db.ObjectId
+  productId      String    @db.ObjectId
+  name           String
+  version        String    @default("1.0")
+  status         BOMStatus @default(DRAFT)
+  outputQty      Float     @default(1)
+  outputUnitCode String
+  notes          String?
+  createdById    String    @db.ObjectId
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  company        Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product        Product   @relation("BomFinishedGood", fields: [productId], references: [id])
+  createdBy      User      @relation("BomCreatedBy", fields: [createdById], references: [id])
+  items          BomItem[]
+  orders         ProductionOrder[]
+
+  @@unique([companyId, productId, version])
+  @@index([companyId, status])
+  @@map("boms")
+}
+
+model BomItem {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  bomId        String   @db.ObjectId
+  productId    String   @db.ObjectId
+  unitCode     String
+  qtyRequired  Float
+  scrapPercent Float    @default(0)
+  notes        String?
+
+  bom          Bom      @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  product      Product  @relation("BomComponent", fields: [productId], references: [id])
+
+  @@index([bomId])
+  @@index([productId])
+  @@map("bom_items")
+}
+
+model ProductionOrder {
+  id               String                @id @default(auto()) @map("_id") @db.ObjectId
+  companyId        String                @db.ObjectId
+  branchId         String                @db.ObjectId
+  bomId            String                @db.ObjectId
+  productId        String                @db.ObjectId
+  productionNo     String
+  date             DateTime              @default(now())
+  status           ProductionOrderStatus @default(DRAFT)
+  plannedQty       Float
+  plannedUnitCode  String
+  completedQty     Float                 @default(0)
+  scrapQty         Float                 @default(0)
+  plannedStartDate DateTime?
+  plannedEndDate   DateTime?
+  actualStartDate  DateTime?
+  actualEndDate    DateTime?
+  notes            String?
+  createdById      String                @db.ObjectId
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  company          Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch           Branch                @relation(fields: [branchId], references: [id])
+  bom              Bom                   @relation(fields: [bomId], references: [id])
+  product          Product               @relation("ProductionFinishedGood", fields: [productId], references: [id])
+  createdBy        User                  @relation("ProductionOrderCreatedBy", fields: [createdById], references: [id])
+  materials        ProductionOrderMaterial[]
+  consumptions     ProductionMaterialConsumption[]
+  completions      ProductionCompletion[]
+
+  @@unique([companyId, productionNo])
+  @@index([companyId, branchId, status, createdAt])
+  @@index([companyId, productId, status])
+  @@map("production_orders")
+}
+
+model ProductionOrderMaterial {
+  id                String          @id @default(auto()) @map("_id") @db.ObjectId
+  productionOrderId String          @db.ObjectId
+  productId         String          @db.ObjectId
+  unitCode          String
+  plannedQty        Float
+  issuedQty         Float           @default(0)
+  varianceQty       Float           @default(0)
+
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  product           Product         @relation("ProductionMaterialProduct", fields: [productId], references: [id])
+
+  @@index([productionOrderId])
+  @@map("production_order_materials")
+}
+
+model ProductionMaterialConsumption {
+  id                String          @id @default(auto()) @map("_id") @db.ObjectId
+  companyId         String          @db.ObjectId
+  branchId          String          @db.ObjectId
+  productionOrderId String          @db.ObjectId
+  productId         String          @db.ObjectId
+  unitCode          String
+  qtyConsumed       Float
+  cost              Float           @default(0)
+  batchNo           String?
+  notes             String?
+  createdById       String          @db.ObjectId
+  createdAt         DateTime        @default(now())
+
+  company           Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch            Branch          @relation(fields: [branchId], references: [id])
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  product           Product         @relation("ProductionConsumptionProduct", fields: [productId], references: [id])
+  createdBy         User            @relation("ProductionConsumptionCreatedBy", fields: [createdById], references: [id])
+
+  @@index([companyId, productionOrderId, createdAt])
+  @@map("production_material_consumptions")
+}
+
+model ProductionCompletion {
+  id                String          @id @default(auto()) @map("_id") @db.ObjectId
+  companyId         String          @db.ObjectId
+  branchId          String          @db.ObjectId
+  productionOrderId String          @db.ObjectId
+  productId         String          @db.ObjectId
+  unitCode          String
+  qtyCompleted      Float
+  unitCost          Float           @default(0)
+  notes             String?
+  createdById       String          @db.ObjectId
+  createdAt         DateTime        @default(now())
+
+  company           Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch            Branch          @relation(fields: [branchId], references: [id])
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  product           Product         @relation("ProductionCompletionProduct", fields: [productId], references: [id])
+  createdBy         User            @relation("ProductionCompletionCreatedBy", fields: [createdById], references: [id])
+
+  @@index([companyId, productionOrderId, createdAt])
+  @@map("production_completions")
+}
+
 model ProductUnit {
-  id                String  @id @default(auto()) @map("_id") @db.ObjectId
-  productId         String  @db.ObjectId
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  productId         String   @db.ObjectId
   unitName          String
   unitCode          String
-  qtyInBaseUnit     Float   @default(1)
-  salePrice         Float   @default(0)
-  costPrice         Float   @default(0)
-  barcode           String?
-  isDefaultSaleUnit Boolean @default(false)
-  isBase            Boolean @default(false)
+  qtyInBaseUnit           Float    @default(1)
+  salePrice               Float    @default(0)
+  minimumNegotiationPrice Float?
+  costPrice               Float    @default(0)
+  barcodes          String[]
+  isDefaultSaleUnit Boolean  @default(false)
+  isBase            Boolean  @default(false)
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@unique([productId, unitCode])
   @@index([productId])
-  @@index([barcode])
+  @@index([barcodes])
   @@map("product_units")
 }
 
@@ -597,6 +818,7 @@ model PriceGroup {
   productPriceGroups ProductPriceGroup[]
   customers          Customer[]
   posTerminals       POSTerminal[]
+  stockCounts        StockCount[]
 
   @@unique([companyId, name])
   @@map("price_groups")
@@ -606,8 +828,9 @@ model ProductPriceGroup {
   id           String @id @default(auto()) @map("_id") @db.ObjectId
   productId    String @db.ObjectId
   priceGroupId String @db.ObjectId
-  unitCode     String
-  salePrice    Float
+  unitCode                String
+  salePrice               Float
+  minimumNegotiationPrice Float?
 
   product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
   priceGroup PriceGroup @relation(fields: [priceGroupId], references: [id], onDelete: Cascade)
@@ -621,26 +844,25 @@ model ProductPriceGroup {
 // ══════════════════════════════════════════════════════════════
 
 model InventoryStock {
-  id        String    @id @default(auto()) @map("_id") @db.ObjectId
-  companyId String    @db.ObjectId
-  branchId  String    @db.ObjectId
-  productId String    @db.ObjectId
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  companyId String @db.ObjectId
+  branchId  String @db.ObjectId
+  productId String @db.ObjectId
   unitCode  String
-  qtyOnHand Float     @default(0)
-  avgCost   Float     @default(0)
+  qtyOnHand Float  @default(0)
+  avgCost   Float  @default(0)
 
-  minStock  Float     @default(5)
-  maxStock  Float     @default(100)
+  minStock Float @default(5)
+  maxStock Float @default(100)
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   branch  Branch  @relation(fields: [branchId], references: [id])
   product Product @relation(fields: [productId], references: [id])
 
-  @@unique([branchId, productId, unitCode])
+  @@unique([branchId, productId])
   @@index([companyId])
   @@index([companyId, productId])
   @@index([companyId, branchId])
-
   @@map("inventory_stocks")
 }
 
@@ -657,8 +879,8 @@ model StockMovement {
   cost          Float             @default(0)
   price         Float             @default(0)
 
-  createdById   String            @db.ObjectId
-  createdAt     DateTime          @default(now())
+  createdById String   @db.ObjectId
+  createdAt   DateTime @default(now())
 
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   branch    Branch  @relation(fields: [branchId], references: [id])
@@ -666,6 +888,9 @@ model StockMovement {
   createdBy User    @relation("MovementCreatedBy", fields: [createdById], references: [id])
 
   @@index([companyId, productId])
+  @@index([companyId, branchId, createdAt])
+  @@index([companyId, branchId, productId, unitCode, createdAt])
+  @@index([companyId, referenceType, referenceId, type, createdAt])
   @@index([createdAt])
   @@map("stock_movements")
 }
@@ -675,44 +900,48 @@ model StockMovement {
 // ══════════════════════════════════════════════════════════════
 
 model POSInvoice {
-  id            String        @id @default(auto()) @map("_id") @db.ObjectId
-  companyId     String        @db.ObjectId
-  branchId      String        @db.ObjectId
-  invoiceNo     String
-  customerId    String?       @db.ObjectId
-  posTerminalId String?       @db.ObjectId
-  posShiftId    String?       @db.ObjectId
-  salesOrderId  String?       @db.ObjectId
+  id              String        @id @default(auto()) @map("_id") @db.ObjectId
+  companyId       String        @db.ObjectId
+  branchId        String        @db.ObjectId
+  invoiceNo       String
+  customerId      String?       @db.ObjectId
+  posTerminalId   String?       @db.ObjectId
+  posShiftId      String?       @db.ObjectId
+  salesOrderId    String?       @db.ObjectId
   clientRequestId String?
-  subtotal      Float
-  discountTotal Float         @default(0)
-  taxTotal      Float         @default(0)
-  grandTotal    Float
-  paymentMethod String
-  cashReceived  Float         @default(0)
-  changeGiven   Float         @default(0)
-  status        InvoiceStatus @default(PAID)
-  isPosted      Boolean       @default(true)
-  notes         String?
-  createdById   String        @db.ObjectId
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  subtotal        Float
+  discountTotal   Float         @default(0)
+  taxTotal        Float         @default(0)
+  grandTotal      Float
+  paymentMethod   String
+  cashReceived    Float         @default(0)
+  changeGiven     Float         @default(0)
+  status          InvoiceStatus @default(PAID)
+  isPosted        Boolean       @default(true)
+  notes           String?
+  createdById     String        @db.ObjectId
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
-  loyaltyCustomerId   String?           @db.ObjectId
-  loyaltyPointsEarned   Float?          @default(0)
-  loyaltyPointsRedeemed Float?          @default(0)
+  loyaltyCustomerId     String? @db.ObjectId
+  loyaltyPointsEarned   Float?  @default(0)
+  loyaltyPointsRedeemed Float?  @default(0)
 
-  company     Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  branch      Branch           @relation(fields: [branchId], references: [id])
-  customer    Customer?        @relation(fields: [customerId], references: [id])
-  createdBy   User             @relation("CreatedBy", fields: [createdById], references: [id])
-  posTerminal POSTerminal?     @relation(fields: [posTerminalId], references: [id])
-  posShift    POSShift?        @relation(fields: [posShiftId], references: [id])
-  salesOrder  SalesOrder?      @relation(fields: [salesOrderId], references: [id])
-  loyaltyCustomer     LoyaltyCustomer?  @relation(fields: [loyaltyCustomerId], references: [id])
+  // Walk-in customer fields (for service invoices without customer record)
+  walkInCustomerName  String?
+  walkInPhone         String?
+
+  company             Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch              Branch                @relation(fields: [branchId], references: [id])
+  customer            Customer?             @relation(fields: [customerId], references: [id])
+  createdBy           User                  @relation("CreatedBy", fields: [createdById], references: [id])
+  posTerminal         POSTerminal?          @relation(fields: [posTerminalId], references: [id])
+  posShift            POSShift?             @relation(fields: [posShiftId], references: [id])
+  salesOrder          SalesOrder?           @relation(fields: [salesOrderId], references: [id])
+  loyaltyCustomer     LoyaltyCustomer?      @relation(fields: [loyaltyCustomerId], references: [id])
   loyaltyPointHistory LoyaltyPointHistory[]
-  items       POSInvoiceItem[]
-  returns     SalesReturn[]
+  items               POSInvoiceItem[]
+  returns             SalesReturn[]
 
   @@unique([companyId, invoiceNo])
   @@index([companyId, createdAt])
@@ -724,19 +953,22 @@ model POSInvoice {
 }
 
 model POSInvoiceItem {
-  id        String    @id @default(auto()) @map("_id") @db.ObjectId
-  invoiceId String    @db.ObjectId
-  productId String    @db.ObjectId
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  invoiceId String @db.ObjectId
+  productId String? @db.ObjectId  // Null for service items
+  serviceId String? @db.ObjectId  // Null for product items
+  serviceName String?  // For manual service entry
+  serviceCode String?  // Service code for manual entry
   unitCode  String
   qty       Float
   unitPrice Float
-  discount  Float     @default(0)
-  taxAmount Float     @default(0)
+  discount  Float  @default(0)
+  taxAmount Float  @default(0)
   lineTotal Float
 
-
   invoice     POSInvoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  product     Product           @relation(fields: [productId], references: [id])
+  product     Product?          @relation(fields: [productId], references: [id])
+  service     ServiceMaster?    @relation(fields: [serviceId], references: [id])
   returnItems SalesReturnItem[]
 
   @@map("pos_invoice_items")
@@ -753,17 +985,17 @@ enum LoyaltyPointType {
 }
 
 model LoyaltyCustomer {
-  id             String                @id @default(auto()) @map("_id") @db.ObjectId
-  companyId      String                @db.ObjectId
-  name           String
-  phone          String
-  pointsBalance  Float                 @default(0)
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  companyId     String   @db.ObjectId
+  name          String
+  phone         String
+  pointsBalance Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  company        Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  invoices       POSInvoice[]
-  pointHistory   LoyaltyPointHistory[]
+  company      Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invoices     POSInvoice[]
+  pointHistory LoyaltyPointHistory[]
 
   @@unique([companyId, phone])
   @@index([companyId, name])
@@ -771,18 +1003,18 @@ model LoyaltyCustomer {
 }
 
 model LoyaltyPointHistory {
-  id              String               @id @default(auto()) @map("_id") @db.ObjectId
-  companyId       String               @db.ObjectId
-  customerId      String               @db.ObjectId
-  invoiceId       String?              @db.ObjectId
-  pointsChange    Float
-  type            LoyaltyPointType
-  notes           String?
-  createdAt       DateTime             @default(now())
+  id           String           @id @default(auto()) @map("_id") @db.ObjectId
+  companyId    String           @db.ObjectId
+  customerId   String           @db.ObjectId
+  invoiceId    String?          @db.ObjectId
+  pointsChange Float
+  type         LoyaltyPointType
+  notes        String?
+  createdAt    DateTime         @default(now())
 
-  company         Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  customer        LoyaltyCustomer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  invoice         POSInvoice?          @relation(fields: [invoiceId], references: [id])
+  company  Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customer LoyaltyCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoice  POSInvoice?     @relation(fields: [invoiceId], references: [id])
 
   @@index([companyId, customerId])
   @@map("pos_loyalty_point_history")
@@ -850,18 +1082,18 @@ model POSShift {
 }
 
 model CashCollectionRun {
-  id           String                  @id @default(auto()) @map("_id") @db.ObjectId
-  companyId    String                  @db.ObjectId
-  runNo        String
-  status       CashCollectionRunStatus @default(IN_PROGRESS)
-  scheduledAt  DateTime?
-  startedAt    DateTime?
-  completedAt  DateTime?
-  collectorId  String?                 @db.ObjectId
-  notes        String?
-  createdById  String                  @db.ObjectId
-  createdAt    DateTime                @default(now())
-  updatedAt    DateTime                @updatedAt
+  id          String                  @id @default(auto()) @map("_id") @db.ObjectId
+  companyId   String                  @db.ObjectId
+  runNo       String
+  status      CashCollectionRunStatus @default(IN_PROGRESS)
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  collectorId String?                 @db.ObjectId
+  notes       String?
+  createdById String                  @db.ObjectId
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
 
   company   Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
   collector User?                 @relation("CashRunCollector", fields: [collectorId], references: [id])
@@ -876,39 +1108,39 @@ model CashCollectionRun {
 }
 
 model CashCollectionBag {
-  id               String                  @id @default(auto()) @map("_id") @db.ObjectId
-  companyId        String                  @db.ObjectId
-  runId            String                  @db.ObjectId
-  branchId         String                  @db.ObjectId
-  bagCode          String
-  sourceShiftId    String?                 @db.ObjectId
-  declaredAmount   Float
-  collectedAmount  Float?
-  vaultAmount      Float?
-  depositedAmount  Float?
-  varianceAmount   Float?
-  status           CashCollectionBagStatus @default(PICKUP_ASSIGNED)
-  notes            String?
-  pickedAt         DateTime?
-  vaultReceivedAt  DateTime?
-  depositedAt      DateTime?
-  reconciledAt     DateTime?
-  createdById      String                  @db.ObjectId
-  pickedById       String?                 @db.ObjectId
-  vaultReceivedById String?                @db.ObjectId
-  depositedById    String?                 @db.ObjectId
-  reconciledById   String?                 @db.ObjectId
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
+  id                String                  @id @default(auto()) @map("_id") @db.ObjectId
+  companyId         String                  @db.ObjectId
+  runId             String                  @db.ObjectId
+  branchId          String                  @db.ObjectId
+  bagCode           String
+  sourceShiftId     String?                 @db.ObjectId
+  declaredAmount    Float
+  collectedAmount   Float?
+  vaultAmount       Float?
+  depositedAmount   Float?
+  varianceAmount    Float?
+  status            CashCollectionBagStatus @default(PICKUP_ASSIGNED)
+  notes             String?
+  pickedAt          DateTime?
+  vaultReceivedAt   DateTime?
+  depositedAt       DateTime?
+  reconciledAt      DateTime?
+  createdById       String                  @db.ObjectId
+  pickedById        String?                 @db.ObjectId
+  vaultReceivedById String?                 @db.ObjectId
+  depositedById     String?                 @db.ObjectId
+  reconciledById    String?                 @db.ObjectId
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
 
-  company         Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  run             CashCollectionRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
-  branch          Branch                 @relation(fields: [branchId], references: [id])
-  createdBy       User                   @relation("CashBagCreatedBy", fields: [createdById], references: [id])
-  pickedBy        User?                  @relation("CashBagPickedBy", fields: [pickedById], references: [id])
-  vaultReceivedBy User?                  @relation("CashBagVaultedBy", fields: [vaultReceivedById], references: [id])
-  depositedBy     User?                  @relation("CashBagDepositedBy", fields: [depositedById], references: [id])
-  reconciledBy    User?                  @relation("CashBagReconciledBy", fields: [reconciledById], references: [id])
+  company         Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  run             CashCollectionRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  branch          Branch                @relation(fields: [branchId], references: [id])
+  createdBy       User                  @relation("CashBagCreatedBy", fields: [createdById], references: [id])
+  pickedBy        User?                 @relation("CashBagPickedBy", fields: [pickedById], references: [id])
+  vaultReceivedBy User?                 @relation("CashBagVaultedBy", fields: [vaultReceivedById], references: [id])
+  depositedBy     User?                 @relation("CashBagDepositedBy", fields: [depositedById], references: [id])
+  reconciledBy    User?                 @relation("CashBagReconciledBy", fields: [reconciledById], references: [id])
   deposit         CashBankDeposit?
   events          CashCollectionEvent[]
 
@@ -921,43 +1153,46 @@ model CashCollectionBag {
 }
 
 model CashBankDeposit {
-  id            String   @id @default(auto()) @map("_id") @db.ObjectId
-  companyId     String   @db.ObjectId
-  bagId         String   @db.ObjectId
-  depositNo     String
-  bankAccount   String
-  depositSlipNo String
-  amount        Float
-  depositDate   DateTime
-  notes         String?
-  createdById   String   @db.ObjectId
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  companyId      String   @db.ObjectId
+  bagId          String   @db.ObjectId
+  depositNo      String
+  bankAccountId  String?  @db.ObjectId
+  bankAccountName String?  // Keep for backward compatibility
+  depositSlipNo  String
+  amount         Float
+  depositDate    DateTime
+  notes          String?
+  createdById    String   @db.ObjectId
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  company   Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  bag       CashCollectionBag @relation(fields: [bagId], references: [id], onDelete: Cascade)
-  createdBy User              @relation("CashDepositCreatedBy", fields: [createdById], references: [id])
+  company     Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bag         CashCollectionBag @relation(fields: [bagId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount?      @relation(fields: [bankAccountId], references: [id])
+  createdBy   User              @relation("CashDepositCreatedBy", fields: [createdById], references: [id])
 
   @@unique([companyId, depositNo])
   @@unique([bagId])
   @@index([companyId, depositDate])
+  @@index([bankAccountId])
   @@map("cash_bank_deposits")
 }
 
 model CashCollectionEvent {
-  id         String                  @id @default(auto()) @map("_id") @db.ObjectId
-  companyId  String                  @db.ObjectId
-  runId      String?                 @db.ObjectId
-  bagId      String?                 @db.ObjectId
-  branchId   String?                 @db.ObjectId
+  id         String                   @id @default(auto()) @map("_id") @db.ObjectId
+  companyId  String                   @db.ObjectId
+  runId      String?                  @db.ObjectId
+  bagId      String?                  @db.ObjectId
+  branchId   String?                  @db.ObjectId
   eventType  String
   fromStatus CashCollectionBagStatus?
   toStatus   CashCollectionBagStatus?
   amount     Float?
   notes      String?
   metadata   Json?
-  actorId    String                  @db.ObjectId
-  createdAt  DateTime                @default(now())
+  actorId    String                   @db.ObjectId
+  createdAt  DateTime                 @default(now())
 
   company Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   run     CashCollectionRun? @relation(fields: [runId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1002,17 +1237,16 @@ model SalesReturn {
 }
 
 model SalesReturnItem {
-  id            String    @id @default(auto()) @map("_id") @db.ObjectId
-  returnId      String    @db.ObjectId
-  invoiceItemId String    @db.ObjectId
-  productId     String    @db.ObjectId
+  id            String @id @default(auto()) @map("_id") @db.ObjectId
+  returnId      String @db.ObjectId
+  invoiceItemId String @db.ObjectId
+  productId     String @db.ObjectId
   unitCode      String
   qty           Float
   unitPrice     Float
-  discount      Float     @default(0)
-  taxAmount     Float     @default(0)
+  discount      Float  @default(0)
+  taxAmount     Float  @default(0)
   lineTotal     Float
-
 
   salesReturn SalesReturn    @relation(fields: [returnId], references: [id], onDelete: Cascade)
   invoiceItem POSInvoiceItem @relation(fields: [invoiceItemId], references: [id])
@@ -1022,24 +1256,26 @@ model SalesReturnItem {
 }
 
 model SalesQuotation {
-  id            String               @id @default(auto()) @map("_id") @db.ObjectId
-  companyId     String               @db.ObjectId
-  branchId      String               @db.ObjectId
-  quotationNo   String
-  customerId    String?              @db.ObjectId
-  customerName  String?
-  date          DateTime             @default(now())
-  validUntil    DateTime?
-  subtotal      Float
-  taxTotal      Float                @default(0)
-  discountTotal Float                @default(0)
-  grandTotal    Float
-  status        SalesQuotationStatus @default(DRAFT)
-  notes         String?
-  terms         String?
-  createdById   String               @db.ObjectId
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  id                 String               @id @default(auto()) @map("_id") @db.ObjectId
+  companyId          String               @db.ObjectId
+  branchId           String               @db.ObjectId
+  quotationNo        String
+  customerId         String?              @db.ObjectId
+  customerName       String?
+  date               DateTime             @default(now())
+  validUntil         DateTime?
+  subtotal           Float
+  taxTotal           Float                @default(0)
+  discountTotal      Float                @default(0)
+  grandTotal         Float
+  status             SalesQuotationStatus @default(DRAFT)
+  notes              String?
+  terms              String?
+  convertedInvoiceId String?              @db.ObjectId
+  convertedInvoiceNo String?
+  createdById        String               @db.ObjectId
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 
   company   Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
   branch    Branch               @relation(fields: [branchId], references: [id])
@@ -1164,19 +1400,19 @@ model PurchaseInvoice {
   @@unique([companyId, purchaseNo])
   @@index([companyId, createdAt])
   @@index([supplierId])
+  @@index([companyId, supplierId, status, createdAt])
   @@map("purchase_invoices")
 }
 
 model PurchaseInvoiceItem {
-  id        String    @id @default(auto()) @map("_id") @db.ObjectId
-  invoiceId String    @db.ObjectId
-  productId String    @db.ObjectId
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  invoiceId String @db.ObjectId
+  productId String @db.ObjectId
   unitCode  String
   qty       Float
   unitCost  Float
-  taxAmount Float     @default(0)
+  taxAmount Float  @default(0)
   lineTotal Float
-
 
   invoice     PurchaseInvoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   product     Product              @relation(fields: [productId], references: [id])
@@ -1264,16 +1500,15 @@ model PurchaseReturn {
 }
 
 model PurchaseReturnItem {
-  id             String    @id @default(auto()) @map("_id") @db.ObjectId
-  returnId       String    @db.ObjectId
-  purchaseItemId String    @db.ObjectId
-  productId      String    @db.ObjectId
+  id             String @id @default(auto()) @map("_id") @db.ObjectId
+  returnId       String @db.ObjectId
+  purchaseItemId String @db.ObjectId
+  productId      String @db.ObjectId
   unitCode       String
   qty            Float
   unitCost       Float
-  taxAmount      Float     @default(0)
+  taxAmount      Float  @default(0)
   lineTotal      Float
-
 
   purchaseReturn PurchaseReturn      @relation(fields: [returnId], references: [id], onDelete: Cascade)
   purchaseItem   PurchaseInvoiceItem @relation(fields: [purchaseItemId], references: [id])
@@ -1306,6 +1541,8 @@ model PurchasePayment {
   createdBy       User            @relation("PurchasePaymentCreatedBy", fields: [createdById], references: [id])
 
   @@unique([companyId, paymentNo])
+  @@index([companyId, supplierId, status, createdAt])
+  @@index([companyId, purchaseInvoiceId, createdAt])
   @@map("purchase_payments")
 }
 
@@ -1336,16 +1573,18 @@ model Transfer {
   items      TransferItem[]
 
   @@unique([companyId, transferNo])
+  @@index([companyId, status, createdAt])
+  @@index([companyId, fromBranchId, createdAt])
+  @@index([companyId, toBranchId, createdAt])
   @@map("transfers")
 }
 
 model TransferItem {
-  id         String    @id @default(auto()) @map("_id") @db.ObjectId
-  transferId String    @db.ObjectId
-  productId  String    @db.ObjectId
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  transferId String @db.ObjectId
+  productId  String @db.ObjectId
   unitCode   String
   qty        Float
-
 
   transfer Transfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
   product  Product  @relation(fields: [productId], references: [id])
@@ -1357,6 +1596,7 @@ model StockCount {
   id            String           @id @default(auto()) @map("_id") @db.ObjectId
   companyId     String           @db.ObjectId
   branchId      String           @db.ObjectId
+  priceGroupId  String?          @db.ObjectId
   countNo       String
   status        StockCountStatus @default(DRAFT)
   notes         String?
@@ -1367,6 +1607,7 @@ model StockCount {
 
   company     Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   branch      Branch           @relation(fields: [branchId], references: [id])
+  priceGroup  PriceGroup?      @relation(fields: [priceGroupId], references: [id])
   createdBy   User             @relation("StockCountCreatedBy", fields: [createdById], references: [id])
   committedBy User?            @relation("StockCountCommittedBy", fields: [committedById], references: [id])
   items       StockCountItem[]
@@ -1376,14 +1617,16 @@ model StockCount {
 }
 
 model StockCountItem {
-  id           String  @id @default(auto()) @map("_id") @db.ObjectId
-  stockCountId String  @db.ObjectId
-  productId    String  @db.ObjectId
+  id           String @id @default(auto()) @map("_id") @db.ObjectId
+  stockCountId String @db.ObjectId
+  productId    String @db.ObjectId
   unitCode     String
 
-  systemQty    Float
-  countedQty   Float
-  variance     Float
+  systemQty  Float
+  countedQty Float
+  variance   Float
+  avgCost    Float @default(0)
+  salePrice  Float @default(0)
 
   stockCount StockCount @relation(fields: [stockCountId], references: [id], onDelete: Cascade)
   product    Product    @relation(fields: [productId], references: [id])
@@ -1411,6 +1654,9 @@ model Account {
   children Account[]          @relation("AccountTree")
   lines    JournalEntryLine[]
   mappings AccountMapping[]
+  serviceIncomes ServiceMaster[] @relation("ServiceIncomeAccount")
+  serviceExpenses ServiceMaster[] @relation("ServiceExpenseAccount")
+  bankAccounts BankAccount[]
 
   @@unique([companyId, code])
   @@map("accounts")
@@ -1449,11 +1695,14 @@ model JournalEntry {
   isReversed   Boolean  @default(false)
   createdAt    DateTime @default(now())
 
-  company    Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  branch     Branch?            @relation(fields: [branchId], references: [id])
-  costCenter Branch?            @relation("JournalEntryCostCenter", fields: [costCenterId], references: [id])
-  postedBy User               @relation("JournalPostedBy", fields: [postedById], references: [id])
-  lines    JournalEntryLine[]
+  company         Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch          Branch?            @relation(fields: [branchId], references: [id])
+  costCenter      Branch?            @relation("JournalEntryCostCenter", fields: [costCenterId], references: [id])
+  postedBy        User               @relation("JournalPostedBy", fields: [postedById], references: [id])
+  lines           JournalEntryLine[]
+  expensePurchase ExpensePurchase?
+  bankTransactions BankTransaction[]
+  payrollPayments  PayrollPayment[]
 
   @@unique([companyId, entryNo])
   @@map("journal_entries")
@@ -1559,4 +1808,514 @@ model GlobalString {
   @@unique([companyId, group, value])
   @@unique([companyId, group, systemKey])
   @@map("global_strings")
+}
+
+// ══════════════════════════════════════════════════════════════
+// HUMAN RESOURCES
+// ══════════════════════════════════════════════════════════════
+
+model Department {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  companyId   String  @db.ObjectId
+  name        String
+  code        String
+  description String?
+  parentId    String? @db.ObjectId
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company   Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  parent    Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children  Department[] @relation("DepartmentHierarchy")
+  employees Employee[]
+  positions Position[]
+
+  @@unique([companyId, code])
+  @@map("hr_departments")
+}
+
+model Position {
+  id           String  @id @default(auto()) @map("_id") @db.ObjectId
+  companyId    String  @db.ObjectId
+  title        String
+  code         String
+  departmentId String? @db.ObjectId
+  level        Int     @default(1)
+  reportsTo    String? @db.ObjectId
+  minSalary    Float   @default(0)
+  maxSalary    Float   @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id])
+  employees  Employee[]
+
+  @@unique([companyId, code])
+  @@map("hr_positions")
+}
+
+model Employee {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  companyId        String    @db.ObjectId
+  branchId         String    @db.ObjectId
+  employeeNo       String
+  firstName        String
+  lastName         String
+  email            String?
+  phone            String?
+  dateOfBirth      DateTime?
+  gender           String?
+  nationality      String?
+  departmentId     String?   @db.ObjectId
+  positionId       String?   @db.ObjectId
+  managerId        String?   @db.ObjectId
+  hireDate         DateTime
+  probationEndDate DateTime?
+  confirmationDate DateTime?
+  terminationDate  DateTime?
+  employmentType   String    @default("FULL_TIME")
+  status           String    @default("ACTIVE")
+  salary           Float     @default(0)
+  currency         String    @default("SAR")
+  bankAccountId    String?   @db.ObjectId
+  bankAccount      BankAccount? @relation(fields: [bankAccountId], references: [id])
+  address          String?
+  city             String?
+  emergencyContact String?
+  emergencyPhone   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company      Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch       Branch             @relation(fields: [branchId], references: [id])
+  department   Department?        @relation(fields: [departmentId], references: [id])
+  position     Position?          @relation(fields: [positionId], references: [id])
+  manager      Employee?          @relation("ManagerSubordinates", fields: [managerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subordinates Employee[]         @relation("ManagerSubordinates")
+  documents    EmployeeDocument[]
+  attendances  Attendance[]
+  leaves       Leave[]
+  payrollPayments PayrollPayment[]
+
+  @@unique([companyId, employeeNo])
+  @@index([companyId, status])
+  @@index([companyId, departmentId])
+  @@map("hr_employees")
+}
+
+model EmployeeDocument {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  companyId        String    @db.ObjectId
+  employeeId       String    @db.ObjectId
+  documentType     String
+  fileUrl          String?
+  issueDate        DateTime?
+  expiryDate       DateTime?
+  issuingAuthority String?
+  status           String    @default("ACTIVE")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([employeeId])
+  @@map("hr_employee_documents")
+}
+
+model Shift {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  companyId   String  @db.ObjectId
+  name        String // "Morning", "Evening", "Night"
+  startTime   String // "09:00"
+  endTime     String // "18:00"
+  breakStart  String? // "13:00"
+  breakEnd    String? // "14:00"
+  gracePeriod Int // Minutes (e.g., 15)
+  isOvernight Boolean @default(false)
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  attendances Attendance[]
+
+  @@map("hr_shifts")
+}
+
+model Attendance {
+  id                    String    @id @default(auto()) @map("_id") @db.ObjectId
+  companyId             String    @db.ObjectId
+  branchId              String    @db.ObjectId
+  employeeId            String    @db.ObjectId
+  date                  DateTime  @db.Date
+  shiftId               String?   @db.ObjectId
+  checkIn               DateTime?
+  checkOut              DateTime?
+  checkInMethod         String? // WEB, MOBILE, BIOMETRIC, POS
+  checkInLocation       String? // Geo coordinates
+  checkOutMethod        String?
+  checkOutLocation      String?
+  status                String // PRESENT, ABSENT, LATE, HALF_DAY, HOLIDAY
+  lateMinutes           Int       @default(0)
+  earlyDepartureMinutes Int       @default(0)
+  overtimeMinutes       Int       @default(0)
+  breakStart            DateTime?
+  breakEnd              DateTime?
+  workHours             Float? // Calculated hours worked
+  notes                 String?
+
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch   Branch   @relation(fields: [branchId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shift    Shift?   @relation(fields: [shiftId], references: [id])
+
+  @@unique([companyId, employeeId, date])
+  @@index([companyId, date, status])
+  @@index([employeeId, date])
+  @@map("hr_attendance")
+}
+
+model LeaveType {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  companyId         String  @db.ObjectId
+  name              String // Annual, Sick, Emergency, Hajj, Maternity
+  code              String
+  paid              Boolean @default(true)
+  requiresApproval  Boolean @default(true)
+  maxDaysPerYear    Int?
+  accrualRate       Float? // Days per month
+  carryForwardLimit Int? // Max days that can be carried to next year
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  leaves  Leave[]
+
+  @@unique([companyId, code])
+  @@map("hr_leave_types")
+}
+
+model Leave {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  companyId       String    @db.ObjectId
+  employeeId      String    @db.ObjectId
+  leaveTypeId     String    @db.ObjectId
+  startDate       DateTime
+  endDate         DateTime
+  days            Int
+  reason          String?
+  status          String // PENDING, APPROVED, REJECTED, CANCELLED
+  appliedDate     DateTime  @default(now())
+  approvedById    String?   @db.ObjectId
+  approvedDate    DateTime?
+  rejectionReason String?
+
+  company    Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType  LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  approvedBy User?     @relation("LeaveApprovedBy", fields: [approvedById], references: [id])
+
+  @@index([companyId, employeeId, status])
+  @@map("hr_leaves")
+}
+
+// ══════════════════════════════════════════════════════════════
+// EXPENSE PURCHASE (Non-Stock Purchases)
+// ══════════════════════════════════════════════════════════════
+
+model ExpensePurchase {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  companyId      String   @db.ObjectId
+  branchId       String   @db.ObjectId
+  vendorName     String
+  invoiceNo      String?
+  date           DateTime @default(now())
+  totalAmount    Float
+  paymentMethod  String // CASH, BANK, CREDIT
+  status         String   @default("DRAFT") // DRAFT, POSTED, PAID
+  notes          String?
+  createdById    String   @db.ObjectId
+  journalEntryId String?  @db.ObjectId
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company      Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch       Branch                @relation(fields: [branchId], references: [id])
+  createdBy    User                  @relation("ExpensePurchaseCreatedBy", fields: [createdById], references: [id])
+  items        ExpensePurchaseItem[]
+  journalEntry JournalEntry?         @relation(fields: [journalEntryId], references: [id])
+
+  @@unique([companyId, invoiceNo])
+  @@unique([journalEntryId])
+  @@index([companyId, date])
+  @@index([companyId, status])
+  @@map("expense_purchases")
+}
+
+model ExpensePurchaseItem {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  purchaseId       String   @db.ObjectId
+  description      String
+  expenseAccountId String   @db.ObjectId
+  amount           Float
+  quantity         Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  purchase ExpensePurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+
+  @@index([purchaseId])
+  @@map("expense_purchase_items")
+}
+
+// ══════════════════════════════════════════════════════════════
+// SERVICE MASTER (Non-inventory services)
+// ══════════════════════════════════════════════════════════════
+
+model ServiceMaster {
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  companyId           String   @db.ObjectId
+  code                String
+  name                String
+  description         String?
+  category            String?  // Repair, Installation, Maintenance, Support, etc.
+  standardRate        Float
+  costRate            Float?   // Your cost (technician salary, etc.)
+  incomeAccountId     String?  @db.ObjectId
+  expenseAccountId    String?  @db.ObjectId
+  duration            Int?     // Estimated time in minutes
+  isLabor             Boolean  @default(false)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  company             Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  incomeAccount       Account?         @relation("ServiceIncomeAccount", fields: [incomeAccountId], references: [id])
+  expenseAccount      Account?         @relation("ServiceExpenseAccount", fields: [expenseAccountId], references: [id])
+  invoiceItems        POSInvoiceItem[]
+
+  @@unique([companyId, code])
+  @@index([companyId, isActive])
+  @@index([companyId, category])
+  @@map("service_masters")
+}
+
+// ══════════════════════════════════════════════════════════════
+// PAYROLL
+// ══════════════════════════════════════════════════════════════
+
+model PayrollPayment {
+  id                String                @id @default(auto()) @map("_id") @db.ObjectId
+  companyId         String                @db.ObjectId
+  branchId          String?               @db.ObjectId
+  employeeId        String                @db.ObjectId
+  bankAccountId     String?               @db.ObjectId
+
+  paymentNo         String
+  payPeriodStart    DateTime              @db.Date
+  payPeriodEnd      DateTime              @db.Date
+  paymentDate       DateTime              @db.Date
+
+  // Earnings
+  basicSalary       Float                 @default(0)
+  housingAllowance  Float                 @default(0)
+  transportAllowance Float                @default(0)
+  otherAllowances   Float                 @default(0)
+  overtimePay       Float                 @default(0)
+  bonuses           Float                 @default(0)
+  totalEarnings     Float
+
+  // Deductions
+  taxDeductions     Float                 @default(0)
+  insuranceDeductions Float               @default(0)
+  loanDeductions    Float                 @default(0)
+  advanceDeductions Float                 @default(0)
+  otherDeductions   Float                 @default(0)
+  totalDeductions   Float
+
+  // Net Pay
+  netPay            Float
+
+  // Payment Details
+  status            PayrollPaymentStatus  @default(PENDING)
+  paymentMethod     PaymentMethod         @default(BANK_TRANSFER)
+
+  // References
+  journalEntryId    String?               @db.ObjectId
+  notes             String?
+
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  // Relations
+  company           Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch            Branch?               @relation(fields: [branchId], references: [id])
+  employee          Employee              @relation(fields: [employeeId], references: [id])
+  bankAccount       BankAccount?          @relation(fields: [bankAccountId], references: [id])
+  journalEntry      JournalEntry?         @relation(fields: [journalEntryId], references: [id])
+
+  @@unique([companyId, paymentNo])
+  @@index([companyId, paymentDate])
+  @@index([employeeId, payPeriodStart])
+  @@index([companyId, status])
+  @@map("payroll_payments")
+}
+
+// ══════════════════════════════════════════════════════════════
+// BANKING MODULE
+// ══════════════════════════════════════════════════════════════
+
+enum BankAccountType {
+  CHECKING
+  SAVINGS
+  CASH
+  CREDIT_CARD
+  LOAN
+  INVESTMENT
+}
+
+enum BankTransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER_IN
+  TRANSFER_OUT
+  FEE
+  INTEREST
+  DIRECT_DEBIT
+  CHECK
+  POS
+  ADJUSTMENT
+}
+
+enum ReconciliationStatus {
+  UNRECONCILED
+  PARTIAL
+  RECONCILED
+}
+
+model BankAccount {
+  id                String              @id @default(auto()) @map("_id") @db.ObjectId
+  companyId         String              @db.ObjectId
+  branchId          String?             @db.ObjectId
+  accountName       String
+  accountNumber     String
+  bankName          String
+  branchName        String?
+  iban              String?
+  swiftCode         String?
+  accountType       BankAccountType     @default(CHECKING)
+  currency          String              @default("SAR")
+  openingBalance    Float               @default(0)
+  currentBalance    Float               @default(0)
+  isActive          Boolean             @default(true)
+  isDefault         Boolean             @default(false)
+  glAccountId       String?             @db.ObjectId
+  notes             String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  company           Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch            Branch?             @relation(fields: [branchId], references: [id])
+  glAccount         Account?            @relation(fields: [glAccountId], references: [id])
+  transactions      BankTransaction[]
+  reconciliations   BankReconciliation[]
+  statementImports  BankStatementImport[]
+  deposits          CashBankDeposit[]
+  payrollPayments   PayrollPayment[]
+  employees         Employee[]
+
+  @@unique([companyId, accountNumber])
+  @@index([companyId, isActive])
+  @@index([branchId])
+  @@map("bank_accounts")
+}
+
+model BankTransaction {
+  id                  String              @id @default(auto()) @map("_id") @db.ObjectId
+  companyId           String              @db.ObjectId
+  bankAccountId       String              @db.ObjectId
+  transactionDate     DateTime
+  valueDate           DateTime?
+  description         String
+  reference           String?
+  transactionType     BankTransactionType
+  amount              Float
+  isReconciled        Boolean             @default(false)
+  reconciledAt        DateTime?
+  reconciliationId    String?             @db.ObjectId
+  sourceType          String?
+  sourceId            String?             @db.ObjectId
+  journalEntryId      String?             @db.ObjectId
+  notes               String?
+  createdById         String              @db.ObjectId
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  company             Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bankAccount         BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  reconciliation      BankReconciliation? @relation(fields: [reconciliationId], references: [id])
+  journalEntry        JournalEntry?       @relation(fields: [journalEntryId], references: [id])
+  createdBy           User                @relation("BankTransactionCreatedBy", fields: [createdById], references: [id])
+
+  @@index([companyId, bankAccountId])
+  @@index([bankAccountId, transactionDate])
+  @@index([isReconciled])
+  @@index([sourceType, sourceId])
+  @@map("bank_transactions")
+}
+
+model BankReconciliation {
+  id                  String              @id @default(auto()) @map("_id") @db.ObjectId
+  companyId           String              @db.ObjectId
+  bankAccountId       String              @db.ObjectId
+  statementDate       DateTime
+  statementNumber     String?
+  openingBalance      Float
+  closingBalance      Float
+  statementBalance    Float
+  systemBalance       Float
+  difference          Float
+  status              ReconciliationStatus @default(UNRECONCILED)
+  totalTransactions   Int                 @default(0)
+  reconciledCount     Int                 @default(0)
+  notes               String?
+  preparedById        String              @db.ObjectId
+  reviewedById        String?             @db.ObjectId
+  preparedAt          DateTime            @default(now())
+  reviewedAt          DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  company             Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bankAccount         BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transactions        BankTransaction[]
+  preparedBy          User                @relation(fields: [preparedById], references: [id], name: "ReconciliationPreparedBy")
+  reviewedBy          User?               @relation(fields: [reviewedById], references: [id], name: "ReconciliationReviewedBy")
+
+  @@unique([companyId, bankAccountId, statementDate])
+  @@index([companyId, bankAccountId])
+  @@index([status])
+  @@map("bank_reconciliations")
+}
+
+model BankStatementImport {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  companyId       String   @db.ObjectId
+  bankAccountId   String   @db.ObjectId
+  fileName        String
+  importDate      DateTime @default(now())
+  rowCount        Int
+  importedCount   Int      @default(0)
+  skippedCount    Int      @default(0)
+  errorCount      Int      @default(0)
+  errors          Json?
+  importedById    String   @db.ObjectId
+
+  company         Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bankAccount     BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  importedBy      User        @relation("BankStatementImportedBy", fields: [importedById], references: [id])
+
+  @@index([companyId, bankAccountId])
+  @@index([importDate])
+  @@map("bank_statement_imports")
 }

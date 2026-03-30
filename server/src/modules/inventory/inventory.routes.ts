@@ -38,14 +38,12 @@ const MOVEMENT_TYPES = new Set([
     'TRANSFER_IN',
     'ADJUSTMENT',
     'DAMAGE',
-    'EXPIRED',
     'RETURN',
 ]);
 
 const ADJUST_INPUT_TYPES = new Set([
     'ADJUSTMENT',
     'DAMAGE',
-    'EXPIRED',
     'RETURN',
     'SHRINKAGE',
     'OTHER',
@@ -58,7 +56,7 @@ function resolveAdjustmentTypes(inputType: string, qty: number): { movementType:
     const normalized = inputType.toUpperCase();
     if (!ADJUST_INPUT_TYPES.has(normalized)) throw AppError.badRequest('Invalid movement type');
 
-    if ((normalized === 'DAMAGE' || normalized === 'EXPIRED' || normalized === 'SHRINKAGE') && qty > 0) {
+    if ((normalized === 'DAMAGE' || normalized === 'SHRINKAGE') && qty > 0) {
         throw AppError.badRequest(`${normalized} adjustment must be negative quantity`);
     }
     if (normalized === 'OPENING_BALANCE' && qty < 0) {
@@ -74,8 +72,6 @@ function resolveAdjustmentTypes(inputType: string, qty: number): { movementType:
             return { movementType: 'ADJUSTMENT', accountingType: 'OPENING_BALANCE' };
         case 'DAMAGE':
             return { movementType: 'DAMAGE', accountingType: 'DAMAGE' };
-        case 'EXPIRED':
-            return { movementType: 'EXPIRED', accountingType: 'SHRINKAGE' };
         case 'ADJUSTMENT':
             return { movementType: 'ADJUSTMENT', accountingType: qty < 0 ? 'SHRINKAGE' : 'OTHER' };
         default:
@@ -676,7 +672,7 @@ inventoryRoutes.get('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_VIE
 // POST /inventory/stock-counts (Create Draft)
 inventoryRoutes.post('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_AUDIT), async (req, res, next) => {
     try {
-        const { branchId, notes, items } = req.body;
+        const { branchId, priceGroupId, notes, items } = req.body;
         await assertBranchAccessible(req, branchId);
         const countNo = formatDocNo('CNT', await nextCounter(prisma as any, req.user!.companyId, 'STOCK_COUNT'));
 
@@ -684,6 +680,7 @@ inventoryRoutes.post('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_AU
             data: {
                 companyId: req.user!.companyId,
                 branchId,
+                priceGroupId: priceGroupId || null,
                 countNo,
                 notes,
                 createdById: req.user!.id,
@@ -694,7 +691,9 @@ inventoryRoutes.post('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_AU
 
                         systemQty: i.systemQty || 0,
                         countedQty: i.countedQty || 0,
-                        variance: (i.countedQty || 0) - (i.systemQty || 0)
+                        variance: (i.countedQty || 0) - (i.systemQty || 0),
+                        avgCost: i.avgCost || 0,
+                        salePrice: i.salePrice || 0
                     }))
                 }
             }
@@ -703,6 +702,46 @@ inventoryRoutes.post('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_AU
     } catch (error) { next(error); }
 });
 
+// PUT /inventory/stock-counts/:id
+inventoryRoutes.put('/stock-counts/:id', requirePermission(PERMISSIONS.INVENTORY_AUDIT), async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { branchId, priceGroupId, notes, items } = req.body;
+
+        // Check if draft
+        const existing = await (prisma as any).stockCount.findFirst({
+            where: { id, companyId: req.user!.companyId, status: 'DRAFT' }
+        });
+        if (!existing) throw AppError.badRequest('Stock count not found or already committed');
+
+        await assertBranchAccessible(req, branchId);
+
+        const result = await (prisma as any).stockCount.update({
+            where: { id },
+            data: {
+                branchId,
+                priceGroupId: priceGroupId || null,
+                notes,
+                items: {
+                    deleteMany: {}, // Wipe existing items
+                    create: items.map((i: any) => ({
+                        productId: i.productId,
+                        unitCode: i.unitCode,
+                        systemQty: i.systemQty || 0,
+                        countedQty: i.countedQty || 0,
+                        variance: (i.countedQty || 0) - (i.systemQty || 0),
+                        avgCost: i.avgCost || 0,
+                        salePrice: i.salePrice || 0
+                    }))
+                }
+            }
+        });
+
+        sendSuccess(res, result, { message: 'Stock count updated' });
+    } catch (error) { next(error); }
+});
+
+
 // GET /inventory/stock-counts/:id
 inventoryRoutes.get('/stock-counts/:id', requirePermission(PERMISSIONS.INVENTORY_VIEW), async (req, res, next) => {
     try {
@@ -710,6 +749,7 @@ inventoryRoutes.get('/stock-counts/:id', requirePermission(PERMISSIONS.INVENTORY
             where: { id: req.params.id, companyId: req.user!.companyId, ...branchScope(req) },
             include: {
                 branch: true,
+                priceGroup: { select: { id: true, name: true, code: true } },
                 createdBy: { select: { name: true } },
                 committedBy: { select: { name: true } },
                 items: {
