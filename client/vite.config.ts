@@ -8,8 +8,11 @@ export default defineConfig(({ mode }) => {
     const configuredPort = Number(env.VITE_DEV_SERVER_PORT || '3001');
     const devServerPort = Number.isFinite(configuredPort) ? configuredPort : 3001;
     const devApiProxyTarget = env.VITE_DEV_API_PROXY || 'http://localhost:5001';
+    const configuredBasePath = String(env.VITE_APP_BASE_PATH || '/').trim();
+    const appBasePath = configuredBasePath.endsWith('/') ? configuredBasePath : `${configuredBasePath}/`;
 
     return {
+        base: appBasePath,
         plugins: [react(), tailwindcss()],
         resolve: {
             alias: {

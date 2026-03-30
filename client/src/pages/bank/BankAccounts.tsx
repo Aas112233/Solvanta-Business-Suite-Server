@@ -20,6 +20,7 @@ import {
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
+import api, { getApiErrorMessage } from '@/lib/api';
 
 // Types
 interface BankAccount {
@@ -85,8 +86,8 @@ export default function BankAccounts() {
   const fetchAccounts = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/bank/accounts');
-      const result = await response.json();
+      const response = await api.get('/bank/accounts');
+      const result = response.data;
       
       if (result.success) {
         setAccounts(result.data);
@@ -94,7 +95,7 @@ export default function BankAccounts() {
         notify.error('Failed to load bank accounts');
       }
     } catch (error) {
-      notify.error('Error loading bank accounts');
+      notify.error(getApiErrorMessage(error, 'Error loading bank accounts'));
     } finally {
       setLoading(false);
     }
@@ -272,19 +273,11 @@ export default function BankAccounts() {
     }
 
     try {
-      const response = await fetch(`/api/bank/accounts/${account.id}`, {
-        method: 'DELETE',
-      });
-
-      if (response.ok) {
-        notify.success('Bank account deleted successfully');
-        fetchAccounts();
-      } else {
-        const error = await response.json();
-        notify.error(error.error?.message || 'Failed to delete account');
-      }
+      await api.delete(`/bank/accounts/${account.id}`);
+      notify.success('Bank account deleted successfully');
+      fetchAccounts();
     } catch (error) {
-      notify.error('Error deleting bank account');
+      notify.error(getApiErrorMessage(error, 'Error deleting bank account'));
     }
   };
 
@@ -297,32 +290,23 @@ export default function BankAccounts() {
     };
 
     try {
-      const url = editingAccount 
-        ? `/api/bank/accounts/${editingAccount.id}`
-        : '/api/bank/accounts';
-      
-      const response = await fetch(url, {
-        method: editingAccount ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        notify.success(
-          editingAccount 
-            ? 'Bank account updated successfully' 
-            : 'Bank account created successfully'
-        );
-        setShowModal(false);
-        setEditingAccount(null);
-        resetForm();
-        fetchAccounts();
+      if (editingAccount) {
+        await api.put(`/bank/accounts/${editingAccount.id}`, payload);
       } else {
-        const error = await response.json();
-        notify.error(error.error?.message || 'Failed to save account');
+        await api.post('/bank/accounts', payload);
       }
+
+      notify.success(
+        editingAccount 
+          ? 'Bank account updated successfully' 
+          : 'Bank account created successfully'
+      );
+      setShowModal(false);
+      setEditingAccount(null);
+      resetForm();
+      fetchAccounts();
     } catch (error) {
-      notify.error('Error saving bank account');
+      notify.error(getApiErrorMessage(error, 'Error saving bank account'));
     }
   };
 

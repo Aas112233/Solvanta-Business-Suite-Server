@@ -27,6 +27,7 @@ import {
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
+import api, { getApiErrorMessage } from '@/lib/api';
 
 // Types
 interface BankAccount {
@@ -113,31 +114,29 @@ export default function BankReconciliation() {
 
   const fetchAccounts = async () => {
     try {
-      const response = await fetch('/api/bank/accounts');
-      const result = await response.json();
+      const response = await api.get('/bank/accounts');
+      const result = response.data;
       if (result.success) {
         setAccounts(result.data);
       }
     } catch (error) {
-      notify.error('Failed to load accounts');
+      notify.error(getApiErrorMessage(error, 'Failed to load accounts'));
     }
   };
 
   const fetchReconciliations = async () => {
     try {
       setLoading(true);
-      const url = accountId 
-        ? `/api/bank/reconciliations?bankAccountId=${accountId}`
-        : '/api/bank/reconciliations';
-      
-      const response = await fetch(url);
-      const result = await response.json();
+      const response = await api.get('/bank/reconciliations', {
+        params: { bankAccountId: accountId || undefined },
+      });
+      const result = response.data;
       
       if (result.success) {
         setReconciliations(result.data);
       }
     } catch (error) {
-      notify.error('Failed to load reconciliations');
+      notify.error(getApiErrorMessage(error, 'Failed to load reconciliations'));
     } finally {
       setLoading(false);
     }
@@ -145,16 +144,16 @@ export default function BankReconciliation() {
 
   const fetchUnreconciledTransactions = async (accountId: string, recId: string) => {
     try {
-      const response = await fetch(
-        `/api/bank/transactions?bankAccountId=${accountId}&isReconciled=false`
-      );
-      const result = await response.json();
+      const response = await api.get('/bank/transactions', {
+        params: { bankAccountId: accountId, isReconciled: false, reconciliationId: recId },
+      });
+      const result = response.data;
       
       if (result.success) {
         setTransactions(result.data.data);
       }
     } catch (error) {
-      notify.error('Failed to load transactions');
+      notify.error(getApiErrorMessage(error, 'Failed to load transactions'));
     }
   };
 
@@ -167,31 +166,21 @@ export default function BankReconciliation() {
     }
 
     try {
-      const response = await fetch('/api/bank/reconciliations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bankAccountId: selectedAccount.id,
-          statementDate: formData.statementDate,
-          statementNumber: formData.statementNumber,
-          closingBalance: parseFloat(formData.closingBalance),
-          openingBalance: parseFloat(formData.openingBalance) || selectedAccount.currentBalance,
-        }),
+      const response = await api.post('/bank/reconciliations', {
+        bankAccountId: selectedAccount.id,
+        statementDate: formData.statementDate,
+        statementNumber: formData.statementNumber,
+        closingBalance: parseFloat(formData.closingBalance),
+        openingBalance: parseFloat(formData.openingBalance) || selectedAccount.currentBalance,
       });
-
-      if (response.ok) {
-        const result = await response.json();
-        notify.success('Reconciliation created successfully');
-        setShowNewModal(false);
-        setActiveReconciliation(result.data);
-        fetchUnreconciledTransactions(selectedAccount.id, result.data.id);
-        fetchReconciliations();
-      } else {
-        const error = await response.json();
-        notify.error(error.error?.message || 'Failed to create reconciliation');
-      }
+      const result = response.data;
+      notify.success('Reconciliation created successfully');
+      setShowNewModal(false);
+      setActiveReconciliation(result.data);
+      fetchUnreconciledTransactions(selectedAccount.id, result.data.id);
+      fetchReconciliations();
     } catch (error) {
-      notify.error('Error creating reconciliation');
+      notify.error(getApiErrorMessage(error, 'Error creating reconciliation'));
     }
   };
 
@@ -199,30 +188,21 @@ export default function BankReconciliation() {
     if (!activeReconciliation || selectedTransactions.size === 0) return;
 
     try {
-      const response = await fetch(`/api/bank/reconciliations/${activeReconciliation.id}/match`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transactionIds: Array.from(selectedTransactions),
-        }),
+      const response = await api.post(`/bank/reconciliations/${activeReconciliation.id}/match`, {
+        transactionIds: Array.from(selectedTransactions),
       });
-
-      if (response.ok) {
-        const result = await response.json();
-        notify.success(`${selectedTransactions.size} transactions matched`);
-        setActiveReconciliation(result.data);
-        setSelectedTransactions(new Set());
-        
-        // Refresh transactions
-        if (selectedAccount) {
-          fetchUnreconciledTransactions(selectedAccount.id, activeReconciliation.id);
-        }
-        fetchReconciliations();
-      } else {
-        notify.error('Failed to match transactions');
+      const result = response.data;
+      notify.success(`${selectedTransactions.size} transactions matched`);
+      setActiveReconciliation(result.data);
+      setSelectedTransactions(new Set());
+      
+      // Refresh transactions
+      if (selectedAccount) {
+        fetchUnreconciledTransactions(selectedAccount.id, activeReconciliation.id);
       }
+      fetchReconciliations();
     } catch (error) {
-      notify.error('Error matching transactions');
+      notify.error(getApiErrorMessage(error, 'Error matching transactions'));
     }
   };
 
@@ -230,20 +210,12 @@ export default function BankReconciliation() {
     if (!activeReconciliation) return;
 
     try {
-      const response = await fetch(`/api/bank/reconciliations/${activeReconciliation.id}/complete`, {
-        method: 'POST',
-      });
-
-      if (response.ok) {
-        notify.success('Reconciliation completed successfully');
-        setActiveReconciliation(null);
-        fetchReconciliations();
-      } else {
-        const error = await response.json();
-        notify.error(error.error?.message || 'Failed to complete reconciliation');
-      }
+      await api.post(`/bank/reconciliations/${activeReconciliation.id}/complete`);
+      notify.success('Reconciliation completed successfully');
+      setActiveReconciliation(null);
+      fetchReconciliations();
     } catch (error) {
-      notify.error('Error completing reconciliation');
+      notify.error(getApiErrorMessage(error, 'Error completing reconciliation'));
     }
   };
 

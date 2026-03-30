@@ -7,20 +7,23 @@ import { useAuthStore } from '../stores/authStore';
  * - Production: Uses environment variable or default production URL
  */
 
-// Production backend URL (Render)
-const PROD_API_BASE_URL = 'https://solvanta-business-suite-server.onrender.com/api/v1';
+// Production backend URL
+const PROD_API_BASE_URL = 'https://solvanta-business-suite-server.vercel.app/api/v1';
 
 // Development backend URL (localhost)
 const DEV_API_BASE_URL = '/api/v1'; // Uses Vite proxy
 
 // Get configured API URL from environment
-const configuredApiBaseURL = String(import.meta.env.VITE_API_BASE_URL || '').trim();
+const configuredApiBaseURL = String(import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim();
+const isLoggingEnabled = import.meta.env.DEV || String(import.meta.env.VITE_ENABLE_LOGGING || '').toLowerCase() === 'true';
 
 // Determine which API URL to use based on environment
 const apiBaseURL = (() => {
     // If explicitly configured in environment, use that
     if (configuredApiBaseURL) {
-        console.log('📡 Using custom API URL:', configuredApiBaseURL);
+        if (isLoggingEnabled) {
+            console.log('Using custom API URL:', configuredApiBaseURL);
+        }
         return configuredApiBaseURL;
     }
 
@@ -28,7 +31,9 @@ const apiBaseURL = (() => {
     const isProduction = import.meta.env.PROD;
     const apiUrl = isProduction ? PROD_API_BASE_URL : DEV_API_BASE_URL;
 
-    console.log('📡 Using API URL:', apiUrl, `(${isProduction ? 'Production' : 'Development'})`);
+    if (isLoggingEnabled) {
+        console.log('Using API URL:', apiUrl, `(${isProduction ? 'Production' : 'Development'})`);
+    }
     return apiUrl;
 })();
 
@@ -39,6 +44,10 @@ function joinApiUrl(base: string, path: string) {
     const normalizedBase = base.replace(/\/+$/, '');
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     return `${normalizedBase}${normalizedPath}`;
+}
+
+export function getApiErrorMessage(error: unknown, fallback: string) {
+    return (error as any)?.response?.data?.error?.message || fallback;
 }
 
 /**

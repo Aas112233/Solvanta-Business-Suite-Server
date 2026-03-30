@@ -27,6 +27,7 @@ import {
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
+import api, { getApiErrorMessage } from '@/lib/api';
 
 // Types
 interface ARAgingSummary {
@@ -90,8 +91,8 @@ export default function ARAging() {
   const fetchAgingData = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/aging/ar?asOfDate=${asOfDate}`);
-      const result = await response.json();
+      const response = await api.get('/aging/ar', { params: { asOfDate } });
+      const result = response.data;
 
       if (result.success) {
         setData(result.data);
@@ -99,7 +100,7 @@ export default function ARAging() {
         notify.error('Failed to load AR aging data');
       }
     } catch (error) {
-      notify.error('Error loading AR aging');
+      notify.error(getApiErrorMessage(error, 'Error loading AR aging'));
     } finally {
       setLoading(false);
     }
