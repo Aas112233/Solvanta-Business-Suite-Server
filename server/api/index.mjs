@@ -1,5 +1,5 @@
-const { app } = require('../dist/app.js');
-const { basePrisma } = require('../dist/lib/prisma.js');
+import { app } from '../dist/app.js';
+import { basePrisma } from '../dist/lib/prisma.js';
 
 let prismaReady;
 
@@ -14,7 +14,7 @@ function ensureDatabaseConnection() {
     return prismaReady;
 }
 
-module.exports = async (req, res) => {
+export default async (req, res) => {
     await ensureDatabaseConnection();
     return app(req, res);
 };
