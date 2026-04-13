@@ -638,7 +638,10 @@ model Product {
   @@unique([companyId, itemCode])
   @@index([companyId, deletedAt])
   @@index([companyId, status])
+  @@index([companyId, status, deletedAt])
   @@index([companyId, kind])
+  @@index([companyId, categoryId, status])
+  @@index([companyId, itemGroupId, status])
   @@map("products")
 }
 
@@ -945,6 +948,8 @@ model POSInvoice {
 
   @@unique([companyId, invoiceNo])
   @@index([companyId, createdAt])
+  @@index([companyId, branchId, createdAt])
+  @@index([companyId, status, createdAt])
   @@index([customerId])
   @@index([posShiftId])
   @@index([salesOrderId])
@@ -1285,6 +1290,8 @@ model SalesQuotation {
 
   @@unique([companyId, quotationNo])
   @@index([companyId, createdAt])
+  @@index([companyId, status, createdAt])
+  @@index([companyId, customerId])
   @@map("sales_quotations")
 }
 
@@ -1345,6 +1352,8 @@ model SalesOrder {
 
   @@unique([companyId, orderNo])
   @@index([companyId, createdAt])
+  @@index([companyId, status, createdAt])
+  @@index([companyId, customerId])
   @@map("sales_orders")
 }
 
@@ -1496,6 +1505,8 @@ model PurchaseReturn {
   items           PurchaseReturnItem[]
 
   @@unique([companyId, returnNo])
+  @@index([companyId, createdAt])
+  @@index([companyId, supplierId])
   @@map("purchase_returns")
 }
 
@@ -1613,6 +1624,8 @@ model StockCount {
   items       StockCountItem[]
 
   @@unique([companyId, countNo])
+  @@index([companyId, branchId, status])
+  @@index([companyId, createdAt])
   @@map("stock_counts")
 }
 
@@ -1705,6 +1718,9 @@ model JournalEntry {
   payrollPayments  PayrollPayment[]
 
   @@unique([companyId, entryNo])
+  @@index([companyId, sourceType, sourceId])
+  @@index([companyId, date])
+  @@index([companyId, branchId, date])
   @@map("journal_entries")
 }
 
@@ -1807,6 +1823,7 @@ model GlobalString {
 
   @@unique([companyId, group, value])
   @@unique([companyId, group, systemKey])
+  @@index([companyId, group, isActive])
   @@map("global_strings")
 }
 

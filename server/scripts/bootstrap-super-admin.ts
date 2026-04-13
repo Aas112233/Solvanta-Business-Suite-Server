@@ -3,7 +3,10 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { randomInt } from 'crypto';
 import { z } from 'zod';
-import { ALL_PERMISSIONS } from '../src/config/permissions.js';
+import {
+    ALL_SUPER_ADMIN_PERMISSIONS,
+    SUPER_ADMIN_ROLE_TEMPLATES,
+} from '../src/modules/super-admin/super-admin.permissions.js';
 
 const prisma = new PrismaClient();
 
@@ -67,18 +70,21 @@ async function ensureCompany(companyId?: string, companyName?: string) {
     });
 }
 
-async function ensureAdminRole(companyId: string) {
+async function ensurePlatformAdminRole(companyId: string) {
     const roles = await prisma.role.findMany({
         where: { companyId },
         select: { id: true, name: true, permissions: true },
     });
 
-    const existingAdmin = roles.find((role) => role.name.toLowerCase() === 'admin');
+    const expectedRoleName = SUPER_ADMIN_ROLE_TEMPLATES.PLATFORM_ADMIN.name.toLowerCase();
+    const existingAdmin = roles.find((role) => role.name.toLowerCase() === expectedRoleName);
     if (existingAdmin) {
-        if (existingAdmin.permissions.length !== ALL_PERMISSIONS.length) {
+        const currentPermissions = [...existingAdmin.permissions].sort().join(',');
+        const expectedPermissions = [...ALL_SUPER_ADMIN_PERMISSIONS].sort().join(',');
+        if (currentPermissions !== expectedPermissions) {
             await prisma.role.update({
                 where: { id: existingAdmin.id },
-                data: { permissions: ALL_PERMISSIONS },
+                data: { permissions: [...ALL_SUPER_ADMIN_PERMISSIONS] },
             });
         }
         return existingAdmin.id;
@@ -87,8 +93,8 @@ async function ensureAdminRole(companyId: string) {
     const created = await prisma.role.create({
         data: {
             companyId,
-            name: 'Admin',
-            permissions: ALL_PERMISSIONS,
+            name: SUPER_ADMIN_ROLE_TEMPLATES.PLATFORM_ADMIN.name,
+            permissions: [...ALL_SUPER_ADMIN_PERMISSIONS],
         },
         select: { id: true },
     });
@@ -138,7 +144,7 @@ async function main() {
     const passwordHash = await bcrypt.hash(password, 12);
 
     const company = await ensureCompany(SUPER_ADMIN_COMPANY_ID, SUPER_ADMIN_COMPANY_NAME);
-    const roleId = await ensureAdminRole(company.id);
+    const roleId = await ensurePlatformAdminRole(company.id);
     const branchIds = await ensureBranches(company.id);
 
     const user = await prisma.user.upsert({
@@ -174,7 +180,8 @@ async function main() {
     if (passwordWasGenerated) {
         console.log('Password was generated automatically because SUPER_ADMIN_PASSWORD was not provided.');
     }
-    console.log('Set SUPER_ADMIN_EMAILS and VITE_SUPER_ADMIN_EMAILS to this email for panel access.');
+    console.log('Role-based platform access is configured for this user.');
+    console.log('Legacy SUPER_ADMIN_EMAILS fallback remains available during migration.');
 }
 
 main()

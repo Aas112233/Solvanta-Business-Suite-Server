@@ -5,7 +5,7 @@ import { prisma, basePrisma } from '../lib/prisma.js';
 import { AppError } from '../utils/AppError.js';
 import { tenantStorage } from '../lib/tenantContext.js';
 import { ALL_PERMISSIONS, type Permission } from '../config/permissions.js';
-import { isEmailSuperAdmin } from './superAdmin.js';
+import { resolveSuperAdminAccess } from './superAdmin.js';
 import {
     type FeatureFlags,
     type TenantMaintenance,
@@ -16,6 +16,8 @@ import {
     resolveTenantMaintenance,
     sanitizeTenantStatus,
 } from '../modules/super-admin/super-admin.settings.js';
+import { syncTenantLimitEnforcement } from '../modules/super-admin/tenant-intelligence.js';
+import type { ImpersonationContext } from '../modules/auth/auth.service.js';
 
 export interface AuthUser {
     id: string;
@@ -24,11 +26,13 @@ export interface AuthUser {
     name: string;
     roleId: string;
     permissions: string[];
+    superAdminPermissions: string[];
     branchIds: string[];
     isSuperAdmin: boolean;
     moduleAccess: FeatureFlags;
     tenantStatus: TenantStatus;
     maintenance: TenantMaintenance;
+    impersonation?: ImpersonationContext;
 }
 
 declare global {
@@ -44,6 +48,7 @@ declare global {
 interface JwtPayload {
     userId: string;
     companyId: string;
+    impersonation?: ImpersonationContext;
 }
 
 export async function authenticate(req: Request, _res: Response, next: NextFunction): Promise<void> {
@@ -105,18 +110,39 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
             throw AppError.unauthorized('Access denied: No role assigned');
         }
 
-        const isSuperAdmin = isEmailSuperAdmin(user.email);
-        const superAdminSettings = getSuperAdminSettings(user.company?.settings);
+        const rolePermissions = user.role.permissions || [];
+        const superAdminAccess = resolveSuperAdminAccess({
+            email: user.email,
+            rolePermissions,
+        });
+        const isSuperAdmin = superAdminAccess.isSuperAdmin;
+        const impersonation = decoded.impersonation;
+        let companySettings = user.company?.settings;
+        const initialSuperAdminSettings = getSuperAdminSettings(companySettings);
+        if (!isSuperAdmin && !impersonation) {
+            const limits = initialSuperAdminSettings.limits;
+            if (limits && (limits.maxUsers !== undefined || limits.maxBranches !== undefined || limits.maxProducts !== undefined)) {
+                const synced = await syncTenantLimitEnforcement(user.companyId, {
+                    actorUserId: user.id,
+                    actorEmail: user.email,
+                    companySettings,
+                    request: req,
+                });
+                companySettings = synced.companySettings;
+            }
+        }
+
+        const superAdminSettings = getSuperAdminSettings(companySettings);
         const moduleAccess = resolveFeatureFlags(superAdminSettings.featureFlags);
         const tenantStatus = sanitizeTenantStatus(superAdminSettings.status) ?? 'Active';
         const maintenance = resolveTenantMaintenance(superAdminSettings.maintenance);
         const assignedBranchIds = user.branches.map((b) => b.branchId);
 
-        if (!isSuperAdmin && tenantStatus === 'Suspended') {
+        if (!isSuperAdmin && !impersonation && tenantStatus === 'Suspended') {
             throw AppError.forbidden(superAdminSettings.statusReason || 'Tenant access is suspended by super admin');
         }
 
-        if (!isSuperAdmin && maintenance.enabled) {
+        if (!isSuperAdmin && !impersonation && maintenance.enabled) {
             throw AppError.forbidden(maintenance.message || 'Tenant access is temporarily disabled for maintenance');
         }
 
@@ -137,12 +163,14 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
             email: user.email,
             name: user.name,
             roleId: user.roleId,
-            permissions: isSuperAdmin ? [...ALL_PERMISSIONS] : (user.role.permissions || []),
+            permissions: isSuperAdmin ? [...ALL_PERMISSIONS] : rolePermissions,
+            superAdminPermissions: superAdminAccess.superAdminPermissions,
             branchIds: effectiveBranchIds,
-            isSuperAdmin,
+            isSuperAdmin: impersonation ? false : isSuperAdmin,
             moduleAccess,
             tenantStatus,
             maintenance,
+            impersonation,
         };
 
         // Global branch context is always resolved from the user's assigned branches.
@@ -152,7 +180,17 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
         tenantStorage.run({
             companyId: userCoId,
             userId: user.id,
-            activeBranchId: req.activeBranchId
+            activeBranchId: req.activeBranchId,
+            impersonation: impersonation
+                ? {
+                    sessionId: impersonation.sessionId,
+                    actorUserId: impersonation.actorUserId,
+                    actorEmail: impersonation.actorEmail,
+                    actorName: impersonation.actorName,
+                    reason: impersonation.reason,
+                    startedAt: impersonation.startedAt,
+                }
+                : undefined,
         }, () => {
             next();
         });
@@ -192,6 +230,10 @@ export function requirePermission(...permissions: Permission[]) {
         }
 
         const userPerms = req.user.permissions;
+        if (userPerms.includes('*')) {
+            next();
+            return;
+        }
         const hasAll = permissions.every((p) => {
             if (userPerms.includes(p)) return true;
             // Check for master permission (module.access)
@@ -240,6 +282,10 @@ export function requireAnyPermission(...permissions: Permission[]) {
         }
 
         const userPerms = req.user.permissions;
+        if (userPerms.includes('*')) {
+            next();
+            return;
+        }
         const hasAny = effectivePermissions.some((p) => {
             if (userPerms.includes(p)) return true;
             // Check for master permission (module.access)

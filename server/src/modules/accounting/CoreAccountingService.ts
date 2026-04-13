@@ -23,6 +23,15 @@ type JournalLine = {
 
 const MONEY_EPSILON = 0.005;
 
+/**
+ * In-transaction cache to avoid repeated DB lookups for the same
+ * product/account mappings within a single business operation.
+ */
+export interface TransactionCache {
+    products: Map<string, { categoryId: string | null }>;
+    accounts: Map<string, string | null>;
+}
+
 function roundMoney(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.round(value * 100) / 100;
@@ -36,8 +45,13 @@ export class CoreAccountingService {
     static async resolveAccount(
         tx: TxClient,
         mappingType: AccountMappingType,
-        context: AccountingResolutionContext
+        context: AccountingResolutionContext,
+        cache?: TransactionCache
     ): Promise<string | null> {
+        // Build cache key from context fields that affect resolution
+        const cacheKey = `${mappingType}::${context.companyId}::${context.branchId || ''}::${context.categoryId || ''}::${context.productId || ''}::${context.customerId || ''}::${context.supplierId || ''}`;
+        if (cache?.accounts.has(cacheKey)) return cache.accounts.get(cacheKey)!;
+
         const possibleTargets: { type: AccountEntityType; id: string | null }[] = [{ type: 'GLOBAL', id: null }];
 
         if (context.branchId) possibleTargets.push({ type: 'BRANCH', id: context.branchId });
@@ -58,7 +72,10 @@ export class CoreAccountingService {
             },
         });
 
-        if (mappings.length === 0) return null;
+        if (mappings.length === 0) {
+            cache?.accounts.set(cacheKey, null);
+            return null;
+        }
 
         const priorityScore = (type: AccountEntityType): number => {
             switch (type) {
@@ -82,15 +99,18 @@ export class CoreAccountingService {
             (a, b) => priorityScore(a.entityType as AccountEntityType) - priorityScore(b.entityType as AccountEntityType)
         );
 
-        return mappings[0]?.accountId || null;
+        const result = mappings[0]?.accountId || null;
+        cache?.accounts.set(cacheKey, result);
+        return result;
     }
 
     static async resolveAccountOrFail(
         tx: TxClient,
         mappingType: AccountMappingType,
-        context: AccountingResolutionContext
+        context: AccountingResolutionContext,
+        cache?: TransactionCache
     ): Promise<string> {
-        const accountId = await this.resolveAccount(tx, mappingType, context);
+        const accountId = await this.resolveAccount(tx, mappingType, context, cache);
         if (!accountId) {
             throw AppError.badRequest(
                 `Missing Account Mapping for ${mappingType}. Please configure it in Accounting Settings.`
@@ -202,14 +222,22 @@ export class CoreAccountingService {
     private static async resolveProductContext(
         tx: TxClient,
         base: AccountingResolutionContext,
-        productId: string
+        productId: string,
+        cache?: TransactionCache
     ): Promise<AccountingResolutionContext> {
         const next: AccountingResolutionContext = { ...base, productId };
-        const product = await tx.product.findUnique({
-            where: { id: productId },
-            select: { categoryId: true },
-        });
-        if (product?.categoryId) next.categoryId = product.categoryId;
+
+        let productData = cache?.products.get(productId);
+        if (!productData) {
+            const product = await tx.product.findUnique({
+                where: { id: productId },
+                select: { categoryId: true },
+            });
+            productData = product ? { categoryId: product.categoryId } : { categoryId: null };
+            cache?.products.set(productId, productData);
+        }
+
+        if (productData?.categoryId) next.categoryId = productData.categoryId;
         return next;
     }
 
@@ -312,6 +340,9 @@ export class CoreAccountingService {
         const ctxGlobal: AccountingResolutionContext = { companyId: invoice.companyId, branchId: invoice.branchId };
         const lines: JournalLine[] = [];
 
+        // In-transaction cache: avoids repeated lookups for same products/accounts
+        const cache: TransactionCache = { products: new Map(), accounts: new Map() };
+
         lines.push(
             ...(await this.buildSaleSettlementDebitLines(tx, {
                 companyId: invoice.companyId,
@@ -325,7 +356,7 @@ export class CoreAccountingService {
         );
 
         if (Number(invoice.taxTotal || 0) > 0) {
-            const outputTaxAccountId = await this.resolveAccountOrFail(tx, 'OUTPUT_TAX', ctxGlobal);
+            const outputTaxAccountId = await this.resolveAccountOrFail(tx, 'OUTPUT_TAX', ctxGlobal, cache);
             lines.push({ accountId: outputTaxAccountId, debit: 0, credit: roundMoney(invoice.taxTotal) });
         }
 
@@ -335,8 +366,8 @@ export class CoreAccountingService {
         let salesRevenueCreditTotal = 0;
 
         for (const item of invoice.items) {
-            const ctxProduct = await this.resolveProductContext(tx, ctxGlobal, item.productId);
-            const revenueAccountId = await this.resolveAccountOrFail(tx, 'SALES_REVENUE', ctxProduct);
+            const ctxProduct = await this.resolveProductContext(tx, ctxGlobal, item.productId, cache);
+            const revenueAccountId = await this.resolveAccountOrFail(tx, 'SALES_REVENUE', ctxProduct, cache);
             const lineRevenue = roundMoney(Number(item.lineTotal || 0));
             salesRevenueCreditTotal = roundMoney(salesRevenueCreditTotal + lineRevenue);
 
@@ -347,8 +378,8 @@ export class CoreAccountingService {
 
             const itemCostValue = roundMoney(Number(item.qty || 0) * Number(item.cost || 0));
             if (itemCostValue > 0) {
-                const inventoryAccountId = await this.resolveAccountOrFail(tx, 'INVENTORY_ASSET', ctxProduct);
-                const cogsAccountId = await this.resolveAccountOrFail(tx, 'COGS_EXPENSE', ctxProduct);
+                const inventoryAccountId = await this.resolveAccountOrFail(tx, 'INVENTORY_ASSET', ctxProduct, cache);
+                const cogsAccountId = await this.resolveAccountOrFail(tx, 'COGS_EXPENSE', ctxProduct, cache);
 
                 inventoryCreditMap.set(
                     inventoryAccountId,
@@ -359,18 +390,16 @@ export class CoreAccountingService {
         }
 
         // Invoice-level settlement reductions (e.g. loyalty redemption / manual settlement discount)
-        // reduce grandTotal while line revenue + tax remain gross. Add an explicit debit adjustment
-        // so sales journals stay balanced.
         const taxCreditTotal = roundMoney(Number(invoice.taxTotal || 0));
         const settledGrandTotal = roundMoney(Number(invoice.grandTotal || 0));
         const settlementDiscountAdjustment = roundMoney(salesRevenueCreditTotal + taxCreditTotal - settledGrandTotal);
         if (settlementDiscountAdjustment > MONEY_EPSILON) {
-            let settlementDiscountAccountId = await this.resolveAccount(tx, 'DISCOUNT_GIVEN', ctxGlobal);
+            let settlementDiscountAccountId = await this.resolveAccount(tx, 'DISCOUNT_GIVEN', ctxGlobal, cache);
             if (!settlementDiscountAccountId) {
                 settlementDiscountAccountId = revenueMap.keys().next().value || null;
             }
             if (!settlementDiscountAccountId) {
-                settlementDiscountAccountId = await this.resolveAccount(tx, 'SALES_REVENUE', ctxGlobal);
+                settlementDiscountAccountId = await this.resolveAccount(tx, 'SALES_REVENUE', ctxGlobal, cache);
             }
             if (!settlementDiscountAccountId) {
                 throw AppError.badRequest(

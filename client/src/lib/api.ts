@@ -111,6 +111,12 @@ api.interceptors.request.use((config) => {
         config.headers.Authorization = `Bearer ${token}`;
     }
 
+    if ((config.method || 'get').toLowerCase() === 'get') {
+        config.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+        config.headers.Pragma = 'no-cache';
+        config.headers.Expires = '0';
+    }
+
     const posSessionToken = sessionStorage.getItem('posSessionToken');
     if (posSessionToken) {
         config.headers['x-pos-session'] = posSessionToken;

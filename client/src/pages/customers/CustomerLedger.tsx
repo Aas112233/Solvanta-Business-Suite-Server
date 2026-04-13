@@ -46,7 +46,7 @@ export default function CustomerLedger() {
     };
 
     // Fetch customers for dropdown/lookup
-    const { data: customersData, isLoading: customersLoading } = useQuery({
+    const { data: customersData, isLoading: customersLoading, refetch: refetchCustomers, isFetching: isFetchingCustomers } = useQuery({
         queryKey: ['customers-lookup', customerSearch],
         queryFn: () => api.get('/customers', { params: { search: customerSearch || undefined, limit: 100 } }).then(r => r.data.data),
     });
@@ -180,6 +180,8 @@ export default function CustomerLedger() {
                                     options={[{ value: '', label: 'Choose a customer...' }, ...(customersData || []).map((s: any) => ({ value: s.id, label: `${s.customerCode} - ${s.name}` }))]}
                                     placeholder='Choose a customer...'
                                     searchable
+                                    onRefresh={refetchCustomers}
+                                    refreshing={isFetchingCustomers}
                                 />
                             </div>
                         </div>

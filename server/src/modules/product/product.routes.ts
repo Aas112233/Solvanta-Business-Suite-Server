@@ -7,6 +7,7 @@ import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
 import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
 import { z } from 'zod';
+import { enforceTenantCreateWithinLimit } from '../super-admin/tenant-intelligence.js';
 
 export const productRoutes = Router();
 productRoutes.use(authenticate);
@@ -31,60 +32,61 @@ async function checkCodeUniqueness(companyId: string, code: string, context: str
     if (!code) return;
     const normalized = normalizeCode(code);
 
-    // Check 1: Product ItemCode
-    const conflictingProduct = await prisma.product.findFirst({
-        where: {
-            companyId,
-            deletedAt: { isSet: false },
-            itemCode: normalized,
-            id: excludeProductId ? { not: excludeProductId } : undefined,
-        },
-        select: { id: true, itemCode: true, name: true }
-    });
-    if (conflictingProduct) throw AppError.badRequest(`${context} '${normalized}' conflicts with Product Code for '${conflictingProduct.name}' (ID: ${conflictingProduct.id})`);
+    // Run all 4 uniqueness checks in parallel (they are independent queries)
+    const [conflictingProduct, conflictingUnit, conflictingProductBarcode, conflictingUnitBarcode] = await Promise.all([
+        // Check 1: Product ItemCode
+        prisma.product.findFirst({
+            where: {
+                companyId,
+                deletedAt: { isSet: false },
+                itemCode: normalized,
+                id: excludeProductId ? { not: excludeProductId } : undefined,
+            },
+            select: { id: true, itemCode: true, name: true }
+        }),
+        // Check 2: Product Units UnitCode
+        prisma.productUnit.findFirst({
+            where: {
+                unitCode: normalized,
+                id: excludeUnitId ? { not: excludeUnitId } : undefined,
+                product: {
+                    companyId,
+                    ...(excludeProductId ? { id: { not: excludeProductId } } : {}),
+                    deletedAt: { isSet: false }
+                }
+            },
+            include: { product: { select: { id: true, name: true } } }
+        }),
+        // Check 3: Product Barcodes (Array)
+        prisma.product.findFirst({
+            where: {
+                companyId,
+                deletedAt: { isSet: false },
+                barcodes: { has: normalized },
+                id: excludeProductId ? { not: excludeProductId } : undefined,
+            },
+            select: { id: true, name: true }
+        }),
+        // Check 4: Product Unit Barcodes (Array)
+        prisma.productUnit.findFirst({
+            where: {
+                barcodes: { has: normalized },
+                id: excludeUnitId ? { not: excludeUnitId } : undefined,
+                product: {
+                    companyId,
+                    ...(excludeProductId ? { id: { not: excludeProductId } } : {}),
+                    deletedAt: { isSet: false }
+                }
+            } as any,
+            include: { product: { select: { id: true, name: true } } }
+        }),
+    ]);
 
-    // Check 2: Product Units UnitCode
-    const conflictingUnit = await prisma.productUnit.findFirst({
-        where: {
-            unitCode: normalized,
-            id: excludeUnitId ? { not: excludeUnitId } : undefined,
-            product: {
-                companyId, // Manual scoping
-                ...(excludeProductId ? { id: { not: excludeProductId } } : {}),
-                deletedAt: { isSet: false } // Manual soft-delete check
-            }
-        },
-        include: { product: { select: { id: true, name: true } } }
-    });
+    if (conflictingProduct) throw AppError.badRequest(`${context} '${normalized}' conflicts with Product Code for '${conflictingProduct.name}' (ID: ${conflictingProduct.id})`);
     if (conflictingUnit && conflictingUnit.product) {
         throw AppError.badRequest(`${context} '${normalized}' conflicts with Unit Code in '${conflictingUnit.product.name}' (UnitID: ${conflictingUnit.id}, ProductID: ${conflictingUnit.product.id})`);
     }
-
-    // Check 3: Product Barcodes (Array)
-    const conflictingProductBarcode = await prisma.product.findFirst({
-        where: {
-            companyId,
-            deletedAt: { isSet: false },
-            barcodes: { has: normalized },
-            id: excludeProductId ? { not: excludeProductId } : undefined,
-        },
-        select: { id: true, name: true }
-    });
     if (conflictingProductBarcode) throw AppError.badRequest(`${context} '${normalized}' conflicts with Barcode of product '${conflictingProductBarcode.name}' (ID: ${conflictingProductBarcode.id})`);
-
-    // Check 4: Product Unit Barcodes (Array)
-    const conflictingUnitBarcode = await prisma.productUnit.findFirst({
-        where: {
-            barcodes: { has: normalized },
-            id: excludeUnitId ? { not: excludeUnitId } : undefined,
-            product: {
-                companyId,
-                ...(excludeProductId ? { id: { not: excludeProductId } } : {}),
-                deletedAt: { isSet: false }
-            }
-        } as any,
-        include: { product: { select: { id: true, name: true } } }
-    });
     if (conflictingUnitBarcode && conflictingUnitBarcode.product) {
         throw AppError.badRequest(`${context} '${normalized}' conflicts with Barcode of Unit in '${conflictingUnitBarcode.product.name}' (UnitID: ${conflictingUnitBarcode.id}, ProductID: ${conflictingUnitBarcode.product.id})`);
     }
@@ -233,6 +235,12 @@ productRoutes.get(
 // POST /products
 productRoutes.post('/', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), validate({ body: productSchema }), async (req, res, next) => {
     try {
+        await enforceTenantCreateWithinLimit(req.user!.companyId, 'products', {
+            actorUserId: req.user!.id,
+            actorEmail: req.user!.email,
+            request: req,
+        });
+
         const { units, ...rawData } = req.body;
         const companyId = req.user!.companyId;
         const normalizedItemCode = normalizeCode(rawData.itemCode);

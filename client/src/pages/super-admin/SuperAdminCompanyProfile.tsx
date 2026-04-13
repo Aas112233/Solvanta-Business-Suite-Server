@@ -1,20 +1,29 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import AppLoader from '../../components/ui/AppLoader';
 import AppDropdown from '../../components/ui/AppDropdown';
+import api from '../../lib/api';
+import { useAuthStore } from '../../stores/authStore';
+import { SUPER_ADMIN_PERMISSIONS } from '../../lib/superAdminPermissions';
+import SuperAdminAccessCard from './SuperAdminAccessCard';
+import ImpersonationDialog from './ImpersonationDialog';
+import TenantStatusDialog from './TenantStatusDialog';
 import {
     broadcastTenantAnnouncement,
     fetchSuperAdminTenants,
     fetchTenantControlCenter,
     fetchTenantUsage,
+    impersonateTenantUser,
+    Tenant,
     TenantPlan,
     updateTenantLimits,
     updateTenantMaintenance,
     updateTenantPlan,
     updateTenantStatus,
     updateTenantUserStatus,
+    updateTenantUserPassword,
 } from './api';
 
 type UserFilter = 'All' | 'Active' | 'Inactive';
@@ -36,7 +45,35 @@ function parseOptionalLimit(value: string) {
 
 export default function SuperAdminCompanyProfile() {
     const { id = '' } = useParams();
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const queryClient = useQueryClient();
+    const setUser = useAuthStore((state) => state.setUser);
+    const startImpersonation = useAuthStore((state) => state.startImpersonation);
+    const canReadTenants = useAuthStore((state) =>
+        state.hasSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_READ),
+    );
+    const canManageTenants = useAuthStore((state) =>
+        state.hasSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_MANAGE),
+    );
+    const canManageBilling = useAuthStore((state) =>
+        state.hasSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.BILLING_MANAGE),
+    );
+    const canManageLimits = useAuthStore((state) =>
+        state.hasSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.LIMITS_MANAGE),
+    );
+    const canManageMaintenance = useAuthStore((state) =>
+        state.hasSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.MAINTENANCE_MANAGE),
+    );
+    const canManageUsers = useAuthStore((state) =>
+        state.hasSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.USERS_MANAGE),
+    );
+    const canImpersonateUsers = useAuthStore((state) =>
+        state.hasSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.USERS_IMPERSONATE),
+    );
+    const canManageAnnouncements = useAuthStore((state) =>
+        state.hasSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.ANNOUNCEMENTS_MANAGE),
+    );
 
     const [planDraft, setPlanDraft] = useState({
         plan: 'Starter' as TenantPlan,
@@ -61,28 +98,39 @@ export default function SuperAdminCompanyProfile() {
         message: '',
         level: 'info' as 'info' | 'warning' | 'critical',
     });
+    const [statusReason, setStatusReason] = useState('');
+    const [pendingStatus, setPendingStatus] = useState<'Active' | 'Suspended' | null>(null);
 
     const [userSearch, setUserSearch] = useState('');
     const [userFilter, setUserFilter] = useState<UserFilter>('All');
+    
+    // User Password Reset
+    const [passwordResetUser, setPasswordResetUser] = useState<{ id: string; name: string } | null>(null);
+    const [newPassword, setNewPassword] = useState('');
+    const [impersonationUser, setImpersonationUser] = useState<{ id: string; name: string; email: string } | null>(null);
+    const [impersonationReason, setImpersonationReason] = useState('');
+    const [impersonationTicket, setImpersonationTicket] = useState('');
+    const focusedUserId = searchParams.get('userId')?.trim() || '';
 
-    const { data: tenants = [], isLoading: loadingTenant } = useQuery({
+    const { data: tenants = [], isLoading: loadingTenant } = useQuery<Tenant[]>({
         queryKey: ['super-admin', 'tenants'],
-        queryFn: fetchSuperAdminTenants,
+        queryFn: () => fetchSuperAdminTenants(),
+        enabled: canReadTenants,
     });
 
     const { data: controlCenter, isLoading: loadingControlCenter } = useQuery({
         queryKey: ['super-admin', 'tenant-control', id],
         queryFn: () => fetchTenantControlCenter(id),
-        enabled: Boolean(id),
+        enabled: canReadTenants && Boolean(id),
     });
 
     const { data: usage, isLoading: loadingUsage } = useQuery({
         queryKey: ['super-admin', 'tenant-usage', id],
         queryFn: () => fetchTenantUsage(id),
-        enabled: Boolean(id),
+        enabled: canReadTenants && Boolean(id),
     });
 
-    const tenant = tenants.find((item) => item.id === id);
+    const tenant = tenants.find((item: Tenant) => item.id === id);
 
     useEffect(() => {
         if (!controlCenter?.tenant) return;
@@ -109,14 +157,20 @@ export default function SuperAdminCompanyProfile() {
     const statusMutation = useMutation({
         mutationFn: ({ status, reason }: { status: 'Active' | 'Suspended'; reason?: string }) =>
             updateTenantStatus(id, status, reason),
-        onSuccess: () => {
-            toast.success('Tenant status updated');
+        onSuccess: (data) => {
+            toast.success(
+                data.status === 'Suspended'
+                    ? `Tenant suspended. ${data.affectedUsers} user${data.affectedUsers === 1 ? '' : 's'} paused.`
+                    : `Tenant reactivated. ${data.affectedUsers} user${data.affectedUsers === 1 ? '' : 's'} restored.`,
+            );
+            setPendingStatus(null);
+            setStatusReason('');
             queryClient.invalidateQueries({ queryKey: ['super-admin', 'tenants'] });
             queryClient.invalidateQueries({ queryKey: ['super-admin', 'overview'] });
             queryClient.invalidateQueries({ queryKey: ['super-admin', 'tenant-control', id] });
             queryClient.invalidateQueries({ queryKey: ['super-admin', 'audit'] });
         },
-        onError: () => toast.error('Failed to update tenant status'),
+        onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Failed to update tenant status'),
     });
 
     const planMutation = useMutation({
@@ -193,6 +247,38 @@ export default function SuperAdminCompanyProfile() {
         onError: () => toast.error('Failed to update user status'),
     });
 
+    const passwordMutation = useMutation({
+        mutationFn: ({ userId, password }: { userId: string; password: string }) =>
+            updateTenantUserPassword(id, userId, password),
+        onSuccess: () => {
+            toast.success('User password updated');
+            setPasswordResetUser(null);
+            setNewPassword('');
+            queryClient.invalidateQueries({ queryKey: ['super-admin', 'audit'] });
+        },
+        onError: () => toast.error('Failed to update user password'),
+    });
+
+    const impersonationMutation = useMutation({
+        mutationFn: ({ userId, reason, ticket }: { userId: string; reason: string; ticket?: string }) =>
+            impersonateTenantUser(id, userId, { reason, ticket }),
+        onSuccess: async (session) => {
+            startImpersonation({
+                token: session.accessToken,
+                refreshToken: session.refreshToken,
+            });
+
+            const profile = await api.get('/users/me');
+            setUser(profile.data.data);
+            setImpersonationUser(null);
+            setImpersonationReason('');
+            setImpersonationTicket('');
+            toast.success(`Now impersonating ${session.targetUser.name}`);
+            navigate('/');
+        },
+        onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Failed to start impersonation'),
+    });
+
     const announcementMutation = useMutation({
         mutationFn: () =>
             broadcastTenantAnnouncement(id, {
@@ -212,13 +298,36 @@ export default function SuperAdminCompanyProfile() {
         const allUsers = controlCenter?.users || [];
 
         return allUsers.filter((user) => {
+            if (focusedUserId && user.id === focusedUserId) return true;
             if (userFilter === 'Active' && !user.isActive) return false;
             if (userFilter === 'Inactive' && user.isActive) return false;
             if (!userSearch.trim()) return true;
             const searchTerm = userSearch.trim().toLowerCase();
             return user.name.toLowerCase().includes(searchTerm) || user.email.toLowerCase().includes(searchTerm);
         });
-    }, [controlCenter?.users, userFilter, userSearch]);
+    }, [controlCenter?.users, focusedUserId, userFilter, userSearch]);
+
+    const focusedUser = useMemo(
+        () => controlCenter?.users.find((user) => user.id === focusedUserId) ?? null,
+        [controlCenter?.users, focusedUserId],
+    );
+
+    useEffect(() => {
+        if (!focusedUserId) return;
+
+        const frame = window.requestAnimationFrame(() => {
+            const row = document.getElementById(`tenant-user-row-${focusedUserId}`);
+            row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+
+        return () => window.cancelAnimationFrame(frame);
+    }, [focusedUserId, filteredUsers.length]);
+
+    if (!canReadTenants) {
+        return (
+            <SuperAdminAccessCard message="Your super admin role does not include tenant visibility." />
+        );
+    }
 
     if (loadingTenant || loadingControlCenter || loadingUsage) {
         return <AppLoader />;
@@ -245,28 +354,39 @@ export default function SuperAdminCompanyProfile() {
                         Back To Companies
                     </Link>
                 </div>
-                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
                     <InfoCard label="Plan" value={tenant.plan} />
                     <InfoCard label="Status" value={tenant.status} />
                     <InfoCard label="Users" value={`${tenant.activeUsers} / ${tenant.totalUsers}`} />
+                    <InfoCard label="Health" value={`${tenant.healthScore}/100 • ${tenant.healthStatus}`} />
+                    <InfoCard label="Payment" value={tenant.paymentStatus} />
+                    <InfoCard label="Module Adoption" value={`${tenant.moduleUsageSummary.adoptedModules}/${tenant.moduleUsageSummary.enabledModules}`} />
                 </div>
                 <div className="mt-4 flex flex-wrap items-center gap-2">
-                    {tenant.status === 'Suspended' ? (
-                        <button
-                            type="button"
-                            onClick={() => statusMutation.mutate({ status: 'Active' })}
-                            className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
-                        >
-                            Activate Tenant
-                        </button>
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={() => statusMutation.mutate({ status: 'Suspended', reason: 'Suspended from control center' })}
-                            className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
-                        >
-                            Suspend Tenant
-                        </button>
+                    {canManageTenants && (
+                        tenant.status === 'Suspended' ? (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setPendingStatus('Active');
+                                    setStatusReason('');
+                                }}
+                                className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+                            >
+                                Activate Tenant
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setPendingStatus('Suspended');
+                                    setStatusReason('');
+                                }}
+                                className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+                            >
+                                Suspend Tenant
+                            </button>
+                        )
                     )}
                     {tenant.maintenance.enabled && (
                         <span className="rounded-md bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700">
@@ -277,6 +397,23 @@ export default function SuperAdminCompanyProfile() {
                 {tenant.statusReason && (
                     <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
                         Status reason: {tenant.statusReason}
+                    </p>
+                )}
+                {tenant.statusChangedAt && (
+                    <p className="mt-2 text-xs text-slate-500">
+                        Last status change: {new Date(tenant.statusChangedAt).toLocaleString()}
+                        {tenant.statusChangedBy ? ` by ${tenant.statusChangedBy}` : ''}
+                    </p>
+                )}
+                {tenant.graceEndsAt && (
+                    <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                        Resource grace window ends {new Date(tenant.graceEndsAt).toLocaleString()}.
+                        {tenant.daysUntilAutoSuspend !== null ? ` Auto-suspension in ${tenant.daysUntilAutoSuspend} day${tenant.daysUntilAutoSuspend === 1 ? '' : 's'}.` : ''}
+                    </p>
+                )}
+                {tenant.healthDrivers.length > 0 && (
+                    <p className="mt-2 text-xs text-slate-500">
+                        Health drivers: {tenant.healthDrivers.join(' • ')}
                     </p>
                 )}
             </section>
@@ -296,6 +433,51 @@ export default function SuperAdminCompanyProfile() {
                 )}
             </section>
 
+            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <h3 className="text-lg font-semibold text-slate-900">Tenant Health & Module Adoption</h3>
+                <p className="text-xs text-slate-500">Activity-based module analytics and tenant health factors from the last 30 days.</p>
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <InfoCard label="Health Trend" value={tenant.healthTrend} />
+                    <InfoCard label="Last Activity" value={new Date(tenant.lastActivityAt).toLocaleString()} />
+                    <InfoCard
+                        label="Unused Enabled Modules"
+                        value={tenant.moduleUsageSummary.unusedEnabledModules.length === 0 ? 'None' : tenant.moduleUsageSummary.unusedEnabledModules.join(', ')}
+                    />
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                    {(Object.values(tenant.moduleUsage) as Tenant['moduleUsage'][keyof Tenant['moduleUsage']][]).map((module) => (
+                        <div key={module.key} className="rounded-xl border border-slate-200 p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-sm font-semibold uppercase tracking-wide text-slate-900">{module.key}</p>
+                                    <p className="text-xs text-slate-500">
+                                        {module.monthlyActiveUsers} MAU • {module.eventCount30d} events in 30 days
+                                    </p>
+                                </div>
+                                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                                    module.status === 'adopted'
+                                        ? 'bg-emerald-50 text-emerald-700'
+                                        : module.status === 'unused'
+                                            ? 'bg-amber-50 text-amber-700'
+                                            : 'bg-slate-100 text-slate-700'
+                                }`}>
+                                    {module.status}
+                                </span>
+                            </div>
+                            <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-600">
+                                <div className="rounded-lg bg-slate-50 px-2 py-2">DAU: {module.dailyActiveUsers}</div>
+                                <div className="rounded-lg bg-slate-50 px-2 py-2">WAU: {module.weeklyActiveUsers}</div>
+                                <div className="rounded-lg bg-slate-50 px-2 py-2">Adoption: {module.adoptionRate}%</div>
+                            </div>
+                            {module.lastUsedAt && (
+                                <p className="mt-2 text-xs text-slate-500">Last activity: {new Date(module.lastUsedAt).toLocaleString()}</p>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </section>
+
+            {canManageBilling && (
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
                 <h3 className="text-lg font-semibold text-slate-900">Plan & Billing Controls</h3>
                 <p className="text-xs text-slate-500">Override commercial plan and billing metrics used in super-admin reporting.</p>
@@ -348,10 +530,12 @@ export default function SuperAdminCompanyProfile() {
                     Save Plan Controls
                 </button>
             </section>
+            )}
 
+            {canManageLimits && (
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
                 <h3 className="text-lg font-semibold text-slate-900">Resource Limits</h3>
-                <p className="text-xs text-slate-500">Set hard guidance values. Leave fields empty to remove the limit.</p>
+                <p className="text-xs text-slate-500">Set enforced limits. Warnings start at 80% and 90%, new resources are blocked at the limit, and unresolved breaches auto-suspend after 7 days.</p>
                 <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                         <label className="text-xs text-slate-600">Max Users</label>
@@ -390,6 +574,11 @@ export default function SuperAdminCompanyProfile() {
                 <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
                     Current usage: {controlCenter?.usage.users ?? tenant.totalUsers} users, {controlCenter?.usage.branches ?? tenant.totalBranches} branches, {controlCenter?.usage.products ?? tenant.totalProducts} products
                 </div>
+                {tenant.limitWarnings.length > 0 && (
+                    <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                        {tenant.limitWarnings.map((warning: Tenant['limitWarnings'][number]) => `${warning.label}: ${warning.count}/${warning.limit ?? 'Unlimited'} (${warning.percentUsed ?? 0}%)`).join(' • ')}
+                    </div>
+                )}
                 <button
                     type="button"
                     onClick={() => limitsMutation.mutate()}
@@ -399,7 +588,9 @@ export default function SuperAdminCompanyProfile() {
                     Save Limits
                 </button>
             </section>
+            )}
 
+            {canManageMaintenance && (
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
                 <h3 className="text-lg font-semibold text-slate-900">Maintenance Lock</h3>
                 <p className="text-xs text-slate-500">When enabled, this tenant cannot access APIs except super-admin users.</p>
@@ -431,7 +622,9 @@ export default function SuperAdminCompanyProfile() {
                     Save Maintenance Controls
                 </button>
             </section>
+            )}
 
+            {canManageUsers && (
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -458,6 +651,11 @@ export default function SuperAdminCompanyProfile() {
 
                 {!loadingControlCenter && (
                     <div className="mt-4 overflow-x-auto">
+                        {focusedUser && (
+                            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                Focused user from support session: <span className="font-semibold">{focusedUser.name}</span> ({focusedUser.email})
+                            </div>
+                        )}
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -470,7 +668,11 @@ export default function SuperAdminCompanyProfile() {
                             </thead>
                             <tbody>
                                 {filteredUsers.map((user) => (
-                                    <tr key={user.id} className="border-b border-slate-100 last:border-none">
+                                    <tr
+                                        key={user.id}
+                                        id={`tenant-user-row-${user.id}`}
+                                        className={`border-b border-slate-100 last:border-none ${focusedUserId === user.id ? 'bg-amber-50/70' : ''}`}
+                                    >
                                         <td className="py-3 pr-3">
                                             <p className="font-medium text-slate-900">{user.name}</p>
                                             <p className="text-xs text-slate-500">{user.email}</p>
@@ -485,13 +687,38 @@ export default function SuperAdminCompanyProfile() {
                                             </span>
                                         </td>
                                         <td className="py-3">
-                                            <button
-                                                type="button"
-                                                onClick={() => userStatusMutation.mutate({ userId: user.id, isActive: !user.isActive })}
-                                                className={`rounded-md px-2 py-1 text-xs font-medium text-white ${user.isActive ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
-                                            >
-                                                {user.isActive ? 'Suspend' : 'Activate'}
-                                            </button>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => userStatusMutation.mutate({ userId: user.id, isActive: !user.isActive })}
+                                                    className={`rounded-md px-2 py-1 text-xs font-medium text-white ${user.isActive ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                                                >
+                                                    {user.isActive ? 'Suspend' : 'Activate'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setPasswordResetUser({ id: user.id, name: user.name });
+                                                        setNewPassword('');
+                                                    }}
+                                                    className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
+                                                >
+                                                    Password
+                                                </button>
+                                                {canImpersonateUsers && user.canImpersonate !== false && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setImpersonationUser({ id: user.id, name: user.name, email: user.email });
+                                                            setImpersonationReason('');
+                                                            setImpersonationTicket('');
+                                                        }}
+                                                        className="rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                                                    >
+                                                        Impersonate
+                                                    </button>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
@@ -501,7 +728,9 @@ export default function SuperAdminCompanyProfile() {
                     </div>
                 )}
             </section>
+            )}
 
+            {canManageAnnouncements && (
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
                 <h3 className="text-lg font-semibold text-slate-900">Tenant Announcement</h3>
                 <p className="text-xs text-slate-500">Send a control message only to this tenant.</p>
@@ -535,6 +764,87 @@ export default function SuperAdminCompanyProfile() {
                     </button>
                 </div>
             </section>
+            )}
+
+            {/* Password Reset Modal */}
+            {canManageUsers && passwordResetUser && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                    <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
+                        <h3 className="text-lg font-bold text-slate-900">Reset Password</h3>
+                        <p className="mt-1 text-sm text-slate-500">
+                            Enter a new password for <strong>{passwordResetUser.name}</strong>.
+                        </p>
+                        <input
+                            type="text"
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            placeholder="New password (min 6 chars)"
+                            className="mt-4 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                        />
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setPasswordResetUser(null);
+                                    setNewPassword('');
+                                }}
+                                className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                disabled={newPassword.length < 6 || passwordMutation.isPending}
+                                onClick={() => passwordMutation.mutate({ userId: passwordResetUser.id, password: newPassword })}
+                                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                            >
+                                {passwordMutation.isPending ? 'Saving...' : 'Update Password'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {canImpersonateUsers && impersonationUser && (
+                <ImpersonationDialog
+                    userName={impersonationUser.name}
+                    userEmail={impersonationUser.email}
+                    reason={impersonationReason}
+                    ticket={impersonationTicket}
+                    onReasonChange={setImpersonationReason}
+                    onTicketChange={setImpersonationTicket}
+                    onClose={() => {
+                        setImpersonationUser(null);
+                        setImpersonationReason('');
+                        setImpersonationTicket('');
+                    }}
+                    onConfirm={() => impersonationMutation.mutate({
+                        userId: impersonationUser.id,
+                        reason: impersonationReason.trim(),
+                        ticket: impersonationTicket.trim() || undefined,
+                    })}
+                    isSubmitting={impersonationMutation.isPending}
+                />
+            )}
+
+            {canManageTenants && pendingStatus && (
+                <TenantStatusDialog
+                    tenantName={tenant.name}
+                    nextStatus={pendingStatus}
+                    reason={statusReason}
+                    onReasonChange={setStatusReason}
+                    onClose={() => {
+                        setPendingStatus(null);
+                        setStatusReason('');
+                    }}
+                    onConfirm={() => statusMutation.mutate({
+                        status: pendingStatus,
+                        reason: pendingStatus === 'Suspended' ? statusReason.trim() : undefined,
+                    })}
+                    isSubmitting={statusMutation.isPending}
+                    affectedUsers={pendingStatus === 'Suspended' ? tenant.activeUsers : tenant.suspendedUserCount}
+                />
+            )}
         </div>
     );
 }

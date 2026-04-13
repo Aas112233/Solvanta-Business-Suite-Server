@@ -342,29 +342,14 @@ async function getReceiptSettings(companyId: string): Promise<PosReceiptSettings
 
 async function upsertReceiptSettings(companyId: string, settings: PosReceiptSettings): Promise<void> {
     const normalized = sanitizeReceiptSettings(settings);
-    const row = await prisma.globalString.findFirst({
-        where: {
-            companyId,
-            group: 'POS_RECEIPT_SETTINGS',
-            systemKey: 'DEFAULT',
+    await (prisma as any).globalString.upsert({
+        where: { companyId_group_systemKey: { companyId, group: 'POS_RECEIPT_SETTINGS', systemKey: 'DEFAULT' } },
+        update: {
+            value: 'POS Receipt Settings',
+            metadata: normalized as any,
+            isActive: true,
         },
-        select: { id: true },
-    });
-
-    if (row) {
-        await prisma.globalString.update({
-            where: { id: row.id },
-            data: {
-                value: 'POS Receipt Settings',
-                metadata: normalized as any,
-                isActive: true,
-            },
-        });
-        return;
-    }
-
-    await prisma.globalString.create({
-        data: {
+        create: {
             companyId,
             group: 'POS_RECEIPT_SETTINGS',
             systemKey: 'DEFAULT',
@@ -459,29 +444,14 @@ async function getHotkeyShortcutSettings(companyId: string): Promise<PosHotkeySh
 
 async function upsertHotkeyShortcutSettings(companyId: string, settings: PosHotkeyShortcutSettings): Promise<void> {
     const normalized = sanitizeHotkeyShortcutSettings(settings);
-    const row = await prisma.globalString.findFirst({
-        where: {
-            companyId,
-            group: 'POS_HOTKEY_SHORTCUTS',
-            systemKey: 'DEFAULT',
+    await (prisma as any).globalString.upsert({
+        where: { companyId_group_systemKey: { companyId, group: 'POS_HOTKEY_SHORTCUTS', systemKey: 'DEFAULT' } },
+        update: {
+            value: 'POS Hotkeys and Shortcut Items',
+            metadata: normalized as any,
+            isActive: true,
         },
-        select: { id: true },
-    });
-
-    if (row) {
-        await prisma.globalString.update({
-            where: { id: row.id },
-            data: {
-                value: 'POS Hotkeys and Shortcut Items',
-                metadata: normalized as any,
-                isActive: true,
-            },
-        });
-        return;
-    }
-
-    await prisma.globalString.create({
-        data: {
+        create: {
             companyId,
             group: 'POS_HOTKEY_SHORTCUTS',
             systemKey: 'DEFAULT',
@@ -525,29 +495,14 @@ async function getLoyaltySettings(companyId: string): Promise<PosLoyaltySettings
 
 async function upsertLoyaltySettings(companyId: string, settings: PosLoyaltySettings): Promise<void> {
     const normalized = sanitizeLoyaltySettings(settings);
-    const row = await prisma.globalString.findFirst({
-        where: {
-            companyId,
-            group: 'POS_LOYALTY_SETTINGS',
-            systemKey: 'DEFAULT',
+    await (prisma as any).globalString.upsert({
+        where: { companyId_group_systemKey: { companyId, group: 'POS_LOYALTY_SETTINGS', systemKey: 'DEFAULT' } },
+        update: {
+            value: 'POS Loyalty Settings',
+            metadata: normalized as any,
+            isActive: true,
         },
-        select: { id: true },
-    });
-
-    if (row) {
-        await prisma.globalString.update({
-            where: { id: row.id },
-            data: {
-                value: 'POS Loyalty Settings',
-                metadata: normalized as any,
-                isActive: true,
-            },
-        });
-        return;
-    }
-
-    await prisma.globalString.create({
-        data: {
+        create: {
             companyId,
             group: 'POS_LOYALTY_SETTINGS',
             systemKey: 'DEFAULT',
@@ -1530,15 +1485,29 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
             let status: any = paymentMethod === 'CREDIT' ? 'CREDIT' : 'PAID';
             let isPosted = true;
 
-            // Check stock availability for all items
+            // Pre-fetch products for stock operations (avoid repeated lookups per item)
+            const productUnitCache = new Map<string, any>();
+            for (const item of computedItems) {
+                if (item.serviceId || !item.productId) continue;
+                if (!productUnitCache.has(item.productId)) {
+                    const p = await (tx as any).product.findUnique({
+                        where: { id: item.productId },
+                        select: { id: true, name: true, itemCode: true, units: { select: { unitCode: true, qtyInBaseUnit: true, isBase: true } } },
+                    });
+                    if (p) productUnitCache.set(item.productId, p);
+                }
+            }
+
+            // Single-pass stock check
             for (const item of computedItems) {
                 if (item.serviceId) continue;
+                const cachedProduct = productUnitCache.get(item.productId as string);
                 const qtyAvailable = await InventoryService.getAvailableStockQty(tx as any, {
                     companyId,
                     branchId,
                     productId: item.productId as string,
                     unitCode: item.unitCode as string,
-                });
+                }, cachedProduct);
 
                 if (qtyAvailable < item.qty) {
                     isPosted = false;
@@ -1634,17 +1603,9 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     // Skip service items - they don't have inventory impact
                     if (item.serviceId) continue;
 
-                    const qtyAvailable = await InventoryService.getAvailableStockQty(tx as any, {
-                        companyId,
-                        branchId,
-                        productId: item.productId!,
-                        unitCode: item.unitCode,
-                    });
+                    const cachedProduct = productUnitCache.get(item.productId!);
 
-                    if (qtyAvailable < item.qty) {
-                        throw AppError.badRequest(`Insufficient stock for product ${item.productId}`);
-                    }
-
+                    // Stock check already passed above; use pre-fetched product for mutation
                     const { movement } = await InventoryService.mutateStock(tx, {
                         companyId,
                         branchId,
@@ -1657,7 +1618,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                         referenceType: 'POSInvoice',
                         referenceId: invoice.id,
                         createdById: userId,
-                    });
+                    }, cachedProduct);
 
                     (item as any).cost = Number(movement?.cost || 0);
                 }

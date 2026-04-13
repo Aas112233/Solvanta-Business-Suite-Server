@@ -32,9 +32,9 @@ export default function ItemsList() {
     const [queryFilters, setQueryFilters] = useState(filters);
 
     // Fetch Meta for filters
-    const { data: cats } = useQuery({ queryKey: ['categories'], queryFn: () => api.get('/products/meta/categories').then(r => r.data.data) });
-    const { data: groups } = useQuery({ queryKey: ['groups'], queryFn: () => api.get('/products/meta/groups').then(r => r.data.data) });
-    const { data: brands } = useQuery({ queryKey: ['brands'], queryFn: () => api.get('/products/meta/brands').then(r => r.data.data) });
+    const { data: cats, refetch: refetchCats, isFetching: isFetchingCats } = useQuery({ queryKey: ['categories'], queryFn: () => api.get('/products/meta/categories').then(r => r.data.data) });
+    const { data: groups, refetch: refetchGroups, isFetching: isFetchingGroups } = useQuery({ queryKey: ['groups'], queryFn: () => api.get('/products/meta/groups').then(r => r.data.data) });
+    const { data: brands, refetch: refetchBrands, isFetching: isFetchingBrands } = useQuery({ queryKey: ['brands'], queryFn: () => api.get('/products/meta/brands').then(r => r.data.data) });
 
     const { data, isLoading, isError, error, isFetching } = useQuery({
         queryKey: ['products', querySearch, page, limit, queryFilters],
@@ -139,6 +139,9 @@ export default function ItemsList() {
                         options={[{ value: '', label: 'All Categories' }, ...(cats || []).map((c: any) => ({ value: c.id, label: c.name }))]}
                         placeholder="All Categories"
                         searchable
+                        onRefresh={() => refetchCats()}
+                        refreshing={isFetchingCats}
+                        refreshLabel="Refresh categories"
                     />
                     <AppDropdown
                         value={filters.itemGroupId}
@@ -146,6 +149,9 @@ export default function ItemsList() {
                         options={[{ value: '', label: 'All Groups' }, ...(groups || []).map((g: any) => ({ value: g.id, label: g.name }))]}
                         placeholder="All Groups"
                         searchable
+                        onRefresh={() => refetchGroups()}
+                        refreshing={isFetchingGroups}
+                        refreshLabel="Refresh groups"
                     />
                     <AppDropdown
                         value={filters.brandId}
@@ -153,6 +159,9 @@ export default function ItemsList() {
                         options={[{ value: '', label: 'All Brands' }, ...(brands || []).map((b: any) => ({ value: b.id, label: b.name }))]}
                         placeholder="All Brands"
                         searchable
+                        onRefresh={() => refetchBrands()}
+                        refreshing={isFetchingBrands}
+                        refreshLabel="Refresh brands"
                     />
                     <AppDropdown
                         value={filters.status}

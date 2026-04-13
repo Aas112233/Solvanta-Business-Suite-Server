@@ -118,10 +118,10 @@ export default function ItemForm() {
     });
 
     // Fetch Meta
-    const { data: cats } = useQuery({ queryKey: ['categories'], queryFn: () => api.get('/products/meta/categories').then(r => r.data.data) });
-    const { data: groups } = useQuery({ queryKey: ['groups'], queryFn: () => api.get('/products/meta/groups').then(r => r.data.data) });
-    const { data: brands } = useQuery({ queryKey: ['brands'], queryFn: () => api.get('/products/meta/brands').then(r => r.data.data) });
-    const { data: priceGroups } = useQuery({ queryKey: ['priceGroups'], queryFn: () => api.get('/products/meta/price-groups').then(r => r.data.data) });
+    const { data: cats, refetch: refetchCategories, isFetching: isFetchingCategories } = useQuery({ queryKey: ['categories'], queryFn: () => api.get('/products/meta/categories').then(r => r.data.data) });
+    const { data: groups, refetch: refetchGroups, isFetching: isFetchingGroups } = useQuery({ queryKey: ['groups'], queryFn: () => api.get('/products/meta/groups').then(r => r.data.data) });
+    const { data: brands, refetch: refetchBrands, isFetching: isFetchingBrands } = useQuery({ queryKey: ['brands'], queryFn: () => api.get('/products/meta/brands').then(r => r.data.data) });
+    const { data: priceGroups, refetch: refetchPriceGroups, isFetching: isFetchingPriceGroups } = useQuery({ queryKey: ['priceGroups'], queryFn: () => api.get('/products/meta/price-groups').then(r => r.data.data) });
 
     // Fetch Item Detais
     const { data: item, isLoading } = useQuery({
@@ -626,6 +626,8 @@ export default function ItemForm() {
                                                 options={(groups || []).map((g: any) => ({ value: g.id, label: g.name }))}
                                                 placeholder="Select Group"
                                                 searchable
+                                                onRefresh={refetchGroups}
+                                                refreshing={isFetchingGroups}
                                             />
                                         )}
                                     />
@@ -656,6 +658,8 @@ export default function ItemForm() {
                                                 options={(cats || []).map((c: any) => ({ value: c.id, label: c.name }))}
                                                 placeholder="Select Category"
                                                 searchable
+                                                onRefresh={refetchCategories}
+                                                refreshing={isFetchingCategories}
                                             />
                                         )}
                                     />
@@ -690,6 +694,8 @@ export default function ItemForm() {
                                             ]}
                                             placeholder="Select Brand"
                                             searchable
+                                            onRefresh={refetchBrands}
+                                            refreshing={isFetchingBrands}
                                         />
                                     )}
                                 />

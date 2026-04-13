@@ -25,6 +25,7 @@ import { format } from 'date-fns';
 import { getSalesCustomerDisplay } from '../../lib/salesCustomerDisplay';
 import DocumentPreviewModal from '../../components/shared/DocumentPreviewModal';
 import AppDropdown from '../../components/ui/AppDropdown';
+import AppLoader from '../../components/ui/AppLoader';
 import {
     buildPaymentMethodOptions,
     DEFAULT_SALE_PAYMENT_METHOD_OPTIONS,
@@ -77,7 +78,7 @@ export default function UnpostedInvoices() {
         }
     });
 
-    const { data: invoices, isLoading } = useQuery({
+    const { data: invoices, isLoading, isFetching } = useQuery({
         queryKey: ['unpostedInvoices', searchTerm, appliedFilters],
         queryFn: async () => {
             const params: any = {};
@@ -200,6 +201,10 @@ export default function UnpostedInvoices() {
     };
 
     const totalUnpostedAmount = filteredInvoices?.reduce((sum: number, inv: any) => sum + inv.grandTotal, 0) || 0;
+
+    if (isLoading) {
+        return <AppLoader />;
+    }
 
     return (
         <div className="space-y-6">
@@ -404,13 +409,7 @@ export default function UnpostedInvoices() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
-                            {isLoading ? (
-                                Array(5).fill(0).map((_, i) => (
-                                    <tr key={i} className="animate-pulse">
-                                        <td colSpan={7} className="px-6 py-6 bg-gray-50/20" />
-                                    </tr>
-                                ))
-                            ) : filteredInvoices?.length === 0 ? (
+                            {filteredInvoices?.length === 0 ? (
                                 <tr>
                                     <td colSpan={7} className="px-6 py-12 text-center text-gray-400 italic">
                                         No unposted invoices found
@@ -567,6 +566,7 @@ export default function UnpostedInvoices() {
                     </button>
                 }
             />
+            {isFetching && <AppLoader />}
         </div>
     );
 }

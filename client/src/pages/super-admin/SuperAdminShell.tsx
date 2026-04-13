@@ -1,9 +1,16 @@
 import { Outlet } from 'react-router-dom';
 import { Lock } from 'lucide-react';
-import { isCurrentUserSuperAdmin } from '../../lib/superAdmin';
+import { useAuthStore } from '../../stores/authStore';
+import AppLoader from '../../components/ui/AppLoader';
 
 export default function SuperAdminShell() {
-    const canAccess = isCurrentUserSuperAdmin();
+    const token = useAuthStore((state) => state.token);
+    const user = useAuthStore((state) => state.user);
+    const canAccess = useAuthStore((state) => Boolean(state.user?.isSuperAdmin));
+
+    if (token && !user) {
+        return <AppLoader />;
+    }
 
     if (!canAccess) {
         return (
@@ -13,7 +20,7 @@ export default function SuperAdminShell() {
                     <div>
                         <h1 className="text-lg font-semibold text-red-800">Super Admin Access Required</h1>
                         <p className="text-sm text-red-700 mt-1">
-                            Your account is not listed in `VITE_SUPER_ADMIN_EMAILS` and `SUPER_ADMIN_EMAILS`.
+                            Your account does not have super admin access. Contact a platform administrator if this is unexpected.
                         </p>
                     </div>
                 </div>

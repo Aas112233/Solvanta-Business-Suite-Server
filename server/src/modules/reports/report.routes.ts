@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { PERMISSIONS } from '../../config/permissions.js';
-import { prisma } from '../../lib/prisma.js';
+import { basePrisma, prisma } from '../../lib/prisma.js';
 import { AppError } from '../../utils/AppError.js';
 import { sendSuccess } from '../../utils/response.js';
 
@@ -40,6 +40,162 @@ function parseDateOrThrow(value: unknown, fieldName: string): Date | undefined {
         throw AppError.badRequest(`Invalid ${fieldName}`);
     }
     return date;
+}
+
+const toRawObjectId = (id: string) => ({ $oid: id });
+const toRawDate = (date: Date) => ({ $date: date.toISOString() });
+
+function buildRawCompanyBranchFilter(companyId: string, branchFilter?: unknown): Record<string, unknown> {
+    const filter: Record<string, unknown> = { companyId: toRawObjectId(companyId) };
+
+    if (typeof branchFilter === 'string' && branchFilter) {
+        filter.branchId = toRawObjectId(branchFilter);
+        return filter;
+    }
+
+    const branchIds = Array.isArray((branchFilter as { in?: string[] } | undefined)?.in)
+        ? (branchFilter as { in: string[] }).in.filter(Boolean)
+        : [];
+
+    if (branchIds.length > 0) {
+        filter.branchId = { $in: branchIds.map((id) => toRawObjectId(id)) };
+    }
+
+    return filter;
+}
+
+async function countDocumentsRaw(collection: string, filter: Record<string, unknown>): Promise<number> {
+    const result = await basePrisma.$runCommandRaw({
+        count: collection,
+        query: filter as any,
+    });
+
+    return Number((result as { n?: number | string } | null)?.n ?? 0);
+}
+
+async function countActiveProductsRaw(companyId: string): Promise<number> {
+    return countDocumentsRaw('products', {
+        companyId: toRawObjectId(companyId),
+        status: 'ACTIVE',
+        deletedAt: { $exists: false },
+    });
+}
+
+async function countActiveCustomersRaw(companyId: string): Promise<number> {
+    return countDocumentsRaw('customers', {
+        companyId: toRawObjectId(companyId),
+        deletedAt: { $exists: false },
+    });
+}
+
+function normalizeRawObjectId(value: unknown): string | null {
+    if (!value) return null;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'object' && typeof (value as { $oid?: unknown }).$oid === 'string') {
+        return (value as { $oid: string }).$oid;
+    }
+    return null;
+}
+
+function normalizeRawDate(value: unknown): Date | null {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+
+    if (typeof value === 'string' || typeof value === 'number') {
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    if (typeof value === 'object') {
+        const rawValue = (value as { $date?: unknown }).$date;
+        if (typeof rawValue === 'string' || typeof rawValue === 'number') {
+            const parsed = new Date(rawValue);
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        }
+        if (typeof rawValue === 'object' && rawValue && typeof (rawValue as { $numberLong?: unknown }).$numberLong === 'string') {
+            const parsed = new Date(Number((rawValue as { $numberLong: string }).$numberLong));
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        }
+    }
+
+    return null;
+}
+
+function normalizeRawNumber(value: unknown): number {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return Number(value) || 0;
+    if (typeof value === 'object' && value) {
+        if (typeof (value as { $numberDouble?: unknown }).$numberDouble === 'string') {
+            return Number((value as { $numberDouble: string }).$numberDouble) || 0;
+        }
+        if (typeof (value as { $numberInt?: unknown }).$numberInt === 'string') {
+            return Number((value as { $numberInt: string }).$numberInt) || 0;
+        }
+        if (typeof (value as { $numberLong?: unknown }).$numberLong === 'string') {
+            return Number((value as { $numberLong: string }).$numberLong) || 0;
+        }
+    }
+    return Number(value || 0) || 0;
+}
+
+async function fetchDashboardPurchasesRaw(args: {
+    companyId: string;
+    branchFilter?: unknown;
+    from: Date;
+    to: Date;
+}): Promise<Array<{ createdAt: Date; grandTotal: number; supplierId: string | null; supplier: { name: string } | null }>> {
+    const match = {
+        ...buildRawCompanyBranchFilter(args.companyId, args.branchFilter),
+        createdAt: {
+            $gte: toRawDate(args.from),
+            $lte: toRawDate(args.to),
+        },
+    };
+
+    const rawRows = await (basePrisma.purchaseInvoice as any).aggregateRaw({
+        pipeline: [
+            { $match: match },
+            {
+                $project: {
+                    _id: 0,
+                    createdAt: 1,
+                    grandTotal: 1,
+                    supplierId: 1,
+                },
+            },
+        ],
+    }) as Array<{ createdAt?: unknown; grandTotal?: unknown; supplierId?: unknown }>;
+
+    const supplierIds = Array.from(new Set(
+        rawRows
+            .map((row) => normalizeRawObjectId(row.supplierId))
+            .filter((value): value is string => Boolean(value))
+    ));
+
+    const suppliers = supplierIds.length > 0
+        ? await basePrisma.supplier.findMany({
+            where: { id: { in: supplierIds } },
+            select: { id: true, name: true },
+        })
+        : [];
+
+    const supplierNameById = new Map(suppliers.map((supplier) => [supplier.id, supplier.name]));
+
+    return rawRows
+        .map((row) => {
+            const createdAt = normalizeRawDate(row.createdAt);
+            if (!createdAt) return null;
+
+            const supplierId = normalizeRawObjectId(row.supplierId);
+
+            return {
+                createdAt,
+                grandTotal: normalizeRawNumber(row.grandTotal),
+                supplierId,
+                supplier: supplierId ? { name: supplierNameById.get(supplierId) || 'Unknown' } : null,
+            };
+        })
+        .filter((row): row is { createdAt: Date; grandTotal: number; supplierId: string | null; supplier: { name: string } | null } => Boolean(row));
 }
 
 // GET /reports/sales
@@ -1823,8 +1979,8 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
                 _sum: { grandTotal: true },
                 _count: true,
             }),
-            prisma.product.count({ where: { companyId, deletedAt: null, status: 'ACTIVE' } }),
-            prisma.customer.count({ where: { companyId, deletedAt: null } }),
+            countActiveProductsRaw(companyId),
+            countActiveCustomersRaw(companyId),
             prisma.inventoryStock.count({ where: { ...baseWhere, qtyOnHand: { lte: 10, gt: 0 } } }),
             prisma.pOSInvoice.findMany({
                 where: { ...baseWhere },
@@ -1851,13 +2007,11 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
                 },
             }),
             // Purchases raw for trend + top suppliers
-            prisma.purchaseInvoice.findMany({
-                where: { ...baseWhere, createdAt: dateFilter },
-                select: {
-                    createdAt: true, grandTotal: true,
-                    supplier: { select: { name: true } },
-                    supplierId: true,
-                },
+            fetchDashboardPurchasesRaw({
+                companyId,
+                branchFilter: baseWhere.branchId,
+                from: filterStart,
+                to: filterEnd,
             }),
             // Inventory Valuation
             prisma.inventoryStock.findMany({
@@ -2096,8 +2250,8 @@ reportRoutes.get('/dashboard', async (req, res, next) => {
                 _sum: { grandTotal: true },
                 _count: true,
             }),
-            prisma.product.count({ where: { companyId, deletedAt: null, status: 'ACTIVE' } }),
-            prisma.customer.count({ where: { companyId, deletedAt: null } }),
+            countActiveProductsRaw(companyId),
+            countActiveCustomersRaw(companyId),
             prisma.inventoryStock.count({ where: { ...baseWhere, qtyOnHand: { lte: 10, gt: 0 } } }),
             prisma.pOSInvoice.findMany({
                 where: { ...baseWhere },

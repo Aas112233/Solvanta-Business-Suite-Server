@@ -22,12 +22,12 @@ export default function PurchasePaymentForm() {
     const [referenceNo, setReferenceNo] = useState('');
     const [notes, setNotes] = useState('');
 
-    const { data: purchases } = useQuery({
+    const { data: purchases, refetch: refetchPurchases, isFetching: isFetchingPurchases } = useQuery({
         queryKey: ['purchases', 'for-payment'],
         queryFn: () => api.get('/purchases', { params: { page: 1, limit: 200 } }).then((r) => r.data.data),
     });
 
-    const { data: globalPaymentMethods } = useQuery<any[]>({
+    const { data: globalPaymentMethods, refetch: refetchPaymentMethods, isFetching: isFetchingPaymentMethods } = useQuery<any[]>({
         queryKey: ['global-strings', GLOBAL_STRING_GROUPS.purchasePaymentMethods],
         queryFn: async () => {
             const res = await api.get(`/global-strings?group=${GLOBAL_STRING_GROUPS.purchasePaymentMethods}`);
@@ -112,19 +112,25 @@ export default function PurchasePaymentForm() {
                         />
                                                 <AppDropdown
                             value={purchaseId}
-    onChange={(v) => setPurchaseId(v)}
+                            onChange={(v) => setPurchaseId(v)}
                             options={[{ value: '', label: 'Select Purchase' }, ...filteredPurchases.map((p: any) => ({ value: p.id, label: `${p.purchaseNo} - ${p.supplier?.name}` }))]}
                             placeholder='Select Purchase'
                             searchable
+                            onRefresh={() => refetchPurchases()}
+                            refreshing={isFetchingPurchases}
+                            refreshLabel="Refresh purchases"
                         />
                     </div>
                     <div>
                         <label className="text-sm font-medium text-gray-700">Payment Method</label>
                         <AppDropdown
                             value={paymentMethod}
-    onChange={(v) => setPaymentMethod(v)}
+                            onChange={(v) => setPaymentMethod(v)}
                             options={paymentMethodOptions}
                             placeholder='Select Method'
+                            onRefresh={() => refetchPaymentMethods()}
+                            refreshing={isFetchingPaymentMethods}
+                            refreshLabel="Refresh methods"
                         />
                     </div>
                     <div>

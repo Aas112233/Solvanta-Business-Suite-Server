@@ -16,7 +16,78 @@ export const basePrisma =
                 { emit: 'stdout', level: 'warn' },
             ]
             : [{ emit: 'stdout', level: 'error' }],
+        transactionOptions: {
+            maxWait: 5000,   // Max time to acquire a connection (5s)
+            timeout: 30000,  // Max transaction execution time (30s)
+        },
     });
+
+// ────────────── Audit Log Batcher ──────────────
+// Batches fire-and-forget audit writes to reduce DB connection pressure.
+const AUDIT_FLUSH_INTERVAL_MS = 500;
+const AUDIT_MAX_BATCH_SIZE = 50;
+let auditBuffer: Array<{
+    companyId: string;
+    userId: string;
+    branchId?: string;
+    action: string;
+    entity: string;
+    entityId?: string;
+    after?: any;
+    before?: any;
+}> = [];
+let auditFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushAuditBuffer() {
+    if (auditBuffer.length === 0) return;
+    const batch = auditBuffer.splice(0);
+    auditFlushTimer = null;
+
+    basePrisma.auditLog.createMany({ data: batch as any[] })
+        .catch(err => logger.error(`Audit batch write failed (${batch.length} entries):`, err));
+}
+
+function enqueueAuditLog(entry: typeof auditBuffer[0]) {
+    auditBuffer.push(entry);
+    if (auditBuffer.length >= AUDIT_MAX_BATCH_SIZE) {
+        if (auditFlushTimer) { clearTimeout(auditFlushTimer); auditFlushTimer = null; }
+        flushAuditBuffer();
+    } else if (!auditFlushTimer) {
+        auditFlushTimer = setTimeout(flushAuditBuffer, AUDIT_FLUSH_INTERVAL_MS);
+    }
+}
+
+function attachAuditMetadata(payload: unknown, metadata?: {
+    sessionId: string;
+    actorUserId: string;
+    actorEmail: string;
+    actorName: string;
+    reason: string;
+    startedAt: string;
+}) {
+    if (!metadata) return payload;
+
+    const supportSession = {
+        sessionId: metadata.sessionId,
+        actorUserId: metadata.actorUserId,
+        actorEmail: metadata.actorEmail,
+        actorName: metadata.actorName,
+        reason: metadata.reason,
+        startedAt: metadata.startedAt,
+    };
+
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return {
+            value: payload ?? null,
+            __supportSession: supportSession,
+        };
+    }
+
+    return {
+        ...(payload as Record<string, unknown>),
+        __supportSession: supportSession,
+    };
+}
 
 /**
  * Industry-Grade Multi-Tenant Extension
@@ -28,17 +99,42 @@ export const prisma = basePrisma.$extends({
             async $allOperations({ model, operation, args, query }) {
                 const companyId = tenantStorage.getStore()?.companyId;
                 const companyScopedModels = new Set([
-                    'Branch', 'Role', 'User', 'Customer', 'Supplier', 'Category', 'ItemGroup', 'Brand',
-                    'UnitMaster', 'Product', 'PriceGroup', 'InventoryStock', 'StockMovement', 'POSInvoice', 'SalesReturn',
-                    'PurchaseInvoice', 'PurchaseReturn', 'PurchasePayment', 'Transfer', 'StockCount',
-                    'SalesOrder', 'SalesOrderItem',
-                    'Account', 'JournalEntry', 'Expense', 'PeriodClose', 'AuditLog', 'GlobalString',
-                    'DocumentCounter', 'Bom', 'ProductionOrder', 'ProductionMaterialConsumption', 'ProductionCompletion'
+                    // Core
+                    'Branch', 'Role', 'User', 'Customer', 'Supplier',
+                    // Product Catalog
+                    'Category', 'ItemGroup', 'Brand', 'UnitMaster', 'Product', 'Tax', 'PriceGroup',
+                    // Inventory
+                    'InventoryStock', 'StockMovement', 'StockCount',
+                    // POS
+                    'POSInvoice', 'POSTerminal', 'POSShift',
+                    // Sales
+                    'SalesReturn', 'SalesQuotation', 'SalesOrder',
+                    // Purchase
+                    'PurchaseInvoice', 'PurchaseReturn', 'PurchasePayment', 'PurchaseOrder',
+                    // Inventory Transfers
+                    'Transfer',
+                    // Cash Collection
+                    'CashCollectionRun', 'CashCollectionBag', 'CashBankDeposit', 'CashCollectionEvent',
+                    // Accounting
+                    'Account', 'AccountMapping', 'JournalEntry', 'Expense', 'PeriodClose',
+                    // Loyalty
+                    'LoyaltyCustomer', 'LoyaltyPointHistory',
+                    // HR
+                    'Department', 'Position', 'Employee',
+                    // Banking
+                    'BankAccount', 'BankTransaction', 'BankReconciliation', 'BankStatementImport',
+                    // Services & Expenses
+                    'ExpensePurchase', 'ServiceMaster',
+                    // Payroll
+                    'PayrollPayment',
+                    // Production
+                    'Bom', 'ProductionOrder', 'ProductionMaterialConsumption', 'ProductionCompletion',
+                    // System
+                    'AuditLog', 'GlobalString', 'DocumentCounter',
                 ]);
                 const isCompanyScoped = companyScopedModels.has(model);
 
                 // If no companyId in context (e.g., public routes or startup), proceed normally
-                // Models like Company or internal system tables can be exempted here if needed.
                 if (!companyId || model === 'Company') {
                     return query(args);
                 }
@@ -46,21 +142,30 @@ export const prisma = basePrisma.$extends({
                 // Models that support Soft Delete
                 const softDeleteModels = ['Product', 'Customer', 'Supplier'];
 
+                // ── Fast path: findUnique on company-scoped models ──
+                // Instead of degrading to findFirst (which loses _id index),
+                // we let findUnique execute using MongoDB's fast _id lookup,
+                // then validate tenant ownership post-fetch.
+                if (operation === 'findUnique' && isCompanyScoped) {
+                    const result = await query(args);
+                    if (result) {
+                        const r = result as any;
+                        // Tenant isolation check
+                        if (r.companyId && r.companyId !== companyId) return null;
+                        // Soft delete check
+                        if (softDeleteModels.includes(model) && r.deletedAt) return null;
+                    }
+                    return result;
+                }
+
                 // 1. Automatic Filtering for Read/Update/Delete operations
                 if ([
-                    'findFirst', 'findMany', 'findUnique', 'count', 'aggregate', 'groupBy',
+                    'findFirst', 'findMany', 'count', 'aggregate', 'groupBy',
                     'update', 'updateMany', 'upsert', 'delete', 'deleteMany'
                 ].includes(operation)) {
                     const typedArgs = (args as any);
                     if (isCompanyScoped) {
                         typedArgs.where = { ...typedArgs.where, companyId };
-                    }
-
-                    // Prisma findUnique requires exactly one unique field. 
-                    // Adding companyId makes it a non-unique query from Prisma's perspective.
-                    // We change it to findFirst to maintain the filter while satisfying Prisma.
-                    if (operation === 'findUnique' && isCompanyScoped) {
-                        (operation as any) = 'findFirst';
                     }
 
                     // 1b. Automatic Soft Delete filtering
@@ -85,24 +190,19 @@ export const prisma = basePrisma.$extends({
                 // 3. Execute query
                 const result = await query(args);
 
-                // 4. Industry-Grade Automatic Auditing
-                // Triggered for change operations, excluding the AuditLog table itself
+                // 4. Batched Automatic Auditing
                 const changeOperations = ['create', 'update', 'delete', 'updateMany', 'deleteMany', 'upsert'];
                 if (changeOperations.includes(operation) && model !== 'AuditLog') {
                     const tenant = tenantStorage.getStore();
-
-                    // Simple automated audit log (fire-and-forget for performance)
-                    basePrisma.auditLog.create({
-                        data: {
-                            companyId,
-                            userId: tenant?.userId || 'SYSTEM',
-                            branchId: tenant?.activeBranchId,
-                            action: operation.toUpperCase(),
-                            entity: model,
-                            entityId: (result as any)?.id || undefined,
-                            after: result as any, // Captures final state
-                        }
-                    }).catch(err => logger.error(`Auto-Audit failed for ${model}:`, err));
+                    enqueueAuditLog({
+                        companyId,
+                        userId: tenant?.userId || 'SYSTEM',
+                        branchId: tenant?.activeBranchId,
+                        action: operation.toUpperCase(),
+                        entity: model,
+                        entityId: (result as any)?.id || undefined,
+                        after: attachAuditMetadata(result as any, tenant?.impersonation),
+                    });
                 }
 
                 return result;

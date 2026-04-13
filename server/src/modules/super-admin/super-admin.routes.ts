@@ -3,28 +3,44 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import { authenticate } from '../../middleware/auth.js';
-import { requireSuperAdmin } from '../../middleware/superAdmin.js';
+import { requireSuperAdmin, requireSuperAdminPermission, resolveSuperAdminAccess } from '../../middleware/superAdmin.js';
 import { basePrisma } from '../../lib/prisma.js';
 import { sendSuccess } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
 import { DEFAULT_SYSTEM_ROLES } from '../../config/permissions.js';
+import { AuthService } from '../auth/auth.service.js';
+import { SUPER_ADMIN_PERMISSIONS } from './super-admin.permissions.js';
 import {
     type FeatureFlags,
     type SuperAdminSettings,
     type TenantBilling,
+    type TenantLimitEnforcementMeta,
     type TenantLimits,
     type TenantMaintenance,
     type TenantPlan,
+    type TenantStatusMeta,
     type TenantStatus,
     DEFAULT_FEATURE_FLAGS,
     getSuperAdminSettings,
     resolveFeatureFlags,
     resolveTenantBilling,
+    resolveTenantLimitEnforcementMeta,
     resolveTenantLimits,
     resolveTenantMaintenance,
+    resolveTenantStatusMeta,
     sanitizeTenantPlan,
     sanitizeTenantStatus,
 } from './super-admin.settings.js';
+import {
+    type TenantHealthStatus,
+    TENANT_LIMIT_GRACE_DAYS,
+    buildTenantHealthSummary,
+    buildTenantLimitSnapshot,
+    buildTenantModuleUsage,
+    getTenantUsageCounts,
+    mergeCompanySuperAdminSettings,
+    syncTenantLimitEnforcement,
+} from './tenant-intelligence.js';
 
 export const superAdminRoutes = Router();
 
@@ -32,7 +48,15 @@ superAdminRoutes.use(authenticate, requireSuperAdmin);
 
 const statusSchema = z.object({
     status: z.enum(['Active', 'Suspended']),
-    reason: z.string().max(200).optional(),
+    reason: z.string().trim().max(200).optional(),
+}).superRefine((value, ctx) => {
+    if (value.status === 'Suspended' && !value.reason?.trim()) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['reason'],
+            message: 'Suspension reason is required',
+        });
+    }
 });
 
 const featureSchema = z.object({
@@ -91,14 +115,42 @@ const limitsSchema = z.object({
     maxProducts: z.number().int().min(1).max(10_000_000).nullable().optional(),
 });
 
+const bulkStatusSchema = z.object({
+    tenantIds: z.array(z.string().min(1)).min(1).max(200),
+    status: z.enum(['Active', 'Suspended']),
+    reason: z.string().trim().max(200).optional(),
+}).superRefine((value, ctx) => {
+    if (value.status === 'Suspended' && !value.reason?.trim()) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['reason'],
+            message: 'Suspension reason is required',
+        });
+    }
+});
+
+const bulkFeatureSchema = z.object({
+    tenantIds: z.array(z.string().min(1)).min(1).max(200),
+    featureFlags: featureSchema.shape.featureFlags,
+});
+
 const maintenanceSchema = z.object({
     enabled: z.boolean(),
     message: z.string().max(300).optional(),
 });
 
+const userPasswordSchema = z.object({
+    password: z.string().min(6).max(100),
+});
+
 const userStatusSchema = z.object({
     isActive: z.boolean(),
     reason: z.string().max(200).optional(),
+});
+
+const impersonationSchema = z.object({
+    reason: z.string().trim().min(6).max(300),
+    ticket: z.string().trim().max(60).optional(),
 });
 
 const createTenantSchema = z.object({
@@ -162,29 +214,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function normalizeCompanySettings(settings: unknown): Record<string, unknown> {
-    if (!isRecord(settings)) return {};
-    return settings;
-}
-
-function mergeCompanySuperAdminSettings(companySettings: unknown, patch: Partial<SuperAdminSettings>) {
-    const baseSettings = normalizeCompanySettings(companySettings);
-    const currentSuperAdmin = getSuperAdminSettings(baseSettings);
-
-    return {
-        ...baseSettings,
-        superAdmin: {
-            ...currentSuperAdmin,
-            ...patch,
-        },
-    };
-}
-
 function toIsoDateOrEmpty(raw: string | undefined) {
     if (!raw || !raw.trim()) return '';
     const parsed = new Date(raw);
     if (Number.isNaN(parsed.getTime())) return '';
     return parsed.toISOString();
+}
+
+function extractSupportSessionMeta(payload: unknown) {
+    if (!isRecord(payload)) return null;
+
+    const directSessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
+    if (directSessionId) {
+        return {
+            sessionId: directSessionId,
+            actorEmail: typeof payload.actorEmail === 'string' ? payload.actorEmail : '',
+            actorName: typeof payload.actorName === 'string' ? payload.actorName : '',
+            startedAt: typeof payload.startedAt === 'string' ? payload.startedAt : '',
+        };
+    }
+
+    const nested = isRecord(payload.__supportSession) ? payload.__supportSession : null;
+    if (!nested) return null;
+
+    return {
+        sessionId: typeof nested.sessionId === 'string' ? nested.sessionId.trim() : '',
+        actorEmail: typeof nested.actorEmail === 'string' ? nested.actorEmail : '',
+        actorName: typeof nested.actorName === 'string' ? nested.actorName : '',
+        startedAt: typeof nested.startedAt === 'string' ? nested.startedAt : '',
+    };
 }
 
 type AnnouncementLevel = 'info' | 'warning' | 'critical';
@@ -285,6 +343,11 @@ function buildTenantCompanySettings(payload: z.infer<typeof createTenantSchema>)
         superAdmin: {
             status: 'Active',
             statusReason: '',
+            statusMeta: {
+                changedAt: '',
+                changedBy: '',
+                suspendedUserIds: [],
+            },
             featureFlags: payload.featureFlags || DEFAULT_FEATURE_FLAGS,
             planOverride: payload.plan,
             billing: {
@@ -305,7 +368,18 @@ function buildTenantCompanySettings(payload: z.infer<typeof createTenantSchema>)
     };
 }
 
-async function writeAudit(companyId: any, userId: any, action: any, entity: any, entityId?: any, after?: any) {
+async function writeAudit(
+    companyId: any,
+    userId: any,
+    action: any,
+    entity: any,
+    entityId?: any,
+    after?: any,
+    options?: {
+        before?: any;
+        request?: Request;
+    },
+) {
     await basePrisma.auditLog.create({
         data: {
             companyId,
@@ -313,7 +387,10 @@ async function writeAudit(companyId: any, userId: any, action: any, entity: any,
             action,
             entity,
             entityId,
+            before: (options?.before || undefined) as any,
             after: (after || undefined) as any,
+            ipAddress: options?.request?.ip || options?.request?.socket?.remoteAddress || null,
+            userAgent: options?.request?.get('user-agent') || null,
         },
     });
 }
@@ -329,7 +406,8 @@ async function getTenantCompanyOrThrow(companyId: string) {
 }
 
 async function buildTenantSnapshots() {
-    const [companies, users, branches, products] = await Promise.all([
+    const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const [companies, users, branches, products, auditEvents] = await Promise.all([
         basePrisma.company.findMany({
             select: {
                 id: true,
@@ -355,6 +433,16 @@ async function buildTenantSnapshots() {
         basePrisma.product.findMany({
             where: { deletedAt: { isSet: false } },
             select: { companyId: true },
+        }),
+        basePrisma.auditLog.findMany({
+            where: { createdAt: { gte: since30d } },
+            select: {
+                companyId: true,
+                userId: true,
+                entity: true,
+                createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
         }),
     ]);
 
@@ -382,6 +470,17 @@ async function buildTenantSnapshots() {
         productCounts.set(product.companyId, (productCounts.get(product.companyId) || 0) + 1);
     }
 
+    const auditEventsByCompany = new Map<string, Array<{ userId: string; entity: string; createdAt: Date }>>();
+    for (const event of auditEvents) {
+        const current = auditEventsByCompany.get(event.companyId) ?? [];
+        current.push({
+            userId: event.userId,
+            entity: event.entity,
+            createdAt: event.createdAt,
+        });
+        auditEventsByCompany.set(event.companyId, current);
+    }
+
     return companies.map((company) => {
         const usage = usersByCompany.get(company.id) ?? { total: 0, active: 0, lastActivityAt: null };
         const systemSettings = getSuperAdminSettings(company.settings);
@@ -391,9 +490,34 @@ async function buildTenantSnapshots() {
         const billing = resolveTenantBilling(systemSettings.billing);
         const limits = resolveTenantLimits(systemSettings.limits);
         const maintenance = resolveTenantMaintenance(systemSettings.maintenance);
+        const statusMeta = resolveTenantStatusMeta(systemSettings.statusMeta);
+        const limitEnforcement = resolveTenantLimitEnforcementMeta(systemSettings.limitEnforcement);
 
         const totalBranches = branchCounts.get(company.id) || 0;
         const totalProducts = productCounts.get(company.id) || 0;
+        const limitSnapshot = buildTenantLimitSnapshot(
+            { users: usage.total, branches: totalBranches, products: totalProducts },
+            limits,
+            limitEnforcement,
+        );
+        const { usage: moduleUsage, summary: moduleUsageSummary } = buildTenantModuleUsage(
+            resolveFeatureFlags(systemSettings.featureFlags),
+            usage.active,
+            auditEventsByCompany.get(company.id) ?? [],
+        );
+        const health = buildTenantHealthSummary({
+            status,
+            activeUsers: usage.active,
+            totalUsers: usage.total,
+            failedPayments: billing.failedPayments,
+            lastActivityAt: usage.lastActivityAt ?? company.updatedAt,
+            limitSnapshot,
+            moduleSummary: moduleUsageSummary,
+        });
+        const trialEndsAt = new Date(company.createdAt);
+        trialEndsAt.setUTCDate(trialEndsAt.getUTCDate() + 14);
+        const daysToTrialEnd = Math.ceil((trialEndsAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        const paymentStatus = billing.failedPayments >= 3 ? 'Overdue' : billing.failedPayments > 0 ? 'At Risk' : 'Current';
 
         return {
             id: company.id,
@@ -402,16 +526,42 @@ async function buildTenantSnapshots() {
             plan,
             status,
             statusReason: systemSettings.statusReason || '',
+            statusChangedAt: statusMeta.changedAt,
+            statusChangedBy: statusMeta.changedBy,
+            suspendedUserCount: statusMeta.suspendedUserIds.length,
             featureFlags: resolveFeatureFlags(systemSettings.featureFlags),
             monthlyRevenue: billing.monthlyRevenue,
             failedPayments: billing.failedPayments,
             nextBillingDate: billing.nextBillingDate,
+            paymentStatus,
             limits,
+            limitState: limitSnapshot.status,
+            limitWarnings: limitSnapshot.warnings.map((metric) => ({
+                key: metric.key,
+                label: metric.label,
+                percentUsed: metric.percentUsed,
+                count: metric.count,
+                limit: metric.limit,
+                warningLevel: metric.warningLevel,
+                isBreached: metric.isBreached,
+            })),
+            breachStartedAt: limitSnapshot.breachStartedAt,
+            graceEndsAt: limitSnapshot.graceEndsAt,
+            daysUntilAutoSuspend: limitSnapshot.daysUntilAutoSuspend,
+            autoSuspendedAt: limitSnapshot.autoSuspendedAt,
             maintenance,
             totalUsers: usage.total,
             activeUsers: usage.active,
             totalBranches,
             totalProducts,
+            moduleUsageSummary,
+            moduleUsage,
+            healthScore: health.score,
+            healthStatus: health.status,
+            healthTrend: health.trend,
+            healthDrivers: health.drivers,
+            trialEndsAt: status === 'Trial' ? trialEndsAt.toISOString() : '',
+            daysToTrialEnd: status === 'Trial' ? daysToTrialEnd : null,
             lastActivityAt: usage.lastActivityAt ?? company.updatedAt,
             createdAt: company.createdAt,
             updatedAt: company.updatedAt,
@@ -420,19 +570,12 @@ async function buildTenantSnapshots() {
 }
 
 function hasLimitBreach(tenant: {
-    limits: TenantLimits;
-    totalUsers: number;
-    totalBranches: number;
-    totalProducts: number;
+    limitState: 'ok' | 'warning' | 'breached';
 }) {
-    const overUsers = tenant.limits.maxUsers !== null && tenant.totalUsers > tenant.limits.maxUsers;
-    const overBranches = tenant.limits.maxBranches !== null && tenant.totalBranches > tenant.limits.maxBranches;
-    const overProducts = tenant.limits.maxProducts !== null && tenant.totalProducts > tenant.limits.maxProducts;
-
-    return overUsers || overBranches || overProducts;
+    return tenant.limitState === 'breached';
 }
 
-superAdminRoutes.get('/overview', async (_req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/overview', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.DASHBOARD_READ), async (_req: Request, res: Response, next: NextFunction) => {
     try {
         const [tenants, auditLast24h] = await Promise.all([
             buildTenantSnapshots(),
@@ -450,6 +593,45 @@ superAdminRoutes.get('/overview', async (_req: Request, res: Response, next: Nex
         const totalUsers = tenants.reduce((sum, tenant) => sum + tenant.totalUsers, 0);
         const mrr = tenants.reduce((sum, tenant) => sum + tenant.monthlyRevenue, 0);
         const failedPayments = tenants.reduce((sum, tenant) => sum + tenant.failedPayments, 0);
+        const averageHealthScore = tenants.length > 0
+            ? Math.round(tenants.reduce((sum, tenant) => sum + tenant.healthScore, 0) / tenants.length)
+            : 0;
+        const healthDistribution = [
+            { name: 'Healthy', value: tenants.filter((tenant) => tenant.healthStatus === 'Healthy').length },
+            { name: 'Warning', value: tenants.filter((tenant) => tenant.healthStatus === 'Warning').length },
+            { name: 'Critical', value: tenants.filter((tenant) => tenant.healthStatus === 'Critical').length },
+        ];
+        const planDistribution = [
+            { name: 'Starter', value: tenants.filter((tenant) => tenant.plan === 'Starter').length },
+            { name: 'Growth', value: tenants.filter((tenant) => tenant.plan === 'Growth').length },
+            { name: 'SOLVANTA', value: tenants.filter((tenant) => tenant.plan === 'SOLVANTA').length },
+        ];
+        const tenantGrowthMap = new Map<string, number>();
+        for (const tenant of tenants) {
+            const key = tenant.createdAt.toISOString().slice(0, 7);
+            tenantGrowthMap.set(key, (tenantGrowthMap.get(key) || 0) + 1);
+        }
+        const tenantGrowth = Array.from(tenantGrowthMap.entries())
+            .sort(([left], [right]) => left.localeCompare(right))
+            .slice(-6)
+            .map(([month, value]) => ({ month, tenants: value }));
+        const moduleAdoption = ['crm', 'inventory', 'purchases', 'accounting', 'pos', 'reports', 'bom', 'production'].map((key) => ({
+            module: key.toUpperCase(),
+            adopted: tenants.filter((tenant) => tenant.moduleUsage?.[key as keyof FeatureFlags]?.status === 'adopted').length,
+            unused: tenants.filter((tenant) => tenant.moduleUsage?.[key as keyof FeatureFlags]?.status === 'unused').length,
+        }));
+        const attentionTenants = tenants
+            .filter((tenant) => tenant.healthStatus !== 'Healthy' || tenant.limitState === 'breached' || tenant.failedPayments > 0)
+            .sort((left, right) => left.healthScore - right.healthScore)
+            .slice(0, 5)
+            .map((tenant) => ({
+                id: tenant.id,
+                name: tenant.name,
+                healthScore: tenant.healthScore,
+                healthStatus: tenant.healthStatus,
+                limitState: tenant.limitState,
+                failedPayments: tenant.failedPayments,
+            }));
 
         const health = [
             { id: 'api', label: 'API Gateway', value: 'Operational', status: 'Healthy' as const },
@@ -472,6 +654,12 @@ superAdminRoutes.get('/overview', async (_req: Request, res: Response, next: Nex
                 value: `${breachedLimitTenants} tenants are above configured limits`,
                 status: breachedLimitTenants === 0 ? ('Healthy' as const) : ('Warning' as const),
             },
+            {
+                id: 'tenant-health',
+                label: 'Tenant Health',
+                value: `Average score ${averageHealthScore}/100`,
+                status: averageHealthScore >= 80 ? ('Healthy' as const) : averageHealthScore >= 60 ? ('Warning' as const) : ('Critical' as const),
+            },
         ];
 
         sendSuccess(res, {
@@ -485,32 +673,75 @@ superAdminRoutes.get('/overview', async (_req: Request, res: Response, next: Nex
                 failedPayments,
                 maintenanceTenants,
                 breachedLimitTenants,
+                averageHealthScore,
             },
             health,
+            charts: {
+                tenantGrowth,
+                healthDistribution,
+                planDistribution,
+                moduleAdoption,
+            },
+            attentionTenants,
         });
     } catch (error) {
         next(error);
     }
 });
 
-superAdminRoutes.get('/tenants', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/tenants', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_READ), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const statusFilter = String(req.query.status || 'All');
         const planFilter = String(req.query.plan || 'All');
         const maintenanceFilter = String(req.query.maintenance || 'All');
+        const paymentFilter = String(req.query.paymentStatus || 'All');
+        const limitFilter = String(req.query.limitState || 'All');
+        const healthStatusFilter = String(req.query.healthStatus || 'All');
+        const healthMin = Number(req.query.healthMin);
+        const healthMax = Number(req.query.healthMax);
+        const trialEndingWithinDays = Number(req.query.trialEndingWithinDays);
+        const moduleFilter = String(req.query.module || 'All').trim().toLowerCase();
         const search = String(req.query.search || '').trim().toLowerCase();
 
         const tenants = await buildTenantSnapshots();
         const filtered = tenants
             .filter((tenant) => (statusFilter === 'All' ? true : tenant.status === statusFilter))
             .filter((tenant) => (planFilter === 'All' ? true : tenant.plan === planFilter))
+            .filter((tenant) => (paymentFilter === 'All' ? true : tenant.paymentStatus === paymentFilter))
+            .filter((tenant) => (limitFilter === 'All' ? true : tenant.limitState === limitFilter))
+            .filter((tenant) => (healthStatusFilter === 'All' ? true : tenant.healthStatus === healthStatusFilter))
+            .filter((tenant) => (Number.isFinite(healthMin) ? tenant.healthScore >= healthMin : true))
+            .filter((tenant) => (Number.isFinite(healthMax) ? tenant.healthScore <= healthMax : true))
+            .filter((tenant) => (
+                Number.isFinite(trialEndingWithinDays) && trialEndingWithinDays >= 0
+                    ? tenant.daysToTrialEnd !== null && tenant.daysToTrialEnd <= trialEndingWithinDays
+                    : true
+            ))
+            .filter((tenant) => (
+                moduleFilter && moduleFilter !== 'all'
+                    ? tenant.moduleUsage?.[moduleFilter as keyof FeatureFlags]?.status === 'adopted'
+                    : true
+            ))
             .filter((tenant) => {
                 if (maintenanceFilter === 'All') return true;
                 if (maintenanceFilter === 'On') return tenant.maintenance.enabled;
                 if (maintenanceFilter === 'Off') return !tenant.maintenance.enabled;
                 return true;
             })
-            .filter((tenant) => (search ? tenant.name.toLowerCase().includes(search) : true));
+            .filter((tenant) => {
+                if (!search) return true;
+                const haystack = [
+                    tenant.name,
+                    tenant.id,
+                    tenant.plan,
+                    tenant.status,
+                    tenant.statusReason,
+                    tenant.paymentStatus,
+                    tenant.healthStatus,
+                    ...tenant.healthDrivers,
+                ].join(' ').toLowerCase();
+                return haystack.includes(search);
+            });
 
         sendSuccess(res, filtered);
     } catch (error) {
@@ -518,7 +749,7 @@ superAdminRoutes.get('/tenants', async (req: Request, res: Response, next: NextF
     }
 });
 
-superAdminRoutes.post('/tenants', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.post('/tenants', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = createTenantSchema.parse(req.body);
         const adminEmail = parsed.adminUser.email.trim().toLowerCase();
@@ -631,14 +862,14 @@ superAdminRoutes.post('/tenants', async (req: Request, res: Response, next: Next
     }
 });
 
-superAdminRoutes.get('/tenants/:id/control-center', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/tenants/:id/control-center', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_READ), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = String(req.params.id);
         const [tenantList, users] = await Promise.all([
             buildTenantSnapshots(),
             basePrisma.user.findMany({
                 where: { companyId },
-                include: { role: { select: { name: true } } },
+                include: { role: { select: { name: true, permissions: true } } },
                 orderBy: { createdAt: 'desc' },
                 take: 200,
             }),
@@ -654,22 +885,30 @@ superAdminRoutes.get('/tenants/:id/control-center', async (req: Request, res: Re
                 branches: tenant.totalBranches,
                 products: tenant.totalProducts,
             },
-            users: users.map((user: any) => ({
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                role: user.role?.name || 'Unassigned',
-                isActive: user.isActive,
-                lastLoginAt: user.lastLoginAt,
-                createdAt: user.createdAt,
-            })),
+            users: users.map((user: any) => {
+                const superAdminAccess = resolveSuperAdminAccess({
+                    email: user.email,
+                    rolePermissions: user.role?.permissions || [],
+                });
+
+                return {
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role?.name || 'Unassigned',
+                    isActive: user.isActive,
+                    lastLoginAt: user.lastLoginAt,
+                    createdAt: user.createdAt,
+                    canImpersonate: !superAdminAccess.isSuperAdmin,
+                };
+            }),
         });
     } catch (error) {
         next(error);
     }
 });
 
-superAdminRoutes.get('/tenants/:id/users', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/tenants/:id/users', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.USERS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = String(req.params.id);
         const company = await getTenantCompanyOrThrow(companyId);
@@ -682,7 +921,7 @@ superAdminRoutes.get('/tenants/:id/users', async (req: Request, res: Response, n
                 companyId,
                 ...(statusFilter === 'All' ? {} : { isActive: statusFilter === 'Active' }),
             },
-            include: { role: { select: { name: true } } },
+            include: { role: { select: { name: true, permissions: true } } },
             orderBy: { createdAt: 'desc' },
             take: 500,
         });
@@ -693,15 +932,23 @@ superAdminRoutes.get('/tenants/:id/users', async (req: Request, res: Response, n
                 return user.name.toLowerCase().includes(search) || user.email.toLowerCase().includes(search);
             })
             .slice(0, limit)
-            .map((user: any) => ({
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                role: user.role?.name || 'Unassigned',
-                isActive: user.isActive,
-                lastLoginAt: user.lastLoginAt,
-                createdAt: user.createdAt,
-            }));
+            .map((user: any) => {
+                const superAdminAccess = resolveSuperAdminAccess({
+                    email: user.email,
+                    rolePermissions: user.role?.permissions || [],
+                });
+
+                return {
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role?.name || 'Unassigned',
+                    isActive: user.isActive,
+                    lastLoginAt: user.lastLoginAt,
+                    createdAt: user.createdAt,
+                    canImpersonate: !superAdminAccess.isSuperAdmin,
+                };
+            });
 
         sendSuccess(res, {
             company: { id: company.id, name: company.name },
@@ -712,7 +959,76 @@ superAdminRoutes.get('/tenants/:id/users', async (req: Request, res: Response, n
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/users/:userId/status', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.post('/tenants/:id/users/:userId/impersonate', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.USERS_IMPERSONATE), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const parsed = impersonationSchema.parse(req.body);
+        const companyId = String(req.params.id);
+        const userId = String(req.params.userId);
+
+        const target = await basePrisma.user.findFirst({
+            where: { id: userId, companyId },
+            include: {
+                role: { select: { permissions: true, name: true } },
+            },
+        });
+
+        if (!target) throw AppError.notFound('User');
+        if (!target.isActive) throw AppError.badRequest('Only active users can be impersonated');
+
+        const targetSuperAdminAccess = resolveSuperAdminAccess({
+            email: target.email,
+            rolePermissions: target.role?.permissions || [],
+        });
+
+        if (targetSuperAdminAccess.isSuperAdmin) {
+            throw AppError.badRequest('Super admin accounts cannot be impersonated');
+        }
+
+        const session = await AuthService.createImpersonationSession({
+            actorUserId: req.user!.id,
+            targetUserId: target.id,
+            reason: parsed.ticket?.trim()
+                ? `${parsed.reason.trim()} (Ticket: ${parsed.ticket.trim()})`
+                : parsed.reason.trim(),
+        });
+
+        await writeAudit(
+            companyId,
+            req.user!.id,
+            'TENANT_USER_IMPERSONATION_STARTED',
+            'User',
+            target.id,
+            {
+                targetEmail: target.email,
+                targetName: target.name,
+                role: target.role?.name || 'Unassigned',
+                reason: parsed.reason.trim(),
+                ticket: parsed.ticket?.trim() || '',
+                sessionId: session.impersonation.sessionId,
+                startedAt: session.impersonation.startedAt,
+            },
+            {
+                request: req,
+            },
+        );
+
+        sendSuccess(res, {
+            accessToken: session.accessToken,
+            refreshToken: session.refreshToken,
+            impersonation: session.impersonation,
+            targetUser: {
+                id: target.id,
+                name: target.name,
+                email: target.email,
+                companyId: target.companyId,
+            },
+        }, undefined, 201);
+    } catch (error) {
+        next(error);
+    }
+});
+
+superAdminRoutes.patch('/tenants/:id/users/:userId/status', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.USERS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = userStatusSchema.parse(req.body);
         const companyId = String(req.params.id);
@@ -743,6 +1059,12 @@ superAdminRoutes.patch('/tenants/:id/users/:userId/status', async (req: Request,
                 userEmail: target.email,
                 reason: parsed.reason || '',
             },
+            {
+                before: {
+                    isActive: target.isActive,
+                },
+                request: req,
+            },
         );
 
         sendSuccess(res, {
@@ -755,7 +1077,46 @@ superAdminRoutes.patch('/tenants/:id/users/:userId/status', async (req: Request,
     }
 });
 
-superAdminRoutes.get('/tenants/:id/usage', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.patch('/tenants/:id/users/:userId/password', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.USERS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const parsed = userPasswordSchema.parse(req.body);
+        const companyId = String(req.params.id);
+        const userId = String(req.params.userId);
+
+        const target = await basePrisma.user.findFirst({
+            where: { id: userId, companyId },
+            select: { id: true, email: true },
+        });
+
+        if (!target) throw AppError.notFound('User');
+
+        const passwordHash = await bcrypt.hash(parsed.password, 12);
+
+        await basePrisma.user.update({
+            where: { id: target.id },
+            data: { passwordHash },
+        });
+
+        await writeAudit(
+            companyId as any,
+            req.user!.id,
+            'TENANT_USER_PASSWORD_UPDATED',
+            'User',
+            target.id,
+            { userEmail: target.email },
+            {
+                before: { passwordReset: false },
+                request: req,
+            },
+        );
+
+        sendSuccess(res, { message: 'Password updated successfully' });
+    } catch (error) {
+        next(error);
+    }
+});
+
+superAdminRoutes.get('/tenants/:id/usage', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_READ), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = String(req.params.id);
         const company = await basePrisma.company.findUnique({ where: { id: companyId }, select: { id: true, name: true } });
@@ -792,49 +1153,176 @@ superAdminRoutes.get('/tenants/:id/usage', async (req: Request, res: Response, n
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/status', async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const parsed = statusSchema.parse(req.body);
-        const companyId = String(req.params.id);
-        const company = await getTenantCompanyOrThrow(companyId);
+async function applyTenantStatusChange(
+    companyId: string,
+    parsed: z.infer<typeof statusSchema>,
+    actor: { id: string; email: string; companyId: string },
+    request?: Request,
+) {
+    const company = await getTenantCompanyOrThrow(companyId);
+    const settings = getSuperAdminSettings(company.settings);
+    const currentStatus = sanitizeTenantStatus(settings.status) ?? 'Active';
+    const currentStatusMeta = resolveTenantStatusMeta(settings.statusMeta);
+    const nowIso = new Date().toISOString();
 
-        const updated = await basePrisma.company.update({
-            where: { id: companyId as any },
-            data: {
-                settings: mergeCompanySuperAdminSettings(company.settings, {
-                    status: parsed.status,
-                    statusReason: parsed.reason || '',
-                }) as any,
+    let affectedUserIds: string[] = [];
+    let affectedUsers = 0;
+    let updatedStatusMeta: TenantStatusMeta = {
+        changedAt: nowIso,
+        changedBy: actor.email,
+        suspendedUserIds: [],
+    };
+
+    if (parsed.status === 'Suspended') {
+        const usersToSuspend = await basePrisma.user.findMany({
+            where: {
+                companyId: companyId as any,
+                isActive: true,
+                ...(String(actor.companyId) === companyId ? { id: { not: actor.id } } : {}),
             },
+            select: { id: true },
         });
 
-        if (parsed.status === 'Suspended') {
+        affectedUserIds = usersToSuspend.map((user) => user.id);
+        affectedUsers = affectedUserIds.length;
+
+        if (affectedUserIds.length > 0) {
             await basePrisma.user.updateMany({
-                where: { companyId: companyId as any, id: { not: req.user!.id } },
+                where: { id: { in: affectedUserIds as any } },
                 data: { isActive: false },
             });
         }
 
-        await writeAudit(companyId as any, req.user!.id, `TENANT_${parsed.status.toUpperCase()}`, 'Company', companyId as any, {
+        updatedStatusMeta = {
+            changedAt: nowIso,
+            changedBy: actor.email,
+            suspendedUserIds: affectedUserIds,
+        };
+    } else {
+        const userIdsToReactivate = currentStatus === 'Suspended'
+            ? currentStatusMeta.suspendedUserIds
+            : [];
+
+        affectedUserIds = userIdsToReactivate;
+        affectedUsers = userIdsToReactivate.length;
+
+        if (userIdsToReactivate.length > 0) {
+            await basePrisma.user.updateMany({
+                where: {
+                    id: { in: userIdsToReactivate as any },
+                    companyId: companyId as any,
+                },
+                data: { isActive: true },
+            });
+        }
+
+        updatedStatusMeta = {
+            changedAt: nowIso,
+            changedBy: actor.email,
+            suspendedUserIds: [],
+        };
+    }
+
+    const updated = await basePrisma.company.update({
+        where: { id: companyId as any },
+        data: {
+            settings: mergeCompanySuperAdminSettings(company.settings, {
+                status: parsed.status,
+                statusReason: parsed.status === 'Suspended' ? (parsed.reason || '') : '',
+                statusMeta: updatedStatusMeta,
+            }) as any,
+        },
+    });
+
+    await writeAudit(
+        companyId as any,
+        actor.id,
+        `TENANT_${parsed.status.toUpperCase()}`,
+        'Company',
+        companyId as any,
+        {
             status: parsed.status,
             reason: parsed.reason || '',
-        });
+            changedAt: nowIso,
+            changedBy: actor.email,
+            affectedUsers,
+        },
+        {
+            before: {
+                status: currentStatus,
+                reason: settings.statusReason || '',
+                suspendedUserCount: currentStatusMeta.suspendedUserIds.length,
+            },
+            request,
+        },
+    );
+
+    return {
+        id: updated.id,
+        status: parsed.status,
+        statusReason: parsed.status === 'Suspended' ? (parsed.reason || '') : '',
+        statusChangedAt: updatedStatusMeta.changedAt,
+        statusChangedBy: updatedStatusMeta.changedBy,
+        affectedUsers,
+    };
+}
+
+superAdminRoutes.patch('/tenants/:id/status', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const parsed = statusSchema.parse(req.body);
+        const result = await applyTenantStatusChange(
+            String(req.params.id),
+            parsed,
+            {
+                id: req.user!.id,
+                email: req.user!.email,
+                companyId: req.user!.companyId,
+            },
+            req,
+        );
+
+        sendSuccess(res, result);
+    } catch (error) {
+        next(error);
+    }
+});
+
+superAdminRoutes.patch('/tenants/bulk/status', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const parsed = bulkStatusSchema.parse(req.body);
+        const tenantIds = Array.from(new Set(parsed.tenantIds.map((id) => String(id).trim()).filter(Boolean)));
+        const results = [];
+
+        for (const companyId of tenantIds) {
+            const result = await applyTenantStatusChange(
+                companyId,
+                { status: parsed.status, reason: parsed.reason },
+                {
+                    id: req.user!.id,
+                    email: req.user!.email,
+                    companyId: req.user!.companyId,
+                },
+                req,
+            );
+            results.push(result);
+        }
 
         sendSuccess(res, {
-            id: updated.id,
+            updated: results.length,
             status: parsed.status,
-            statusReason: parsed.reason || '',
+            tenants: results,
         });
     } catch (error) {
         next(error);
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/features', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.patch('/tenants/:id/features', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = featureSchema.parse(req.body);
         const companyId = String(req.params.id);
         const company = await getTenantCompanyOrThrow(companyId);
+        const currentFeatureFlags = resolveFeatureFlags(getSuperAdminSettings(company.settings).featureFlags);
 
         const updated = await basePrisma.company.update({
             where: { id: companyId as any },
@@ -845,7 +1333,18 @@ superAdminRoutes.patch('/tenants/:id/features', async (req: Request, res: Respon
             },
         });
 
-        await writeAudit(companyId as string, req.user!.id, 'TENANT_FEATURE_FLAGS_UPDATED', 'Company', companyId as string, parsed.featureFlags);
+        await writeAudit(
+            companyId as string,
+            req.user!.id,
+            'TENANT_FEATURE_FLAGS_UPDATED',
+            'Company',
+            companyId as string,
+            parsed.featureFlags,
+            {
+                before: currentFeatureFlags,
+                request: req,
+            },
+        );
 
         sendSuccess(res, {
             id: updated.id,
@@ -856,7 +1355,51 @@ superAdminRoutes.patch('/tenants/:id/features', async (req: Request, res: Respon
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/plan', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.patch('/tenants/bulk/features', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const parsed = bulkFeatureSchema.parse(req.body);
+        const tenantIds = Array.from(new Set(parsed.tenantIds.map((id) => String(id).trim()).filter(Boolean)));
+        const updatedTenants: string[] = [];
+
+        for (const companyId of tenantIds) {
+            const company = await getTenantCompanyOrThrow(companyId);
+            const currentFeatureFlags = resolveFeatureFlags(getSuperAdminSettings(company.settings).featureFlags);
+
+            await basePrisma.company.update({
+                where: { id: companyId as any },
+                data: {
+                    settings: mergeCompanySuperAdminSettings(company.settings, {
+                        featureFlags: parsed.featureFlags,
+                    }) as any,
+                },
+            });
+
+            await writeAudit(
+                companyId,
+                req.user!.id,
+                'TENANT_FEATURE_FLAGS_BULK_UPDATED',
+                'Company',
+                companyId,
+                parsed.featureFlags,
+                {
+                    before: currentFeatureFlags,
+                    request: req,
+                },
+            );
+            updatedTenants.push(companyId);
+        }
+
+        sendSuccess(res, {
+            updated: updatedTenants.length,
+            tenantIds: updatedTenants,
+            featureFlags: parsed.featureFlags,
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+superAdminRoutes.patch('/tenants/:id/plan', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.BILLING_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = planSchema.parse(req.body);
         const companyId = String(req.params.id);
@@ -884,6 +1427,12 @@ superAdminRoutes.patch('/tenants/:id/plan', async (req: Request, res: Response, 
         await writeAudit(companyId as string, req.user!.id, 'TENANT_PLAN_UPDATED', 'Company', companyId as string, {
             plan: parsed.plan,
             billing: updatedBilling,
+        }, {
+            before: {
+                plan: sanitizeTenantPlan(settings.planOverride) ?? inferTenantPlan(0),
+                billing: currentBilling,
+            },
+            request: req,
         });
 
         sendSuccess(res, {
@@ -895,7 +1444,7 @@ superAdminRoutes.patch('/tenants/:id/plan', async (req: Request, res: Response, 
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/limits', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.patch('/tenants/:id/limits', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.LIMITS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = limitsSchema.parse(req.body);
         const companyId = String(req.params.id);
@@ -910,7 +1459,7 @@ superAdminRoutes.patch('/tenants/:id/limits', async (req: Request, res: Response
             ...(parsed.maxProducts !== undefined ? { maxProducts: parsed.maxProducts } : {}),
         };
 
-        await basePrisma.company.update({
+        const updatedCompany = await basePrisma.company.update({
             where: { id: companyId as any },
             data: {
                 settings: mergeCompanySuperAdminSettings(company.settings, {
@@ -919,14 +1468,33 @@ superAdminRoutes.patch('/tenants/:id/limits', async (req: Request, res: Response
             },
         });
 
-        await writeAudit(companyId as string, req.user!.id, 'TENANT_LIMITS_UPDATED', 'Company', companyId as string, updatedLimits);
-        sendSuccess(res, updatedLimits);
+        const synced = await syncTenantLimitEnforcement(companyId, {
+            actorUserId: req.user!.id,
+            actorEmail: req.user!.email,
+            companySettings: updatedCompany.settings,
+            request: req,
+        });
+
+        await writeAudit(companyId as string, req.user!.id, 'TENANT_LIMITS_UPDATED', 'Company', companyId as string, {
+            limits: updatedLimits,
+            limitState: synced.limitSnapshot.status,
+            breachedResources: synced.limitSnapshot.breached.map((metric) => metric.key),
+            graceEndsAt: synced.limitSnapshot.graceEndsAt || null,
+        }, {
+            before: currentLimits,
+            request: req,
+        });
+        sendSuccess(res, {
+            ...updatedLimits,
+            limitState: synced.limitSnapshot.status,
+            graceEndsAt: synced.limitSnapshot.graceEndsAt || null,
+        });
     } catch (error) {
         next(error);
     }
 });
 
-superAdminRoutes.patch('/tenants/:id/maintenance', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.patch('/tenants/:id/maintenance', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.MAINTENANCE_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = maintenanceSchema.parse(req.body);
         const companyId = String(req.params.id);
@@ -957,6 +1525,10 @@ superAdminRoutes.patch('/tenants/:id/maintenance', async (req: Request, res: Res
             'Company',
             companyId as string,
             updatedMaintenance,
+            {
+                before: currentMaintenance,
+                request: req,
+            },
         );
 
         sendSuccess(res, updatedMaintenance);
@@ -1058,7 +1630,7 @@ async function getAnnouncementRowsByKey(key: string): Promise<{ rows: Announceme
     throw AppError.notFound('Announcement');
 }
 
-superAdminRoutes.get('/announcements', async (_req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/announcements', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.ANNOUNCEMENTS_READ), async (_req: Request, res: Response, next: NextFunction) => {
     try {
         const rows = await loadAnnouncementRows();
         const summary = buildAnnouncementSummary(rows);
@@ -1068,7 +1640,7 @@ superAdminRoutes.get('/announcements', async (_req: Request, res: Response, next
     }
 });
 
-superAdminRoutes.post('/announcements/broadcast', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.post('/announcements/broadcast', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.ANNOUNCEMENTS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = broadcastSchema.parse(req.body);
         const companies = await basePrisma.company.findMany({ select: { id: true } });
@@ -1116,7 +1688,7 @@ superAdminRoutes.post('/announcements/broadcast', async (req: Request, res: Resp
     }
 });
 
-superAdminRoutes.post('/announcements/tenant/:id', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.post('/announcements/tenant/:id', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.ANNOUNCEMENTS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = broadcastSchema.parse(req.body);
         const companyId = String(req.params.id);
@@ -1170,7 +1742,7 @@ superAdminRoutes.post('/announcements/tenant/:id', async (req: Request, res: Res
     }
 });
 
-superAdminRoutes.patch('/announcements/:id', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.patch('/announcements/:id', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.ANNOUNCEMENTS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const parsed = announcementUpdateSchema.parse(req.body);
         if (
@@ -1238,7 +1810,7 @@ superAdminRoutes.patch('/announcements/:id', async (req: Request, res: Response,
     }
 });
 
-superAdminRoutes.delete('/announcements/:id', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.delete('/announcements/:id', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.ANNOUNCEMENTS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { rows, broadcastId } = await getAnnouncementRowsByKey(req.params.id as any);
         const rowIds = rows.map((row) => row.id);
@@ -1261,7 +1833,252 @@ superAdminRoutes.delete('/announcements/:id', async (req: Request, res: Response
     }
 });
 
-superAdminRoutes.get('/audit', async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/audit/support-sessions/:sessionId', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.AUDIT_READ), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const sessionId = String(req.params.sessionId || '').trim();
+        const format = String(req.query.format || '').trim().toLowerCase();
+        if (!sessionId) throw AppError.badRequest('Session ID is required');
+
+        const recentCandidates = await basePrisma.auditLog.findMany({
+            where: {
+                action: {
+                    in: ['TENANT_USER_IMPERSONATION_STARTED', 'TENANT_USER_IMPERSONATION_NOTE', 'TENANT_USER_IMPERSONATION_ENDED'],
+                },
+                createdAt: {
+                    gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
+                },
+            },
+            orderBy: { createdAt: 'asc' },
+            include: {
+                company: { select: { id: true, name: true } },
+                user: { select: { email: true, name: true } },
+            },
+            take: 2000,
+        });
+
+        const matchingStart = recentCandidates.find((row) => extractSupportSessionMeta(row.after)?.sessionId === sessionId);
+        if (!matchingStart) throw AppError.notFound('Support session');
+        const matchingSupportSession = extractSupportSessionMeta(matchingStart.after);
+        const matchingStartAfter = isRecord(matchingStart.after) ? matchingStart.after : {};
+
+        const transcriptRows = await basePrisma.auditLog.findMany({
+            where: {
+                companyId: matchingStart.companyId,
+                createdAt: {
+                    gte: new Date(extractSupportSessionMeta(matchingStart.after)?.startedAt || matchingStart.createdAt.toISOString()),
+                },
+            },
+            orderBy: { createdAt: 'asc' },
+            include: {
+                company: { select: { id: true, name: true } },
+                user: { select: { email: true, name: true } },
+            },
+            take: 1500,
+        });
+
+        const transcript = transcriptRows
+            .filter((row) => extractSupportSessionMeta(row.after)?.sessionId === sessionId)
+            .map((row) => {
+                const supportSession = extractSupportSessionMeta(row.after);
+                return ({
+                id: row.id,
+                action: row.action,
+                entity: row.entity,
+                entityId: row.entityId || '',
+                actor: supportSession?.actorEmail || row.user?.email || row.user?.name || 'unknown',
+                company: row.company?.name || 'unknown',
+                companyId: row.companyId,
+                createdAt: row.createdAt,
+                before: row.before,
+                after: row.after,
+                kind:
+                    row.action === 'TENANT_USER_IMPERSONATION_NOTE'
+                        ? 'note'
+                    : row.action === 'TENANT_USER_IMPERSONATION_STARTED' || row.action === 'TENANT_USER_IMPERSONATION_ENDED'
+                            ? 'session'
+                            : 'activity',
+            });
+            });
+
+        let endedAt: Date | null = null;
+        for (let index = transcript.length - 1; index >= 0; index -= 1) {
+            const item = transcript[index];
+            if (item.action === 'TENANT_USER_IMPERSONATION_ENDED') {
+                endedAt = item.createdAt;
+                break;
+            }
+        }
+
+        if (format === 'csv') {
+            const escapeCsv = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+            const lines = [
+                [
+                    'Timestamp',
+                    'Kind',
+                    'Action',
+                    'Actor',
+                    'Company',
+                    'Company ID',
+                    'Entity',
+                    'Entity ID',
+                    'Note',
+                    'Payload',
+                ].join(','),
+                ...transcript.map((item) => [
+                    escapeCsv(item.createdAt.toISOString()),
+                    escapeCsv(item.kind),
+                    escapeCsv(item.action),
+                    escapeCsv(item.actor),
+                    escapeCsv(item.company),
+                    escapeCsv(item.companyId),
+                    escapeCsv(item.entity),
+                    escapeCsv(item.entityId),
+                    escapeCsv(isRecord(item.after) && typeof item.after.note === 'string' ? item.after.note : ''),
+                    escapeCsv(JSON.stringify(item.after ?? {})),
+                ].join(',')),
+            ];
+
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="support-session-${sessionId}.csv"`);
+            res.status(200).send(lines.join('\n'));
+            return;
+        }
+
+        sendSuccess(res, {
+            sessionId,
+            company: matchingStart.company?.name || 'unknown',
+            companyId: matchingStart.companyId,
+            actor: matchingSupportSession?.actorName || matchingSupportSession?.actorEmail || matchingStart.user?.name || matchingStart.user?.email || 'unknown',
+            actorEmail: matchingSupportSession?.actorEmail || matchingStart.user?.email || '',
+            targetUserId: typeof matchingStart.entityId === 'string' ? matchingStart.entityId : '',
+            targetUserEmail:
+                typeof matchingStartAfter.targetEmail === 'string'
+                    ? matchingStartAfter.targetEmail
+                    : typeof matchingStartAfter.targetUserEmail === 'string'
+                        ? matchingStartAfter.targetUserEmail
+                        : '',
+            reason: typeof matchingStartAfter.reason === 'string' ? matchingStartAfter.reason : '',
+            startedAt: matchingStart.createdAt,
+            endedAt,
+            transcript,
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+superAdminRoutes.get('/audit/support-sessions', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.AUDIT_READ), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const companyId = String(req.query.companyId || '').trim();
+        const actor = String(req.query.actor || '').trim().toLowerCase();
+        const sessionIdFilter = String(req.query.sessionId || '').trim().toLowerCase();
+        const status = String(req.query.status || 'All').trim();
+        const search = String(req.query.search || '').trim().toLowerCase();
+
+        const rows = await basePrisma.auditLog.findMany({
+            where: {
+                createdAt: {
+                    gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
+                },
+                ...(companyId ? { companyId } : {}),
+            },
+            orderBy: { createdAt: 'desc' },
+            include: {
+                company: { select: { id: true, name: true } },
+                user: { select: { email: true, name: true } },
+            },
+            take: 4000,
+        });
+
+        const sessions = new Map<string, {
+            sessionId: string;
+            actor: string;
+            actorEmail: string;
+            companyId: string;
+            company: string;
+            targetUserId: string;
+            targetUserEmail: string;
+            reason: string;
+            startedAt: Date;
+            endedAt: Date | null;
+            lastActivityAt: Date;
+            noteCount: number;
+            activityCount: number;
+            status: 'Active' | 'Ended';
+        }>();
+
+        for (const row of rows) {
+            const supportSession = extractSupportSessionMeta(row.after);
+            if (!supportSession?.sessionId) continue;
+
+            const current = sessions.get(supportSession.sessionId) ?? {
+                sessionId: supportSession.sessionId,
+                actor: supportSession.actorName || supportSession.actorEmail || row.user?.name || row.user?.email || 'unknown',
+                actorEmail: supportSession.actorEmail || row.user?.email || '',
+                companyId: row.companyId,
+                company: row.company?.name || 'unknown',
+                targetUserId: '',
+                targetUserEmail: '',
+                reason: '',
+                startedAt: row.createdAt,
+                endedAt: null,
+                lastActivityAt: row.createdAt,
+                noteCount: 0,
+                activityCount: 0,
+                status: 'Active' as const,
+            };
+
+            current.lastActivityAt = current.lastActivityAt > row.createdAt ? current.lastActivityAt : row.createdAt;
+
+            if (row.action === 'TENANT_USER_IMPERSONATION_STARTED') {
+                current.startedAt = row.createdAt;
+                current.reason = typeof (row.after as any)?.reason === 'string' ? (row.after as any).reason : current.reason;
+                current.targetUserId = typeof row.entityId === 'string' ? row.entityId : current.targetUserId;
+                current.targetUserEmail = typeof (row.after as any)?.targetEmail === 'string' ? (row.after as any).targetEmail : current.targetUserEmail;
+            } else if (row.action === 'TENANT_USER_IMPERSONATION_ENDED') {
+                current.endedAt = row.createdAt;
+                current.status = 'Ended';
+            } else if (row.action === 'TENANT_USER_IMPERSONATION_NOTE') {
+                current.noteCount += 1;
+            } else {
+                current.activityCount += 1;
+            }
+
+            if (!current.reason && typeof (row.after as any)?.reason === 'string') {
+                current.reason = (row.after as any).reason;
+            }
+            if (!current.targetUserEmail && typeof (row.after as any)?.targetUserEmail === 'string') {
+                current.targetUserEmail = (row.after as any).targetUserEmail;
+            }
+
+            sessions.set(supportSession.sessionId, current);
+        }
+
+        const filtered = Array.from(sessions.values())
+            .filter((session) => (status === 'All' ? true : session.status === status))
+            .filter((session) => (actor ? session.actor.toLowerCase().includes(actor) || session.actorEmail.toLowerCase().includes(actor) : true))
+            .filter((session) => (sessionIdFilter ? session.sessionId.toLowerCase().includes(sessionIdFilter) : true))
+            .filter((session) => {
+                if (!search) return true;
+                const haystack = [
+                    session.sessionId,
+                    session.actor,
+                    session.actorEmail,
+                    session.company,
+                    session.targetUserEmail,
+                    session.reason,
+                ].join(' ').toLowerCase();
+                return haystack.includes(search);
+            })
+            .sort((left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime());
+
+        sendSuccess(res, filtered);
+    } catch (error) {
+        next(error);
+    }
+});
+
+superAdminRoutes.get('/audit', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.AUDIT_READ), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
         const action = String(req.query.action || '').trim();
@@ -1269,6 +2086,7 @@ superAdminRoutes.get('/audit', async (req: Request, res: Response, next: NextFun
         const search = String(req.query.search || '').trim().toLowerCase();
         const from = String(req.query.from || '').trim();
         const to = String(req.query.to || '').trim();
+        const format = String(req.query.format || '').trim().toLowerCase();
 
         const where: any = {};
         if (action) where.action = action;
@@ -1298,22 +2116,59 @@ superAdminRoutes.get('/audit', async (req: Request, res: Response, next: NextFun
             },
         });
 
-        const mapped = audit.map((row) => ({
+        const mapped = audit.map((row) => {
+            const supportSession = extractSupportSessionMeta(row.after);
+            return ({
             id: row.id,
-            actor: row.user?.email || row.user?.name || 'unknown',
+            actor: supportSession?.actorEmail || row.user?.email || row.user?.name || 'unknown',
             action: row.action,
             target: `${row.entity}${row.entityId ? ` (${row.entityId})` : ''}`,
             company: row.company?.name || 'unknown',
+            companyId: row.companyId,
+            sessionId: supportSession?.sessionId || '',
+            severity:
+                row.action.includes('SUSPEND') || row.action.includes('DELETE')
+                    ? 'Critical'
+                    : row.action.includes('MAINTENANCE') || row.action.includes('PASSWORD') || row.action.includes('LIMIT')
+                        ? 'Warning'
+                        : 'Info',
+            before: row.before,
+            after: row.after,
+            ipAddress: row.ipAddress || '',
+            userAgent: row.userAgent || '',
             createdAt: row.createdAt,
-        }));
+        });
+        });
 
         const filtered = mapped
             .filter((row) => {
                 if (!search) return true;
-                const haystack = `${row.actor} ${row.action} ${row.target} ${row.company}`.toLowerCase();
+                const haystack = `${row.actor} ${row.action} ${row.target} ${row.company} ${row.sessionId}`.toLowerCase();
                 return haystack.includes(search);
             })
             .slice(0, limit);
+
+        if (format === 'csv') {
+            const escapeCsv = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+            const header = ['Timestamp', 'Actor', 'Action', 'Company', 'Target', 'Severity', 'IP Address', 'User Agent'];
+            const lines = [
+                header.join(','),
+                ...filtered.map((row) => [
+                    escapeCsv(row.createdAt.toISOString()),
+                    escapeCsv(row.actor),
+                    escapeCsv(row.action),
+                    escapeCsv(row.company),
+                    escapeCsv(row.target),
+                    escapeCsv(row.severity),
+                    escapeCsv(row.ipAddress),
+                    escapeCsv(row.userAgent),
+                ].join(',')),
+            ];
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="super-admin-audit-${new Date().toISOString().slice(0, 10)}.csv"`);
+            res.status(200).send(lines.join('\n'));
+            return;
+        }
 
         sendSuccess(res, filtered);
     } catch (error) {

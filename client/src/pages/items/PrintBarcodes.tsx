@@ -41,9 +41,9 @@ export default function PrintBarcodes() {
     const [bulkId, setBulkId] = useState('');
     const [isImporting, setIsImporting] = useState(false);
 
-    const { data: categories } = useQuery({ queryKey: ['categories'], queryFn: () => api.get('/products/meta/categories').then(r => r.data.data) });
-    const { data: groups } = useQuery({ queryKey: ['groups'], queryFn: () => api.get('/products/meta/groups').then(r => r.data.data) });
-    const { data: brands } = useQuery({ queryKey: ['brands'], queryFn: () => api.get('/products/meta/brands').then(r => r.data.data) });
+    const { data: categories, refetch: refetchCategories, isFetching: isFetchingCategories } = useQuery({ queryKey: ['categories'], queryFn: () => api.get('/products/meta/categories').then(r => r.data.data) });
+    const { data: groups, refetch: refetchGroups, isFetching: isFetchingGroups } = useQuery({ queryKey: ['groups'], queryFn: () => api.get('/products/meta/groups').then(r => r.data.data) });
+    const { data: brands, refetch: refetchBrands, isFetching: isFetchingBrands } = useQuery({ queryKey: ['brands'], queryFn: () => api.get('/products/meta/brands').then(r => r.data.data) });
 
     // Items selected for printing
     const [itemsToPrint, setItemsToPrint] = useState<Array<{
@@ -216,6 +216,13 @@ export default function PrintBarcodes() {
                                     ]}
                                     placeholder='Select...'
                                     searchable
+                                    onRefresh={() => {
+                                        if (bulkType === 'category') refetchCategories();
+                                        if (bulkType === 'itemGroup') refetchGroups();
+                                        if (bulkType === 'brand') refetchBrands();
+                                    }}
+                                    refreshing={bulkType === 'category' ? isFetchingCategories : bulkType === 'itemGroup' ? isFetchingGroups : isFetchingBrands}
+                                    refreshLabel="Refresh options"
                                 />
                             </div>
                             <button

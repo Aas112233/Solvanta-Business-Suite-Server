@@ -30,21 +30,21 @@ export default function ReceiveSalesPayment() {
     const [notes, setNotes] = useState('');
     const [prefilledInvoiceId, setPrefilledInvoiceId] = useState('');
 
-    const { data: openInvoices } = useQuery({
+    const { data: openInvoices, refetch: refetchOpenInvoices, isFetching: isFetchingOpenInvoices } = useQuery({
         queryKey: ['sales-payments-open-invoices-all'],
         queryFn: () => api.get('/sales/payments', {
             params: { page: 1, limit: 500, state: 'open' },
         }).then((r) => r.data.data),
     });
 
-    const { data: invoices } = useQuery({
+    const { data: invoices, refetch: refetchInvoices, isFetching: isFetchingInvoices } = useQuery({
         queryKey: ['sales-payments-open-invoices', customerId],
         queryFn: () => api.get('/sales/payments', {
             params: { page: 1, limit: 500, state: 'open', customerId: customerId || undefined },
         }).then((r) => r.data.data),
     });
 
-    const { data: globalPaymentMethods } = useQuery<any[]>({
+    const { data: globalPaymentMethods, refetch: refetchPaymentMethods, isFetching: isFetchingPaymentMethods } = useQuery<any[]>({
         queryKey: ['global-strings', GLOBAL_STRING_GROUPS.salePaymentMethods],
         queryFn: async () => {
             const res = await api.get(`/global-strings?group=${GLOBAL_STRING_GROUPS.salePaymentMethods}`);
@@ -193,6 +193,9 @@ export default function ReceiveSalesPayment() {
                             options={[{ value: '', label: 'Select Customer' }, ...(customerOptions || []).map((c: any) => ({ value: c.id, label: `${c.name}${c.phone ? ` (${c.phone})` : ''}` }))]}
                             placeholder='Select Customer'
                             searchable
+                            onRefresh={() => refetchOpenInvoices()}
+                            refreshing={isFetchingOpenInvoices}
+                            refreshLabel="Refresh customers"
                         />
                         {(customerOptions || []).length === 0 && (
                             <p className="mt-1 text-xs text-amber-600">
@@ -208,6 +211,9 @@ export default function ReceiveSalesPayment() {
                             options={[...(invoiceOptions || []).map((inv: any) => ({ value: inv.id, label: `${inv.invoiceNo} - ${inv.customer?.name || 'Walk-in'} (${Number(inv.outstandingAmount || 0).toFixed(2)} ${currency})` }))]}
                             placeholder='Select'
                             searchable
+                            onRefresh={() => refetchInvoices()}
+                            refreshing={isFetchingInvoices}
+                            refreshLabel="Refresh invoices"
                         />
                     </div>
                     <div>
@@ -217,6 +223,9 @@ export default function ReceiveSalesPayment() {
                             onChange={(v) => setPaymentMethod(v)}
                             options={paymentMethodOptions}
                             placeholder='Select Method'
+                            onRefresh={() => refetchPaymentMethods()}
+                            refreshing={isFetchingPaymentMethods}
+                            refreshLabel="Refresh methods"
                         />
                     </div>
                     <div>

@@ -14,9 +14,38 @@ export interface MutateStockParams {
     createdById: string;
 }
 
+// Minimal product shape needed by InventoryService
+interface ProductWithUnits {
+    id: string;
+    name: string;
+    itemCode: string;
+    units: Array<{ unitCode: string; qtyInBaseUnit: number; isBase: boolean }>;
+}
+
 export class InventoryService {
-    static async getAvailableStockQty(tx: any, params: { companyId: string, branchId: string, productId: string, unitCode: string }): Promise<number> {
-        const product = await tx.product.findUnique({ where: { id: params.productId }, include: { units: true } });
+    /**
+     * Fetches product with only the fields needed for unit conversion.
+     * Reuse this across the service to avoid fetching full product documents.
+     */
+    private static async getProductUnits(tx: any, productId: string): Promise<ProductWithUnits | null> {
+        return tx.product.findUnique({
+            where: { id: productId },
+            select: {
+                id: true,
+                name: true,
+                itemCode: true,
+                units: { select: { unitCode: true, qtyInBaseUnit: true, isBase: true } },
+            },
+        });
+    }
+
+    static async getAvailableStockQty(
+        tx: any,
+        params: { companyId: string; branchId: string; productId: string; unitCode: string },
+        /** Optional pre-fetched product to avoid redundant DB lookup */
+        prefetchedProduct?: ProductWithUnits | null
+    ): Promise<number> {
+        const product = prefetchedProduct ?? await this.getProductUnits(tx, params.productId);
         if (!product) return 0;
         const inputUnit = product.units.find((u: any) => u.unitCode === params.unitCode);
         const baseUnit = product.units.find((u: any) => u.isBase);
@@ -30,16 +59,16 @@ export class InventoryService {
     /**
      * Atomically mutates inventory stock and creates a movement log.
      * Normalizes all quantities to the product's Base Unit (multiplier/fraction).
+     * Accepts optional pre-fetched product to avoid duplicate lookups.
      */
     static async mutateStock(
         tx: any,
-        params: MutateStockParams
+        params: MutateStockParams,
+        /** Optional pre-fetched product to avoid redundant DB lookup */
+        prefetchedProduct?: ProductWithUnits | null
     ) {
         // 0. Fetch Product Units to determine conversion factors
-        const product = await tx.product.findUnique({
-            where: { id: params.productId },
-            include: { units: true }
-        });
+        const product = prefetchedProduct ?? await this.getProductUnits(tx, params.productId);
         if (!product) throw AppError.notFound(`Product ${params.productId}`);
 
         const inputUnit = product.units.find((u: any) => u.unitCode === params.unitCode);

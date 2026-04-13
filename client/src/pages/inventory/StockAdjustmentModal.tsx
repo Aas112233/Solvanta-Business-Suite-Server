@@ -38,7 +38,7 @@ export default function StockAdjustmentModal({ isOpen, onClose, onSuccess }: Sto
     });
 
     // Fetch Branches
-    const { data: branches } = useQuery({
+    const { data: branches, refetch: refetchBranches, isFetching: isFetchingBranches } = useQuery({
         queryKey: ['branches'],
         queryFn: () => api.get('/branches').then((r: any) => r.data.data)
     });
@@ -158,6 +158,9 @@ export default function StockAdjustmentModal({ isOpen, onClose, onSuccess }: Sto
                             options={[{ value: '', label: 'Select Branch' }, ...(branches || []).map((b: any) => ({ value: b.id, label: b.name }))]}
                             placeholder='Select Branch'
                             searchable
+                            onRefresh={refetchBranches}
+                            refreshing={isFetchingBranches}
+                            refreshLabel="Refresh branches"
                         />
                     </div>
 

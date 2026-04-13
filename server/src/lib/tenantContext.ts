@@ -9,6 +9,14 @@ export const tenantStorage = new AsyncLocalStorage<{
     companyId: string;
     userId?: string;
     activeBranchId?: string;
+    impersonation?: {
+        sessionId: string;
+        actorUserId: string;
+        actorEmail: string;
+        actorName: string;
+        reason: string;
+        startedAt: string;
+    };
 }>();
 
 export const getTenant = () => tenantStorage.getStore();

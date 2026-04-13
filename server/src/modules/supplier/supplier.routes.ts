@@ -2,10 +2,12 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { PERMISSIONS } from '../../config/permissions.js';
-import { prisma } from '../../lib/prisma.js';
+import { basePrisma, prisma } from '../../lib/prisma.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
 import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
+import { nextCounter } from '../../utils/documentCounter.js';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
 export const supplierRoutes = Router();
@@ -19,7 +21,7 @@ const activeSupplierFilter = {
 };
 
 const supplierSchema = z.object({
-    supplierCode: z.string().max(50).optional().or(z.literal('')),
+    supplierCode: z.string().trim().max(50).optional().or(z.literal('')),
     name: z.string().min(1).max(200),
     phone: z.string().optional(),
     vatNumber: z.string().optional(),
@@ -29,10 +31,118 @@ const supplierSchema = z.object({
     openingBalance: z.number().optional().default(0),
 });
 
-function parseOptionalDate(value: unknown): Date | undefined {
+const AUTO_SUPPLIER_CODE_PREFIX = 'VND-';
+const AUTO_SUPPLIER_CODE_PADDING = 4;
+const MAX_SUPPLIER_CODE_ATTEMPTS = 5;
+const SUPPLIER_CODE_COUNTER_SCOPE = 'SUPPLIER_CODE';
+
+function normalizeSupplierCode(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const normalized = value.trim();
+    return normalized || undefined;
+}
+
+async function findSupplierByCode(companyId: string, supplierCode: string, excludeId?: string) {
+    return basePrisma.supplier.findFirst({
+        where: {
+            companyId,
+            supplierCode,
+            ...(excludeId ? { id: { not: excludeId } } : {}),
+        },
+        select: { id: true },
+    });
+}
+
+async function getHighestAutoSupplierCodeNumber(companyId: string): Promise<number> {
+    const existingAutoCodes = await basePrisma.supplier.findMany({
+        where: {
+            companyId,
+            supplierCode: { startsWith: AUTO_SUPPLIER_CODE_PREFIX },
+        },
+        select: { supplierCode: true },
+    });
+
+    return existingAutoCodes.reduce((max, supplier) => {
+        const match = supplier.supplierCode.match(new RegExp(`^${AUTO_SUPPLIER_CODE_PREFIX}(\\d+)$`));
+        const currentNum = match ? Number(match[1]) : 0;
+        return Math.max(max, currentNum);
+    }, 0);
+}
+
+async function syncSupplierCodeCounter(companyId: string): Promise<void> {
+    const [highestExistingCodeNumber, currentCounter] = await Promise.all([
+        getHighestAutoSupplierCodeNumber(companyId),
+        basePrisma.documentCounter.findUnique({
+            where: {
+                companyId_scope_scopeKey: {
+                    companyId,
+                    scope: SUPPLIER_CODE_COUNTER_SCOPE,
+                    scopeKey: 'global',
+                },
+            },
+            select: { lastNumber: true },
+        }),
+    ]);
+
+    if (!currentCounter) {
+        await basePrisma.documentCounter.create({
+            data: {
+                companyId,
+                scope: SUPPLIER_CODE_COUNTER_SCOPE,
+                scopeKey: 'global',
+                lastNumber: highestExistingCodeNumber,
+            },
+        }).catch((error) => {
+            if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) {
+                throw error;
+            }
+        });
+        return;
+    }
+
+    if (currentCounter.lastNumber < highestExistingCodeNumber) {
+        await basePrisma.documentCounter.update({
+            where: {
+                companyId_scope_scopeKey: {
+                    companyId,
+                    scope: SUPPLIER_CODE_COUNTER_SCOPE,
+                    scopeKey: 'global',
+                },
+            },
+            data: {
+                lastNumber: highestExistingCodeNumber,
+            },
+        });
+    }
+}
+
+async function generateUniqueSupplierCode(companyId: string): Promise<string> {
+    await syncSupplierCodeCounter(companyId);
+    for (let attempt = 0; attempt < MAX_SUPPLIER_CODE_ATTEMPTS; attempt += 1) {
+        const nextVal = await nextCounter(basePrisma as any, companyId, SUPPLIER_CODE_COUNTER_SCOPE);
+        const candidate = `${AUTO_SUPPLIER_CODE_PREFIX}${nextVal.toString().padStart(AUTO_SUPPLIER_CODE_PADDING, '0')}`;
+        const existing = await findSupplierByCode(companyId, candidate);
+        if (!existing) return candidate;
+    }
+    throw AppError.conflict('Unable to generate a unique supplier code. Please try again.');
+}
+
+function isUniqueConstraintError(error: unknown) {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+function parseOptionalDate(value: unknown, boundary: 'start' | 'end' = 'start'): Date | undefined {
     if (typeof value !== 'string' || !value.trim()) return undefined;
-    const d = new Date(value);
+    const trimmedValue = value.trim();
+    const d = new Date(trimmedValue);
     if (Number.isNaN(d.getTime())) return undefined;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmedValue)) {
+        if (boundary === 'end') {
+            d.setHours(23, 59, 59, 999);
+        } else {
+            d.setHours(0, 0, 0, 0);
+        }
+    }
     return d;
 }
 
@@ -60,8 +170,8 @@ supplierRoutes.get('/', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req
         }
 
         const [suppliers, total] = await Promise.all([
-            prisma.supplier.findMany({ where, skip, take, orderBy: { createdAt: 'desc' } }),
-            prisma.supplier.count({ where }),
+            basePrisma.supplier.findMany({ where, skip, take, orderBy: { createdAt: 'desc' } }),
+            basePrisma.supplier.count({ where }),
         ]);
 
         const supplierIds = suppliers.map((supplier) => supplier.id);
@@ -168,8 +278,8 @@ supplierRoutes.get('/summary/stats', requirePermission(PERMISSIONS.SUPPLIER_VIEW
     try {
         const companyId = req.user!.companyId;
         const [totalSuppliers, activeSuppliers] = await Promise.all([
-            prisma.supplier.count({ where: { companyId } }),
-            prisma.supplier.count({
+            basePrisma.supplier.count({ where: { companyId } }),
+            basePrisma.supplier.count({
                 where: {
                     companyId,
                     ...activeSupplierFilter,
@@ -197,10 +307,10 @@ supplierRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.SUPPLIER_VIEW), 
     try {
         const supplierId = req.params.id as string;
         const companyId = req.user!.companyId;
-        const dateFrom = parseOptionalDate(req.query.dateFrom);
-        const dateTo = parseOptionalDate(req.query.dateTo);
+        const dateFrom = parseOptionalDate(req.query.dateFrom, 'start');
+        const dateTo = parseOptionalDate(req.query.dateTo, 'end');
 
-        const supplier = await prisma.supplier.findFirst({
+        const supplier = await basePrisma.supplier.findFirst({
             where: { id: supplierId, companyId, ...activeSupplierFilter },
         });
         if (!supplier) throw AppError.notFound('Supplier');
@@ -269,26 +379,46 @@ supplierRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.SUPPLIER_VIEW), 
 
         transactions.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        // Calculate running balance
-        let balance = Number(supplier.openingBalance || 0);
-        const ledger = transactions.map(t => {
-            balance += (t.credit - t.debit);
-            return { ...t, balance };
-        });
+        // Calculate balances against the full transaction history so filtered periods
+        // still return the correct opening and closing figures.
+        let runningBalance = Number(supplier.openingBalance || 0);
+        let openingBalance = runningBalance;
+        let finalBalance = runningBalance;
+        const filteredLedger: Array<Record<string, unknown>> = [];
 
-        // Filter by date if provided
-        const filteredLedger = ledger.filter(t => {
-            const tDate = new Date(t.date);
-            if (dateFrom && tDate < dateFrom) return false;
-            if (dateTo && tDate > dateTo) return false;
-            return true;
-        });
+        for (const transaction of transactions) {
+            const transactionDate = new Date(transaction.date);
+            const delta = Number(transaction.credit || 0) - Number(transaction.debit || 0);
+
+            if (dateFrom && transactionDate < dateFrom) {
+                runningBalance += delta;
+                openingBalance = runningBalance;
+                finalBalance = runningBalance;
+                continue;
+            }
+
+            if (dateTo && transactionDate > dateTo) {
+                break;
+            }
+
+            runningBalance += delta;
+            finalBalance = runningBalance;
+            filteredLedger.push({ ...transaction, balance: runningBalance });
+        }
 
         sendSuccess(res, {
-            supplier: { id: supplier.id, name: supplier.name, supplierCode: supplier.supplierCode, openingBalance: supplier.openingBalance },
-            openingBalance: supplier.openingBalance,
+            supplier: {
+                id: supplier.id,
+                name: supplier.name,
+                supplierCode: supplier.supplierCode,
+                openingBalance: supplier.openingBalance,
+                phone: supplier.phone,
+                vatNumber: supplier.vatNumber,
+                address: supplier.address,
+            },
+            openingBalance,
             ledger: filteredLedger,
-            finalBalance: balance
+            finalBalance
         });
     } catch (error) { next(error); }
 });
@@ -296,7 +426,7 @@ supplierRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.SUPPLIER_VIEW), 
 // GET /suppliers/:id
 supplierRoutes.get('/:id', requirePermission(PERMISSIONS.SUPPLIER_VIEW), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const supplier = await prisma.supplier.findFirst({
+        const supplier = await basePrisma.supplier.findFirst({
             where: { id: req.params.id as any, companyId: req.user!.companyId, ...activeSupplierFilter },
         });
         if (!supplier) throw AppError.notFound('Supplier');
@@ -317,47 +447,79 @@ supplierRoutes.post('/', requirePermission(PERMISSIONS.SUPPLIER_CREATE), validat
     try {
         const { address, city, country, ...rest } = req.body;
         const companyId = req.user!.companyId;
+        const requestedSupplierCode = normalizeSupplierCode(rest.supplierCode);
+        const baseData = {
+            ...rest,
+            address: { street: address, city, country },
+            companyId,
+            deletedAt: null,
+        };
 
-        // Auto-generate supplierCode if not provided
-        if (!rest.supplierCode) {
-            const lastSupplier = await prisma.supplier.findFirst({
-                where: { companyId },
-                orderBy: { supplierCode: 'desc' },
-                select: { supplierCode: true }
+        if (requestedSupplierCode) {
+            const existingCode = await findSupplierByCode(companyId, requestedSupplierCode);
+            if (existingCode) throw AppError.conflict(`Supplier code '${requestedSupplierCode}' already exists`);
+
+            const supplier = await prisma.supplier.create({
+                data: {
+                    ...baseData,
+                    supplierCode: requestedSupplierCode,
+                },
             });
-
-            let nextNum = 1;
-            if (lastSupplier?.supplierCode) {
-                const match = lastSupplier.supplierCode.match(/\d+/);
-                if (match) {
-                    nextNum = parseInt(match[0]) + 1;
-                }
-            }
-            rest.supplierCode = `VND-${nextNum.toString().padStart(4, '0')}`;
+            sendSuccess(res, supplier, undefined, 201);
+            return;
         }
 
-        const supplier = await prisma.supplier.create({
-            data: {
-                ...rest,
-                address: { street: address, city, country },
-                companyId,
-                deletedAt: null
-            },
-        });
-        sendSuccess(res, supplier, undefined, 201);
-    } catch (error) { next(error); }
+        for (let attempt = 0; attempt < MAX_SUPPLIER_CODE_ATTEMPTS; attempt += 1) {
+            try {
+                const generatedCode = await generateUniqueSupplierCode(companyId);
+                const supplier = await prisma.supplier.create({
+                    data: {
+                        ...baseData,
+                        supplierCode: generatedCode,
+                    },
+                });
+                sendSuccess(res, supplier, undefined, 201);
+                return;
+            } catch (error) {
+                if (isUniqueConstraintError(error)) {
+                    continue;
+                }
+                throw error;
+            }
+        }
+
+        throw AppError.conflict('Unable to generate a unique supplier code. Please try again.');
+    } catch (error) {
+        if (isUniqueConstraintError(error)) {
+            next(AppError.conflict('Supplier code already exists'));
+            return;
+        }
+        next(error);
+    }
 });
 
 // PATCH /suppliers/:id
 supplierRoutes.patch('/:id', requirePermission(PERMISSIONS.SUPPLIER_EDIT), validate({ body: supplierSchema.partial() }), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const existing = await prisma.supplier.findFirst({
+        const existing = await basePrisma.supplier.findFirst({
             where: { id: req.params.id as any, companyId: req.user!.companyId, ...activeSupplierFilter },
         });
         if (!existing) throw AppError.notFound('Supplier');
 
         const { address, city, country, id, ...rest } = req.body;
         const updateData: any = { ...rest };
+        if (rest.supplierCode !== undefined) {
+            const normalizedSupplierCode = normalizeSupplierCode(rest.supplierCode);
+            if (!normalizedSupplierCode) {
+                delete updateData.supplierCode;
+            } else {
+                if (normalizedSupplierCode !== existing.supplierCode) {
+                    const existingCode = await findSupplierByCode(req.user!.companyId, normalizedSupplierCode, existing.id);
+                    if (existingCode) throw AppError.conflict(`Supplier code '${normalizedSupplierCode}' already exists`);
+                }
+                updateData.supplierCode = normalizedSupplierCode;
+            }
+        }
         if (address !== undefined || city !== undefined || country !== undefined) {
             updateData.address = {
                 ...(existing.address as any || {}),
@@ -372,14 +534,20 @@ supplierRoutes.patch('/:id', requirePermission(PERMISSIONS.SUPPLIER_EDIT), valid
             data: updateData
         });
         sendSuccess(res, supplier);
-    } catch (error) { next(error); }
+    } catch (error) {
+        if (isUniqueConstraintError(error)) {
+            next(AppError.conflict('Supplier code already exists'));
+            return;
+        }
+        next(error);
+    }
 });
 
 // DELETE /suppliers/:id (soft-delete)
 supplierRoutes.delete('/:id', requirePermission(PERMISSIONS.SUPPLIER_DELETE), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        await prisma.supplier.updateMany({
-            where: { id: req.params.id as any, companyId: req.user!.companyId },
+        await basePrisma.supplier.updateMany({
+            where: { id: req.params.id as any, companyId: req.user!.companyId, ...activeSupplierFilter },
             data: { deletedAt: new Date() },
         });
         sendSuccess(res, { message: 'Supplier archived' });

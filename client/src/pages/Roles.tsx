@@ -16,12 +16,12 @@ export default function Roles() {
     const [roleNamePreset, setRoleNamePreset] = useState('');
     const qc = useQueryClient();
 
-    const { data: roles, isLoading } = useQuery({
+    const { data: roles, isLoading, refetch: refetchRoles, isFetching: isFetchingRoles } = useQuery({
         queryKey: ['roles'],
         queryFn: () => api.get('/roles').then((r) => r.data.data),
     });
 
-    const { data: availablePermissions } = useQuery({
+    const { data: availablePermissions, refetch: refetchPermissions, isFetching: isFetchingPermissions } = useQuery({
         queryKey: ['available-permissions'],
         queryFn: () => api.get('/roles/permissions').then((r) => r.data.data),
     });
@@ -289,20 +289,23 @@ export default function Roles() {
                                 <div className="flex flex-col gap-6 overflow-y-auto pr-2 custom-scrollbar">
                                     <div>
                                         <label className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3 block">Role Definition</label>
-                                        <AppDropdown
-                                            value={roleNamePreset}
-                                            onChange={(value) => {
-                                                setRoleNamePreset(value);
-                                                if (value !== '__custom__') setRoleName(value); }}
-                                            options={[
-                                                ...roleNameOptions.map((name) => ({ value: name, label: name })),
-                                                { value: '__custom__', label: 'Custom Role Name...' },
-                                            ]}
-                                            placeholder="Select Role Type"
-                                            searchable
-                                            disabled={isSystemRole(editing)}
-                                            className="w-full mb-3"
-                                        />
+                                <AppDropdown
+                                    value={roleNamePreset}
+                                    onChange={(value) => {
+                                        setRoleNamePreset(value);
+                                        if (value !== '__custom__') setRoleName(value); }}
+                                    options={[
+                                        ...roleNameOptions.map((name) => ({ value: name, label: name })),
+                                        { value: '__custom__', label: 'Custom Role Name...' },
+                                    ]}
+                                    placeholder="Select Role Type"
+                                    searchable
+                                    disabled={isSystemRole(editing)}
+                                    className="w-full mb-3"
+                                    onRefresh={() => refetchRoles()}
+                                    refreshing={isFetchingRoles}
+                                    refreshLabel="Refresh roles"
+                                />
                                         {roleNamePreset === '__custom__' && !isSystemRole(editing) && (
                                             <input
                                                 name="name"

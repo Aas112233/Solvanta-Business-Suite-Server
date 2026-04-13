@@ -112,6 +112,7 @@ export const SuperAdminCompanyProfile = lazy(() => import('./super-admin/SuperAd
 export const SuperAdminModules = lazy(() => import('./super-admin/SuperAdminModules'));
 export const SuperAdminBroadcasts = lazy(() => import('./super-admin/SuperAdminBroadcasts'));
 export const SuperAdminAudit = lazy(() => import('./super-admin/SuperAdminAudit'));
+export const SuperAdminSupportSessions = lazy(() => import('./super-admin/SuperAdminSupportSessions'));
 export const Departments = lazy(() => import('./hr/Departments').then(m => ({ default: m.Departments })));
 export const Positions = lazy(() => import('./hr/Positions').then(m => ({ default: m.Positions })));
 export const Employees = lazy(() => import('./hr/Employees').then(m => ({ default: m.Employees })));

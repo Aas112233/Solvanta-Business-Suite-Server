@@ -11,6 +11,9 @@ import {
 } from './api';
 import { SYSTEM_ANNOUNCEMENT_QUERY_KEY } from '../../lib/systemAnnouncements';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { useAuthStore } from '../../stores/authStore';
+import { SUPER_ADMIN_PERMISSIONS } from '../../lib/superAdminPermissions';
+import SuperAdminAccessCard from './SuperAdminAccessCard';
 
 function toLocalInputValue(iso: string | null) {
     if (!iso) return '';
@@ -35,6 +38,12 @@ const levelClassMap: Record<SuperAdminAnnouncement['level'], string> = {
 
 export default function SuperAdminBroadcasts() {
     const queryClient = useQueryClient();
+    const canReadAnnouncements = useAuthStore((state) =>
+        state.hasSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.ANNOUNCEMENTS_READ),
+    );
+    const canManageAnnouncements = useAuthStore((state) =>
+        state.hasSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.ANNOUNCEMENTS_MANAGE),
+    );
     const [editingId, setEditingId] = useState<string | null>(null);
     const [title, setTitle] = useState('');
     const [message, setMessage] = useState('');
@@ -44,6 +53,7 @@ export default function SuperAdminBroadcasts() {
     const { data: announcements = [], isLoading } = useQuery({
         queryKey: ['super-admin', 'announcements'],
         queryFn: fetchSuperAdminAnnouncements,
+        enabled: canReadAnnouncements,
     });
 
     const sortedAnnouncements = useMemo(
@@ -118,12 +128,23 @@ export default function SuperAdminBroadcasts() {
         onError: () => toast.error('Failed to update announcement status'),
     });
 
+    if (!canReadAnnouncements) {
+        return (
+            <SuperAdminAccessCard message="Your super admin role does not include announcement visibility." />
+        );
+    }
+
     return (
         <section className="rounded-2xl border border-slate-200 bg-white p-5">
             <h2 className="text-lg font-semibold text-slate-900">Announcements</h2>
-            <p className="text-xs text-slate-500">Create, edit, delete and control validity period of tenant announcements.</p>
+            <p className="text-xs text-slate-500">
+                {canManageAnnouncements
+                    ? 'Create, edit, delete and control validity period of tenant announcements.'
+                    : 'Review active and historical tenant announcements.'}
+            </p>
 
-            <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            {canManageAnnouncements && (
+                <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold text-slate-900">
                         {editingId ? 'Edit Announcement' : 'New Broadcast'}
@@ -175,7 +196,8 @@ export default function SuperAdminBroadcasts() {
                     <Megaphone size={16} />
                     {editingId ? 'Save Announcement' : 'Send Broadcast'}
                 </button>
-            </div>
+                </div>
+            )}
 
             <div className="mt-5">
                 <h3 className="text-sm font-semibold text-slate-900">Current Announcements</h3>
@@ -208,37 +230,39 @@ export default function SuperAdminBroadcasts() {
                                         Created: {new Date(item.createdAt).toLocaleString()} | Valid till: {item.expiresAt ? new Date(item.expiresAt).toLocaleString() : 'No expiry'}
                                     </p>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setEditingId(item.id);
-                                            setTitle(item.title);
-                                            setMessage(item.message);
-                                            setLevel(item.level);
-                                            setExpiresAt(toLocalInputValue(item.expiresAt));
-                                        }}
-                                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-                                    >
-                                        <Pencil size={13} />
-                                        Edit
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => toggleActiveMutation.mutate({ announcementId: item.id, isActive: !item.isActive })}
-                                        className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-                                    >
-                                        {item.isActive ? 'Deactivate' : 'Activate'}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => deleteMutation.mutate(item.id)}
-                                        className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
-                                    >
-                                        <Trash2 size={13} />
-                                        Delete
-                                    </button>
-                                </div>
+                                {canManageAnnouncements && (
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setEditingId(item.id);
+                                                setTitle(item.title);
+                                                setMessage(item.message);
+                                                setLevel(item.level);
+                                                setExpiresAt(toLocalInputValue(item.expiresAt));
+                                            }}
+                                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                                        >
+                                            <Pencil size={13} />
+                                            Edit
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleActiveMutation.mutate({ announcementId: item.id, isActive: !item.isActive })}
+                                            className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                                        >
+                                            {item.isActive ? 'Deactivate' : 'Activate'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => deleteMutation.mutate(item.id)}
+                                            className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
+                                        >
+                                            <Trash2 size={13} />
+                                            Delete
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ))}

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
 import toast from 'react-hot-toast';
@@ -16,12 +16,13 @@ import { format } from 'date-fns';
 import Modal from '../components/ui/Modal';
 
 export default function Suppliers() {
+    const { id: routeSupplierId } = useParams();
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
     const [limit, setLimit] = useState(10);
     const [editing, setEditing] = useState<any>(null);
     const [showForm, setShowForm] = useState(false);
-    const [viewing, setViewing] = useState<any>(null);
+    const [supplierPreview, setSupplierPreview] = useState<any>(null);
     const { hasPermission } = useAuthStore();
     const canCreateSupplier = hasPermission('supplier.create');
     const canEditSupplier = hasPermission('supplier.edit');
@@ -42,6 +43,12 @@ export default function Suppliers() {
         queryFn: () => api.get('/suppliers', { params: { search, page, limit } }).then(r => r.data),
     });
 
+    const { data: supplierDetail, isFetching: isFetchingSupplierDetail } = useQuery({
+        queryKey: ['supplier-detail', routeSupplierId],
+        queryFn: () => api.get(`/suppliers/${routeSupplierId}`).then((r) => r.data.data),
+        enabled: Boolean(routeSupplierId),
+    });
+
     const deleteMut = useMutation({
         mutationFn: (id: string) => api.delete(`/suppliers/${id}`),
         onSuccess: () => {
@@ -53,10 +60,33 @@ export default function Suppliers() {
 
     const saveMut = useMutation({
         mutationFn: (s: any) => s.id ? api.patch(`/suppliers/${s.id}`, s) : api.post('/suppliers', s),
-        onSuccess: () => {
-            toast.success('Supplier Saved');
+        onSuccess: (response, variables) => {
+            const isCreate = !variables?.id;
+            const createdSupplier = response?.data?.data;
+            toast.success(isCreate ? 'Supplier saved and added to the latest list' : 'Supplier saved');
+            if (isCreate) {
+                setSearch('');
+                setPage(1);
+                qc.setQueryData(['suppliers', '', 1, limit], (current: any) => {
+                    if (!current || !Array.isArray(current.data) || !createdSupplier?.id) return current;
+                    const withoutDuplicate = current.data.filter((supplier: any) => supplier?.id !== createdSupplier.id);
+                    const nextData = [createdSupplier, ...withoutDuplicate].slice(0, limit);
+                    return {
+                        ...current,
+                        data: nextData,
+                        meta: current.meta?.pagination ? {
+                            ...current.meta,
+                            pagination: {
+                                ...current.meta.pagination,
+                                total: Math.max(Number(current.meta.pagination.total || 0) + 1, nextData.length),
+                            },
+                        } : current.meta,
+                    };
+                });
+            }
             qc.invalidateQueries({ queryKey: ['suppliers'] });
             qc.invalidateQueries({ queryKey: ['suppliers-stats'] });
+            setEditing(null);
             setShowForm(false);
         },
         onError: (err: any) => toast.error(err.response?.data?.error?.message || 'Failed to save'),
@@ -67,7 +97,6 @@ export default function Suppliers() {
         const fd = new FormData(e.currentTarget);
         saveMut.mutate({
             ...(editing?.id && { id: editing.id }),
-            supplierCode: fd.get('supplierCode'),
             name: fd.get('name'),
             phone: fd.get('phone'),
             vatNumber: fd.get('vatNumber'),
@@ -84,6 +113,16 @@ export default function Suppliers() {
             .map((v) => String(v || '').trim())
             .filter(Boolean);
         return parts.length ? parts.join(', ') : 'No location';
+    };
+    const viewing = useMemo(() => {
+        if (!routeSupplierId) return null;
+        if (supplierDetail) return supplierDetail;
+        if (supplierPreview?.id === routeSupplierId) return supplierPreview;
+        return null;
+    }, [routeSupplierId, supplierDetail, supplierPreview]);
+    const closeSupplierProfile = () => {
+        setSupplierPreview(null);
+        navigate('/suppliers');
     };
 
     return (
@@ -113,7 +152,7 @@ export default function Suppliers() {
                 {[
                     { label: 'Total Partners', value: stats?.totalSuppliers || 0, icon: Users, color: 'indigo', trend: '+2 this month' },
                     { label: 'Active Status', value: stats?.activeSuppliers || 0, icon: Briefcase, color: 'emerald', trend: 'Healthy' },
-                    { label: 'Total Procurement', value: `$${(stats?.totalPurchaseValue || 0).toLocaleString()}`, icon: ShoppingCart, color: 'amber', trend: `${stats?.totalPurchaseCount || 0} orders` },
+                    { label: 'Total Procurement', value: `${currency} ${(stats?.totalPurchaseValue || 0).toLocaleString()}`, icon: ShoppingCart, color: 'amber', trend: `${stats?.totalPurchaseCount || 0} orders` },
                     { label: 'Growth', value: '12%', icon: TrendingUp, color: 'rose', trend: 'Supply chain stability' },
                 ].map((s, idx) => (
                     <div key={idx} className="p-4 rounded-2xl bg-white border border-gray-100 shadow-sm transition-hover group">
@@ -225,7 +264,10 @@ export default function Suppliers() {
                                             <ArrowUpRight size={16} />
                                         </button>
                                         <button
-                                            onClick={() => setViewing(s)}
+                                            onClick={() => {
+                                                setSupplierPreview(s);
+                                                navigate(`/suppliers/${s.id}`);
+                                            }}
                                             className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
                                             title="View Details"
                                         >
@@ -294,9 +336,9 @@ export default function Suppliers() {
                                 <div className="col-span-1">
                                     <label className="text-sm font-semibold text-gray-700 mb-1.5 block flex justify-between">
                                         Unique Vendor Code
-                                        <span className="text-[10px] text-gray-400 font-normal mt-0.5">(Optional)</span>
+                                        <span className="text-[10px] text-gray-400 font-normal mt-0.5">(Auto-generated)</span>
                                     </label>
-                                    <input name="supplierCode" defaultValue={editing?.supplierCode} placeholder="Auto-generated" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono" />
+                                    <input name="supplierCode" defaultValue={editing?.supplierCode} placeholder="Auto-generated" disabled className="w-full cursor-not-allowed rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 font-mono text-gray-500 outline-none transition-all" />
                                 </div>
                                 <div className="col-span-1">
                                     <label className="text-sm font-semibold text-gray-700 mb-1.5 block">Tax / VAT ID</label>
@@ -311,7 +353,7 @@ export default function Suppliers() {
                                     <input name="phone" defaultValue={editing?.phone} placeholder="+1 234 567 890" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all" />
                                 </div>
                                 <div className="col-span-1">
-                                    <label className="text-sm font-semibold text-gray-700 mb-1.5 block">Opening Balance ($)</label>
+                                    <label className="text-sm font-semibold text-gray-700 mb-1.5 block">Opening Balance ({currency})</label>
                                     <input name="openingBalance" type="number" step="0.01" defaultValue={editing?.openingBalance || 0} placeholder="0.00" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all" />
                                 </div>
                             </div>
@@ -346,16 +388,22 @@ export default function Suppliers() {
             </Modal>
 
             {/* Details Slideover */}
-            {viewing && (
-                <div className="fixed inset-0 z-50 flex justify-end bg-black/20 backdrop-blur-[2px] animate-fade-in" onClick={() => setViewing(null)}>
+            {routeSupplierId && (
+                <div className="fixed inset-0 z-50 flex justify-end bg-black/20 backdrop-blur-[2px] animate-fade-in" onClick={closeSupplierProfile}>
                     <div className="w-full max-w-lg bg-white h-full shadow-2xl animate-slide-in p-8 overflow-y-auto" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-between mb-8">
                             <h2 className="text-2xl font-bold text-gray-900 leading-tight">Supplier Profile</h2>
-                            <button onClick={() => setViewing(null)} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 transition-colors">
+                            <button onClick={closeSupplierProfile} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 transition-colors">
                                 <X size={24} />
                             </button>
                         </div>
 
+                        {!viewing && isFetchingSupplierDetail ? (
+                            <div className="py-20 text-center text-gray-500">
+                                <Loader2 size={28} className="mx-auto mb-3 animate-spin text-indigo-600" />
+                                <p>Loading supplier profile...</p>
+                            </div>
+                        ) : viewing ? (
                         <div className="space-y-8">
                             <div className="flex items-center gap-4">
                                 <div className="h-20 w-20 rounded-3xl bg-indigo-50 flex items-center justify-center text-3xl font-black text-indigo-600 ring-4 ring-indigo-50/50">
@@ -372,7 +420,7 @@ export default function Suppliers() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
                                     <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Opening Balance</div>
-                                    <div className="text-lg font-bold text-gray-900">${(viewing.openingBalance || 0).toLocaleString()}</div>
+                                    <div className="text-lg font-bold text-gray-900">{currency} {Number(viewing.openingBalance || 0).toLocaleString()}</div>
                                 </div>
                                 <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
                                     <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Tax ID</div>
@@ -410,8 +458,8 @@ export default function Suppliers() {
                                     {viewing.recentPurchases?.length > 0 ? viewing.recentPurchases.map((p: any) => (
                                         <div key={p.id} className="p-3 bg-white border border-gray-100 rounded-xl hover:shadow-md hover:border-indigo-100 transition-all cursor-pointer">
                                             <div className="flex justify-between items-start mb-1">
-                                                <span className="text-sm font-bold text-gray-800">{p.invoiceNo}</span>
-                                                <span className="text-xs font-bold text-indigo-600">${p.grandTotal.toLocaleString()}</span>
+                                                <span className="text-sm font-bold text-gray-800">{p.purchaseNo || p.invoiceNoSupplier || '-'}</span>
+                                                <span className="text-xs font-bold text-indigo-600">{currency} {Number(p.grandTotal || 0).toLocaleString()}</span>
                                             </div>
                                             <div className="flex justify-between items-center text-[10px] text-gray-400 uppercase tracking-tighter">
                                                 <span>{format(new Date(p.createdAt), 'MMM dd, yyyy')}</span>
@@ -429,20 +477,25 @@ export default function Suppliers() {
                             <div className="pt-6 border-t border-gray-50 flex gap-3">
                                 {canEditSupplier && (
                                     <button
-                                        onClick={() => { setEditing(viewing); setViewing(null); setShowForm(true); }}
+                                        onClick={() => { setEditing(viewing); closeSupplierProfile(); setShowForm(true); }}
                                         className="flex-1 py-3 bg-indigo-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100"
                                     >
                                         <Edit2 size={18} /> Edit Profile
                                     </button>
                                 )}
                                 <button
-                                    onClick={() => setViewing(null)}
+                                    onClick={closeSupplierProfile}
                                     className="px-6 py-3 bg-gray-50 text-gray-500 rounded-2xl font-bold hover:bg-gray-100 transition-colors"
                                 >
                                     Close
                                 </button>
                             </div>
                         </div>
+                        ) : (
+                            <div className="py-20 text-center text-gray-500">
+                                <p>Supplier profile not found.</p>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

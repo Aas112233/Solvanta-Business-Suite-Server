@@ -25,12 +25,16 @@ export default function PurchaseOrderForm() {
 
     const isEdit = !!id;
 
-    const { data: suppliers } = useQuery({
+    const {
+        data: suppliers,
+        refetch: refetchSuppliers,
+        isFetching: isFetchingSuppliers,
+    } = useQuery({
         queryKey: ['suppliers'],
         queryFn: () => api.get('/suppliers', { params: { page: 1, limit: 1000 } }).then(r => r.data.data)
     });
 
-    const { data: branches } = useQuery({
+    const { data: branches, refetch: refetchBranches, isFetching: isFetchingBranches } = useQuery({
         queryKey: ['branches'],
         queryFn: () => api.get('/branches').then(r => r.data.data)
     });
@@ -158,6 +162,9 @@ export default function PurchaseOrderForm() {
                                     options={[{ value: '', label: 'Select Supplier' }, ...(suppliers || []).map((s: any) => ({ value: s.id, label: `${s.name} (${s.supplierCode})` }))]}
                                     placeholder='Select Supplier'
                                     searchable
+                                    onRefresh={() => refetchSuppliers()}
+                                    refreshing={isFetchingSuppliers}
+                                    refreshLabel="Refresh suppliers"
                                 />
                             </div>
                             <div>
@@ -168,6 +175,8 @@ export default function PurchaseOrderForm() {
                                     options={[{ value: '', label: 'Select Warehouse' }, ...(branches || []).map((b: any) => ({ value: b.id, label: `${b.name} (${b.code})` }))]}
                                     placeholder='Select Warehouse'
                                     searchable
+                                    onRefresh={refetchBranches}
+                                    refreshing={isFetchingBranches}
                                 />
                             </div>
                             <div>

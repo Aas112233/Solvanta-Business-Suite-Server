@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { Loader2 } from 'lucide-react';
 import api from '@/lib/api';
 import Modal from '../ui/Modal';
+import { useAuthStore } from '@/stores/authStore';
 
 interface SupplierCreateModalProps {
     isOpen: boolean;
@@ -21,9 +22,9 @@ export default function SupplierCreateModal({
     initialData
 }: SupplierCreateModalProps) {
     const queryClient = useQueryClient();
+    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
 
     const [formData, setFormData] = useState({
-        supplierCode: '',
         name: initialData?.name || '',
         phone: '',
         vatNumber: '',
@@ -36,18 +37,22 @@ export default function SupplierCreateModal({
     const createSupplierMut = useMutation({
         mutationFn: (data: any) => api.post('/suppliers', data).then(r => r.data),
         onSuccess: (res) => {
+            const newSupplier = res.data || res;
             toast.success('Supplier created successfully!');
+            queryClient.setQueryData(['suppliers'], (current: any[] | undefined) => {
+                if (!Array.isArray(current)) return current;
+                const alreadyExists = current.some((supplier) => supplier?.id === newSupplier?.id);
+                return alreadyExists ? current : [newSupplier, ...current];
+            });
             queryClient.invalidateQueries({ queryKey: ['suppliers'] });
             queryClient.invalidateQueries({ queryKey: ['suppliers-stats'] });
 
             if (onSupplierCreated) {
-                const newSupplier = res.data || res;
                 onSupplierCreated(newSupplier);
             }
             onClose();
             // Reset form
             setFormData({
-                supplierCode: '',
                 name: '',
                 phone: '',
                 vatNumber: '',
@@ -88,13 +93,12 @@ export default function SupplierCreateModal({
                     <div className="col-span-1">
                         <label className="text-sm font-semibold text-gray-700 mb-1.5 flex justify-between">
                             Unique Vendor Code
-                            <span className="text-[10px] text-gray-400 font-normal mt-0.5">(Optional)</span>
+                            <span className="text-[10px] text-gray-400 font-normal mt-0.5">(Auto-generated)</span>
                         </label>
                         <input
-                            value={formData.supplierCode}
-                            onChange={(e) => setFormData({ ...formData, supplierCode: e.target.value })}
                             placeholder="Auto-generated"
-                            className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono"
+                            disabled
+                            className="w-full cursor-not-allowed rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 font-mono text-gray-500 outline-none transition-all"
                         />
                     </div>
                     <div className="col-span-1">
@@ -126,7 +130,7 @@ export default function SupplierCreateModal({
                         />
                     </div>
                     <div className="col-span-1">
-                        <label className="text-sm font-semibold text-gray-700 mb-1.5 block">Opening Balance ($)</label>
+                        <label className="text-sm font-semibold text-gray-700 mb-1.5 block">Opening Balance ({currency})</label>
                         <input
                             type="number"
                             step="0.01"

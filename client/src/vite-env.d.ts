@@ -7,7 +7,6 @@ interface ImportMetaEnv {
     readonly VITE_APP_TITLE?: string;
     readonly VITE_APP_NAME?: string;
     readonly VITE_APP_VERSION?: string;
-    readonly VITE_SUPER_ADMIN_EMAILS?: string;
     readonly VITE_DEV_SERVER_PORT?: string;
     readonly VITE_DEV_API_PROXY?: string;
     readonly VITE_ENABLE_DEV_TOOLS?: string;

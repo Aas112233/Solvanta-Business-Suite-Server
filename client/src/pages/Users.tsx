@@ -25,7 +25,7 @@ export default function Users() {
         queryFn: () => api.get('/users', { params: { search, page, limit, ...(roleFilter ? { roleId: roleFilter } : {}) } }).then((r) => r.data),
     });
 
-    const { data: roles } = useQuery({
+    const { data: roles, refetch: refetchRoles, isFetching: isFetchingRoles } = useQuery({
         queryKey: ['roles'],
         queryFn: () => api.get('/roles').then((r) => r.data.data),
     });
@@ -97,6 +97,8 @@ export default function Users() {
                     options={[{ value: '', label: 'All roles' }, ...(roles || []).map((r: any) => ({ value: r.id, label: r.name }))]}
                     placeholder='All roles'
                     searchable
+                    onRefresh={refetchRoles}
+                    refreshing={isFetchingRoles}
                 />
             </div>
 
@@ -202,6 +204,8 @@ export default function Users() {
                                         options={[{ value: '', label: 'Select role' }, ...(roles || []).map((r: any) => ({ value: r.id, label: r.name }))]}
                                         placeholder="Select role"
                                         searchable
+                                        onRefresh={refetchRoles}
+                                        refreshing={isFetchingRoles}
                                     />
                                 </div>
                             </div>

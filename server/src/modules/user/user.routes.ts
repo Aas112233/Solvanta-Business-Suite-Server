@@ -8,7 +8,8 @@ import { AppError } from '../../utils/AppError.js';
 import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { isEmailSuperAdmin } from '../../middleware/superAdmin.js';
+import { resolveSuperAdminAccess } from '../../middleware/superAdmin.js';
+import { enforceTenantCreateWithinLimit } from '../super-admin/tenant-intelligence.js';
 
 export const userRoutes = Router();
 userRoutes.use(authenticate);
@@ -100,7 +101,12 @@ userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) =>
             logoUrl: safe.company.logoUrl,
             setupCompleted: companySettings.setupCompleted !== false, // default true for existing companies
         };
-        const isSuperAdmin = isEmailSuperAdmin(safe.email);
+        const superAdminAccess = resolveSuperAdminAccess({
+            email: safe.email,
+            rolePermissions: safe.role?.permissions || [],
+        });
+        const isImpersonating = Boolean(req.user?.impersonation);
+        const isSuperAdmin = !isImpersonating && superAdminAccess.isSuperAdmin;
         const effectiveBranches = isSuperAdmin
             ? await prisma.branch.findMany({
                 where: { companyId: req.user!.companyId },
@@ -118,6 +124,19 @@ userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) =>
             company: companyData,
             branches: effectiveBranches,
             isSuperAdmin,
+            superAdminPermissions: isImpersonating ? [] : superAdminAccess.superAdminPermissions,
+            impersonation: req.user?.impersonation
+                ? {
+                    isActive: true,
+                    actorUserId: req.user.impersonation.actorUserId,
+                    actorEmail: req.user.impersonation.actorEmail,
+                    actorName: req.user.impersonation.actorName,
+                    actorCompanyId: req.user.impersonation.actorCompanyId,
+                    reason: req.user.impersonation.reason,
+                    startedAt: req.user.impersonation.startedAt,
+                    sessionId: req.user.impersonation.sessionId,
+                }
+                : null,
         });
     } catch (error) { next(error); }
 });
@@ -125,6 +144,12 @@ userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) =>
 // POST /users
 userRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), validate({ body: createUserSchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
+        await enforceTenantCreateWithinLimit(req.user!.companyId, 'users', {
+            actorUserId: req.user!.id,
+            actorEmail: req.user!.email,
+            request: req,
+        });
+
         const { password, branchIds = [], ...data } = req.body;
         if (data.email) data.email = data.email.toLowerCase().trim();
         const passwordHash = await bcrypt.hash(password, 12);

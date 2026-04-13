@@ -41,6 +41,7 @@ import { bomRoutes } from './modules/bom/bom.routes.js';
 import { productionRoutes } from './modules/production/production.routes.js';
 
 export const app = express();
+app.disable('etag');
 
 function parseCorsOrigins(raw: string) {
     return raw
@@ -161,6 +162,12 @@ app.get('/health', async (_req, res) => {
 
 // ── API v1 Routes ───────────────────────────────────────────
 const v1 = express.Router();
+v1.use((_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+});
 v1.use('/auth', authLimiter, authRoutes);
 v1.use('/companies', companyRoutes);
 v1.use('/branches', branchRoutes);

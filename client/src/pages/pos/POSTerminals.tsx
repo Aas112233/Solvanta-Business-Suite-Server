@@ -108,17 +108,17 @@ export default function POSTerminals() {
         queryFn: () => api.get('/pos-terminals').then((r) => r.data.data as Terminal[]),
     });
 
-    const { data: branches = [] } = useQuery({
+    const { data: branches = [], refetch: refetchBranches, isFetching: isFetchingBranches } = useQuery({
         queryKey: ['branches-list'],
         queryFn: () => api.get('/branches').then((r) => r.data.data),
     });
 
-    const { data: users = [] } = useQuery({
+    const { data: users = [], refetch: refetchUsers, isFetching: isFetchingUsers } = useQuery({
         queryKey: ['users-list'],
         queryFn: () => api.get('/users').then((r) => r.data.data),
     });
 
-    const { data: priceGroups = [] } = useQuery({
+    const { data: priceGroups = [], refetch: refetchPriceGroups, isFetching: isFetchingPriceGroups } = useQuery({
         queryKey: ['priceChannels'],
         queryFn: () => api.get('/products/meta/price-groups').then((r) => r.data.data),
     });
@@ -518,6 +518,8 @@ export default function POSTerminals() {
                                 options={[{ value: '', label: 'Select branch...' }, ...branches.map((b: any) => ({ value: b.id, label: `${b.name} (${b.code})` }))]}
                                 placeholder="Select branch..."
                                 searchable
+                                onRefresh={refetchBranches}
+                                refreshing={isFetchingBranches}
                             />
                         </div>
 
@@ -530,6 +532,8 @@ export default function POSTerminals() {
                                     options={[{ value: '', label: 'None' }, ...users.map((u: any) => ({ value: u.id, label: u.name }))]}
                                     placeholder="None"
                                     searchable
+                                    onRefresh={refetchUsers}
+                                    refreshing={isFetchingUsers}
                                 />
                             </div>
                             <div>
@@ -540,6 +544,8 @@ export default function POSTerminals() {
                                     options={[{ value: '', label: 'Default pricing' }, ...priceGroups.map((g: any) => ({ value: g.id, label: g.name }))]}
                                     placeholder="Default pricing"
                                     searchable
+                                    onRefresh={refetchPriceGroups}
+                                    refreshing={isFetchingPriceGroups}
                                 />
                             </div>
                         </div>

@@ -138,13 +138,13 @@ export default function POS() {
         return customerGroup || terminalPriceGroupId || null;
     }, [selectedCustomer?.priceGroupId, terminalPriceGroupId, posPolicy?.pricePriority]);
 
-    const { data: branches } = useQuery({
+    const { data: branches, refetch: refetchBranches, isFetching: isFetchingBranches } = useQuery({
         queryKey: ['branches'],
         queryFn: () => api.get('/branches').then((r) => r.data.data),
     });
 
     // Terminals query
-    const { data: posTerminals = [] } = useQuery({
+    const { data: posTerminals = [], refetch: refetchTerminals, isFetching: isFetchingTerminals } = useQuery({
         queryKey: ['pos-terminals'],
         queryFn: () => api.get('/pos-terminals').then((r) => r.data.data),
     });
@@ -2488,6 +2488,14 @@ export default function POS() {
                             className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold disabled:opacity-50"
                         >
                             {posBootstrapMut.isPending ? 'Starting...' : 'Start POS Session'}
+                        </button>
+                        <button
+                            onClick={() => {
+                                window.location.href = '/';
+                            }}
+                            className="w-full py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold"
+                        >
+                            Back to Dashboard
                         </button>
                         <button
                             onClick={() => {

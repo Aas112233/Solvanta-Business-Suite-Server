@@ -1,29 +1,55 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { SuperAdminPermission } from '../lib/superAdminPermissions';
 
 interface User {
     id: string;
     name: string;
     email: string;
     isSuperAdmin?: boolean;
+    superAdminPermissions?: SuperAdminPermission[];
+    impersonation?: {
+        isActive: boolean;
+        actorUserId: string;
+        actorEmail: string;
+        actorName: string;
+        actorCompanyId: string;
+        reason: string;
+        startedAt: string;
+        sessionId: string;
+    } | null;
     company: { id: string; name: string; currency: string; logoUrl: string | null; setupCompleted: boolean };
     role: { id: string; name: string; permissions: string[] };
     branches: { id: string; name: string; code: string }[];
+}
+
+interface OriginalSession {
+    token: string;
+    refreshToken: string;
+    user: User;
 }
 
 interface AuthState {
     token: string | null;
     refreshToken: string | null;
     user: User | null;
+    originalSession: OriginalSession | null;
     activeBranchId: string | null;
     isAuthenticated: boolean;
     hasHydrated: boolean;
 
     setTokens: (token: string, refreshToken: string) => void;
     setUser: (user: User) => void;
+    startImpersonation: (session: { token: string; refreshToken: string; user?: User | null }) => void;
+    restoreOriginalSession: () => boolean;
+    clearOriginalSession: () => void;
     setActiveBranch: () => void;
     setAuthenticated: (isAuthenticated: boolean) => void;
     setHydrated: (hydrated: boolean) => void;
+    isSuperAdmin: () => boolean;
+    isImpersonating: () => boolean;
+    hasSuperAdminPermission: (permission: SuperAdminPermission) => boolean;
+    hasAnySuperAdminPermission: (permissions: SuperAdminPermission[]) => boolean;
     hasPermission: (permission: string) => boolean;
     logout: () => void;
 }
@@ -34,6 +60,7 @@ export const useAuthStore = create<AuthState>()(
             token: null,
             refreshToken: null,
             user: null,
+            originalSession: null,
             activeBranchId: null,
             isAuthenticated: false,
             hasHydrated: false,
@@ -48,6 +75,44 @@ export const useAuthStore = create<AuthState>()(
                 });
             },
 
+            startImpersonation: ({ token, refreshToken, user }) => {
+                const current = get();
+                const originalSession = current.token && current.refreshToken && current.user
+                    ? {
+                        token: current.token,
+                        refreshToken: current.refreshToken,
+                        user: current.user,
+                    }
+                    : current.originalSession;
+
+                set({
+                    token,
+                    refreshToken,
+                    user: user || null,
+                    originalSession,
+                    activeBranchId: user?.branches?.[0]?.id || null,
+                    isAuthenticated: true,
+                });
+            },
+
+            restoreOriginalSession: () => {
+                const originalSession = get().originalSession;
+                if (!originalSession) return false;
+
+                set({
+                    token: originalSession.token,
+                    refreshToken: originalSession.refreshToken,
+                    user: originalSession.user,
+                    originalSession: null,
+                    activeBranchId: originalSession.user.branches[0]?.id || null,
+                    isAuthenticated: true,
+                });
+
+                return true;
+            },
+
+            clearOriginalSession: () => set({ originalSession: null }),
+
             // Branch context is controlled by user assignment only (no manual switching).
             setActiveBranch: () => {
                 const assignedBranchId = get().user?.branches?.[0]?.id || null;
@@ -55,24 +120,33 @@ export const useAuthStore = create<AuthState>()(
             },
             setAuthenticated: (isAuthenticated) => set({ isAuthenticated }),
             setHydrated: (hasHydrated) => set({ hasHydrated }),
+            isSuperAdmin: () => Boolean(get().user?.isSuperAdmin),
+            isImpersonating: () => Boolean(get().user?.impersonation?.isActive),
+            hasSuperAdminPermission: (permission) => {
+                const user = get().user;
+                if (!user?.isSuperAdmin) return false;
+
+                const permissions = user.superAdminPermissions || [];
+                if (permissions.length === 0) return true;
+                return permissions.includes(permission);
+            },
+            hasAnySuperAdminPermission: (permissions) => {
+                const user = get().user;
+                if (!user?.isSuperAdmin) return false;
+
+                const currentPermissions = user.superAdminPermissions || [];
+                if (currentPermissions.length === 0) return true;
+                return permissions.some((permission) => currentPermissions.includes(permission));
+            },
 
             hasPermission: (permission) => {
                 const user = get().user;
                 if (user?.isSuperAdmin) {
                     return true;
                 }
-                // Super Admins override all permissions locally
-                if (user?.email) {
-                    const allowList = (import.meta.env.VITE_SUPER_ADMIN_EMAILS || '')
-                        .split(',')
-                        .map((email: string) => email.trim().toLowerCase())
-                        .filter(Boolean);
-                    if (allowList.includes(user.email.toLowerCase())) {
-                        return true;
-                    }
-                }
-                
+
                 const perms = user?.role?.permissions || [];
+                if (perms.includes('*')) return true;
                 // Check for master permission (any module.access)
                 const module = permission.split('.')[0];
                 if (perms.includes(`${module}.access`)) return true;
@@ -83,6 +157,7 @@ export const useAuthStore = create<AuthState>()(
                 token: null,
                 refreshToken: null,
                 user: null,
+                originalSession: null,
                 activeBranchId: null,
                 isAuthenticated: false,
             }),
@@ -106,6 +181,7 @@ export const useAuthStore = create<AuthState>()(
                 token: state.token,
                 refreshToken: state.refreshToken,
                 user: state.user,
+                originalSession: state.originalSession,
             }),
         }
     )

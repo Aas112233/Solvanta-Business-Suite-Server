@@ -44,7 +44,7 @@ export default function GeneralLedger() {
     const [endDate, setEndDate] = useState(lastDay);
     const [accountId, setAccountId] = useState('');
 
-    const { data: accounts = [] } = useQuery<Account[]>({
+    const { data: accounts = [], refetch: refetchAccounts, isFetching: isFetchingAccounts } = useQuery<Account[]>({
         queryKey: ['accounts-lite'],
         queryFn: async () => {
             const res = await api.get('/accounting/accounts');
@@ -147,6 +147,9 @@ export default function GeneralLedger() {
                         ]}
                         placeholder='-- Select an Account --'
                         searchable
+                        onRefresh={refetchAccounts}
+                        refreshing={isFetchingAccounts}
+                        refreshLabel="Refresh accounts"
                     />
                 </div>
                 <div>

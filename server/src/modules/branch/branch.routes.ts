@@ -6,6 +6,7 @@ import { prisma } from '../../lib/prisma.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
 import { z } from 'zod';
+import { enforceTenantCreateWithinLimit } from '../super-admin/tenant-intelligence.js';
 
 export const branchRoutes = Router();
 branchRoutes.use(authenticate);
@@ -55,6 +56,12 @@ branchRoutes.get('/:id', async (req, res, next) => {
 // POST /branches
 branchRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES), validate({ body: branchSchema }), async (req, res, next) => {
     try {
+        await enforceTenantCreateWithinLimit(req.user!.companyId, 'branches', {
+            actorUserId: req.user!.id,
+            actorEmail: req.user!.email,
+            request: req,
+        });
+
         const branch = await prisma.branch.create({
             data: { ...req.body, companyId: req.user!.companyId },
         });

@@ -32,17 +32,21 @@ export default function PurchaseForm() {
     const [searchPO, setSearchPO] = useState('');
     const [isSearchingPO, setIsSearchingPO] = useState(false);
 
-    const { data: suppliers } = useQuery({
+    const {
+        data: suppliers,
+        refetch: refetchSuppliers,
+        isFetching: isFetchingSuppliers,
+    } = useQuery({
         queryKey: ['suppliers'],
         queryFn: () => api.get('/suppliers', { params: { page: 1, limit: 1000 } }).then(r => r.data.data)
     });
 
-    const { data: branches } = useQuery({
+    const { data: branches, refetch: refetchBranches, isFetching: isFetchingBranches } = useQuery({
         queryKey: ['branches'],
         queryFn: () => api.get('/branches').then(r => r.data.data)
     });
 
-    const { data: globalPaymentMethods } = useQuery<any[]>({
+    const { data: globalPaymentMethods, refetch: refetchPaymentMethods, isFetching: isFetchingPaymentMethods } = useQuery<any[]>({
         queryKey: ['global-strings', GLOBAL_STRING_GROUPS.purchasePaymentMethods],
         queryFn: async () => {
             const res = await api.get(`/global-strings?group=${GLOBAL_STRING_GROUPS.purchasePaymentMethods}`);
@@ -236,6 +240,9 @@ export default function PurchaseForm() {
                                     options={[{ value: '', label: 'Select Supplier' }, ...(suppliers || []).map((s: any) => ({ value: s.id, label: `${s.name} (${s.supplierCode})` }))]}
                                     placeholder='Select Supplier'
                                     searchable
+                                    onRefresh={() => refetchSuppliers()}
+                                    refreshing={isFetchingSuppliers}
+                                    refreshLabel="Refresh suppliers"
                                 />
                             </div>
                             <div>
@@ -246,6 +253,9 @@ export default function PurchaseForm() {
                                     options={[{ value: '', label: 'Select Warehouse' }, ...(branches || []).map((b: any) => ({ value: b.id, label: `${b.name} (${b.code})` }))]}
                                     placeholder='Select Warehouse'
                                     searchable
+                                    onRefresh={() => refetchBranches()}
+                                    refreshing={isFetchingBranches}
+                                    refreshLabel="Refresh warehouses"
                                 />
                             </div>
                             <div>
@@ -259,6 +269,9 @@ export default function PurchaseForm() {
                                     onChange={(v) => setPaymentMethod(v)}
                                     options={paymentMethodOptions}
                                     placeholder='Select Method'
+                                    onRefresh={() => refetchPaymentMethods()}
+                                    refreshing={isFetchingPaymentMethods}
+                                    refreshLabel="Refresh methods"
                                 />
                             </div>
                         </div>
@@ -354,7 +367,10 @@ export default function PurchaseForm() {
             <SupplierCreateModal
                 isOpen={showSupplierModal}
                 onClose={() => setShowSupplierModal(false)}
-                onSupplierCreated={(supplier) => setSupplierId(supplier.id)}
+                onSupplierCreated={(supplier) => {
+                    setSupplierId(supplier.id);
+                    void refetchSuppliers();
+                }}
             />
         </div>
     );

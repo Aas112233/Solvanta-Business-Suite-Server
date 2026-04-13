@@ -24,13 +24,14 @@ import AppDropdown from '../../components/ui/AppDropdown';
 
 export default function SupplierLedger() {
     const user = useAuthStore((s: any) => s.user);
+    const currency = user?.company?.currency || 'SAR';
     const [selectedSupplierId, setSelectedSupplierId] = useState('');
     const [supplierSearch, setSupplierSearch] = useState('');
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
 
     // Fetch suppliers for dropdown/lookup
-    const { data: suppliersData, isLoading: suppliersLoading } = useQuery({
+    const { data: suppliersData, isLoading: suppliersLoading, refetch: refetchSuppliers, isFetching: isFetchingSuppliers } = useQuery({
         queryKey: ['suppliers-lookup', supplierSearch],
         queryFn: () => api.get('/suppliers', { params: { search: supplierSearch || undefined, limit: 100 } }).then(r => r.data.data),
     });
@@ -69,7 +70,7 @@ export default function SupplierLedger() {
                 startDate={startDate}
                 endDate={endDate}
                 companyName={user?.company?.name || 'SOLVANTA ERP'}
-                currency="SAR"
+                currency={currency}
             />
         );
     };
@@ -176,12 +177,17 @@ export default function SupplierLedger() {
                             </label>
                             <div className="relative">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                                                                <AppDropdown
+                                <AppDropdown
                                     value={selectedSupplierId}
-    onChange={(v) => setSelectedSupplierId(v)}
+                                    onChange={(v) => setSelectedSupplierId(v)}
                                     options={[{ value: '', label: 'Choose a supplier...' }, ...(suppliersData || []).map((s: any) => ({ value: s.id, label: `${s.supplierCode} - ${s.name}` }))]}
                                     placeholder='Choose a supplier...'
                                     searchable
+                                    onRefresh={refetchSuppliers}
+                                    refreshing={isFetchingSuppliers}
+                                    refreshLabel="Refresh suppliers"
+                                    onRefresh={refetchSuppliers}
+                                    refreshing={isFetchingSuppliers}
                                 />
                             </div>
                         </div>
@@ -211,7 +217,7 @@ export default function SupplierLedger() {
                     <div className="relative z-10">
                         <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">Outstanding Balance</p>
                         <h2 className="text-3xl font-bold mb-4 tracking-tight">
-                            {finalBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-sm font-normal text-slate-400">SAR</span>
+                            {finalBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-sm font-normal text-slate-400">{currency}</span>
                         </h2>
                         <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/10">
                             <div>

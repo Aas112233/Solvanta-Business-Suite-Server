@@ -16,8 +16,9 @@ import {
     Shield,
 } from 'lucide-react';
 import api from '../../lib/api';
-import { isCurrentUserSuperAdmin } from '../../lib/superAdmin';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { useAuthStore } from '../../stores/authStore';
+import AppLoader from '../../components/ui/AppLoader';
 
 type HealthStatus = 'Healthy' | 'Warning' | 'Critical';
 type TenantStatus = 'Active' | 'Trial' | 'Suspended';
@@ -122,7 +123,13 @@ export default function SuperAdminPanel() {
     const [broadcastTitle, setBroadcastTitle] = useState('');
     const [broadcastMessage, setBroadcastMessage] = useState('');
     const [broadcastLevel, setBroadcastLevel] = useState<'info' | 'warning' | 'critical'>('info');
-    const canAccess = isCurrentUserSuperAdmin();
+    const token = useAuthStore((state) => state.token);
+    const user = useAuthStore((state) => state.user);
+    const canAccess = useAuthStore((state) => Boolean(state.user?.isSuperAdmin));
+
+    if (token && !user) {
+        return <AppLoader />;
+    }
 
     const {
         data: overview,
@@ -239,7 +246,7 @@ export default function SuperAdminPanel() {
                     <div>
                         <h1 className="text-lg font-semibold text-red-800">Super Admin Access Required</h1>
                         <p className="text-sm text-red-700 mt-1">
-                            Your account is not listed in `VITE_SUPER_ADMIN_EMAILS` and `SUPER_ADMIN_EMAILS`.
+                            Your account does not have super admin access. Contact a platform administrator if this is unexpected.
                         </p>
                     </div>
                 </div>
@@ -254,7 +261,7 @@ export default function SuperAdminPanel() {
                     <AlertTriangle size={20} className="text-red-600 mt-0.5" />
                     <div>
                         <h1 className="text-lg font-semibold text-red-800">Unable To Load Super Admin Data</h1>
-                        <p className="text-sm text-red-700 mt-1">Check backend auth and `SUPER_ADMIN_EMAILS` configuration.</p>
+                        <p className="text-sm text-red-700 mt-1">Check backend authentication and super admin access configuration.</p>
                     </div>
                 </div>
             </div>

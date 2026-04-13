@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, Search } from 'lucide-react';
+import { Check, ChevronDown, RefreshCw, Search } from 'lucide-react';
 import { clsx } from 'clsx';
 
 
@@ -19,6 +19,9 @@ interface AppDropdownProps {
     searchable?: boolean;
     noOptionsText?: string;
     className?: string;
+    onRefresh?: () => void | Promise<unknown>;
+    refreshing?: boolean;
+    refreshLabel?: string;
 }
 
 export default function AppDropdown({
@@ -30,6 +33,9 @@ export default function AppDropdown({
     searchable = false,
     noOptionsText = 'No options found',
     className = '',
+    onRefresh,
+    refreshing = false,
+    refreshLabel = 'Refresh options',
 }: AppDropdownProps) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const dropdownRef = useRef<HTMLDivElement | null>(null);
@@ -92,39 +98,87 @@ export default function AppDropdown({
 
     return (
         <div ref={containerRef} className={clsx('relative', className)}>
-            <button
-                type="button"
-                disabled={disabled}
-                onClick={() => setOpen((prev) => !prev)}
-                className={clsx(
-                    'w-full flex items-center justify-between',
-                    'rounded-lg border px-3 py-2 text-left text-sm',
-                    'transition-colors duration-200',
-                    disabled
-                        ? 'bg-background-subtle text-text-tertiary border-border cursor-not-allowed'
-                        : 'bg-background-card text-text-primary border-border hover:border-brand-300',
-                    open && 'ring-2 ring-brand-200 border-brand',
-                    className
+            <div className="flex items-stretch gap-2">
+                <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setOpen((prev) => !prev)}
+                    className={clsx(
+                        'w-full flex items-center justify-between',
+                        'rounded-lg border px-3 py-2 text-left text-sm',
+                        'transition-colors duration-200',
+                        disabled
+                            ? 'bg-background-subtle text-text-tertiary border-border cursor-not-allowed'
+                            : 'bg-background-card text-text-primary border-border hover:border-brand-300',
+                        open && 'ring-2 ring-brand-200 border-brand',
+                        className
+                    )}
+                >
+                    <span className={selected ? 'text-text-primary' : 'text-text-tertiary'}>
+                        {selected?.label || placeholder}
+                    </span>
+                    <ChevronDown size={16} className={clsx('text-text-secondary transition-transform', open ? 'rotate-180' : '')} />
+                </button>
+
+                {onRefresh && (
+                    <button
+                        type="button"
+                        disabled={disabled || refreshing}
+                        onClick={async (event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            await onRefresh();
+                        }}
+                        title={refreshLabel}
+                        aria-label={refreshLabel}
+                        className={clsx(
+                            'inline-flex shrink-0 items-center justify-center rounded-lg border px-3',
+                            'transition-colors duration-200',
+                            disabled
+                                ? 'cursor-not-allowed border-border bg-background-subtle text-text-tertiary'
+                                : 'border-border bg-background-card text-text-secondary hover:border-brand-300 hover:text-brand',
+                            refreshing && 'cursor-wait'
+                        )}
+                    >
+                        <RefreshCw size={16} className={clsx(refreshing && 'animate-spin')} />
+                    </button>
                 )}
-            >
-                <span className={selected ? 'text-text-primary' : 'text-text-tertiary'}>
-                    {selected?.label || placeholder}
-                </span>
-                <ChevronDown size={16} className={clsx('text-text-secondary transition-transform', open ? 'rotate-180' : '')} />
-            </button>
+            </div>
 
             {open && createPortal(
                 <div ref={dropdownRef} className="rounded-lg border border-border bg-background-card shadow-lg" style={dropdownStyle}>
-                    {searchable && (
-                        <div className="p-2 border-b border-border-subtle">
-                            <div className="relative">
-                                <Search size={14} className="absolute left-2.5 top-2.5 text-text-tertiary" />
-                                <input
-                                    value={search}
-                                    onChange={(e) => setSearch(e.target.value)}
-                                    placeholder="Search..."
-                                    className="w-full rounded-lg border border-border py-1.5 pl-8 pr-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand"
-                                />
+                    {(searchable || onRefresh) && (
+                        <div className="border-b border-border-subtle p-2">
+                            <div className="flex items-center gap-2">
+                                {searchable && (
+                                    <div className="relative flex-1">
+                                        <Search size={14} className="absolute left-2.5 top-2.5 text-text-tertiary" />
+                                        <input
+                                            value={search}
+                                            onChange={(e) => setSearch(e.target.value)}
+                                            placeholder="Search..."
+                                            className="w-full rounded-lg border border-border py-1.5 pl-8 pr-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand"
+                                        />
+                                    </div>
+                                )}
+
+                                {onRefresh && (
+                                    <button
+                                        type="button"
+                                        disabled={refreshing}
+                                        onClick={async () => {
+                                            await onRefresh();
+                                        }}
+                                        className={clsx(
+                                            'inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-semibold',
+                                            'text-text-secondary hover:border-brand-300 hover:text-brand',
+                                            refreshing && 'cursor-wait'
+                                        )}
+                                    >
+                                        <RefreshCw size={13} className={clsx(refreshing && 'animate-spin')} />
+                                        Refresh
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}
@@ -167,4 +221,3 @@ export default function AppDropdown({
         </div>
     );
 }
-

@@ -44,17 +44,21 @@ export default function SalesInvoiceForm() {
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
     const canAddItems = Boolean(branchId && paymentMethod);
 
-    const { data: customers } = useQuery({
+    const {
+        data: customers,
+        refetch: refetchCustomers,
+        isFetching: isFetchingCustomers,
+    } = useQuery({
         queryKey: ['customers'],
         queryFn: () => api.get('/customers', { params: { page: 1, limit: 1000 } }).then((r) => r.data.data),
     });
 
-    const { data: branches } = useQuery({
+    const { data: branches, refetch: refetchBranches, isFetching: isFetchingBranches } = useQuery({
         queryKey: ['branches'],
         queryFn: () => api.get('/branches').then((r) => r.data.data),
     });
 
-    const { data: globalPaymentMethods } = useQuery<any[]>({
+    const { data: globalPaymentMethods, refetch: refetchPaymentMethods, isFetching: isFetchingPaymentMethods } = useQuery<any[]>({
         queryKey: ['global-strings', GLOBAL_STRING_GROUPS.salePaymentMethods],
         queryFn: () => api.get(`/global-strings?group=${GLOBAL_STRING_GROUPS.salePaymentMethods}`).then((r) => r.data.data),
     });
@@ -251,6 +255,9 @@ export default function SalesInvoiceForm() {
                                     options={[{ value: '', label: 'Walk-in Customer' }, ...(customers || []).map((c: any) => ({ value: c.id, label: `${c.name} (${c.customerCode || '-'})` }))]}
                                     placeholder='Walk-in Customer'
                                     searchable
+                                    onRefresh={() => refetchCustomers()}
+                                    refreshing={isFetchingCustomers}
+                                    refreshLabel="Refresh customers"
                                 />
                                 {priceGroupId && (
                                     <p className="mt-1 text-[11px] text-emerald-600 font-medium">✓ Price channel active</p>
@@ -264,6 +271,8 @@ export default function SalesInvoiceForm() {
                                     options={[{ value: '', label: 'Select Warehouse' }, ...(branches || []).map((b: any) => ({ value: b.id, label: `${b.name} (${b.code})` }))]}
                                     placeholder='Select Warehouse'
                                     searchable
+                                    onRefresh={refetchBranches}
+                                    refreshing={isFetchingBranches}
                                 />
                             </div>
                             <div>
@@ -274,6 +283,9 @@ export default function SalesInvoiceForm() {
                                     options={[{ value: '', label: 'Select Method' }, ...paymentOptions]}
                                     placeholder='Select Method'
                                     searchable
+                                    onRefresh={() => refetchPaymentMethods()}
+                                    refreshing={isFetchingPaymentMethods}
+                                    refreshLabel="Refresh methods"
                                 />
                             </div>
                         </div>

@@ -22,7 +22,7 @@ export default function StockCountForm() {
     const [showItemSelector, setShowItemSelector] = useState(false);
 
     // Fetch Price Groups
-    const { data: priceGroups } = useQuery({
+    const { data: priceGroups, refetch: refetchPriceGroups, isFetching: isFetchingPriceGroups } = useQuery({
         queryKey: ['price-groups'],
         queryFn: () => api.get('/sales/pricing/price-lists').then((r: any) => r.data.data)
     });
@@ -89,7 +89,7 @@ export default function StockCountForm() {
     }, [existingCount]);
 
     // Fetch Branches
-    const { data: branches } = useQuery({
+    const { data: branches, refetch: refetchBranches, isFetching: isFetchingBranches } = useQuery({
         queryKey: ['branches'],
         queryFn: () => api.get('/branches').then((r: any) => r.data.data)
     });
@@ -256,6 +256,9 @@ export default function StockCountForm() {
                                     options={[{ value: '', label: 'Select Target Branch' }, ...(branches || []).map((b: any) => ({ value: b.id, label: b.name }))]}
                                     placeholder='Select Target Branch'
                                     searchable
+                                    onRefresh={refetchBranches}
+                                    refreshing={isFetchingBranches}
+                                    refreshLabel="Refresh branches"
                                 />
                             </div>
                             <div>
@@ -266,6 +269,9 @@ export default function StockCountForm() {
                                     options={[{ value: '', label: 'Default Sale Prices' }, ...(priceGroups || []).map((pg: any) => ({ value: pg.id, label: pg.name }))]}
                                     placeholder='Target Price Group'
                                     searchable
+                                    onRefresh={refetchPriceGroups}
+                                    refreshing={isFetchingPriceGroups}
+                                    refreshLabel="Refresh price groups"
                                 />
                             </div>
                             <div>

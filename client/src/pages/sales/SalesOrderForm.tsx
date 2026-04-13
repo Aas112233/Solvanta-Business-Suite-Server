@@ -39,7 +39,11 @@ export default function SalesOrderForm() {
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
     const [editForm, setEditForm] = useState<OrderItem | null>(null);
 
-    const { data: customers } = useQuery({
+    const {
+        data: customers,
+        refetch: refetchCustomers,
+        isFetching: isFetchingCustomers,
+    } = useQuery({
         queryKey: ['customers-order-form'],
         queryFn: () => api.get('/customers', { params: { page: 1, limit: 1000 } }).then((r) => r.data.data),
     });
@@ -198,6 +202,12 @@ export default function SalesOrderForm() {
                                     options={[{ value: '', label: 'Select Customer' }, ...(customers || []).map((c: any) => ({ value: c.id, label: `${c.name} (${c.customerCode || '-'})` }))]}
                                     placeholder='Select Customer'
                                     searchable
+                                    onRefresh={refetchCustomers}
+                                    refreshing={isFetchingCustomers}
+                                    refreshLabel="Refresh customers"
+                                    onRefresh={() => refetchCustomers()}
+                                    refreshing={isFetchingCustomers}
+                                    refreshLabel="Refresh customers"
                                 />
                                 {priceGroupId && (
                                     <p className="mt-1 text-[11px] text-emerald-600 font-medium">✓ Price channel active</p>

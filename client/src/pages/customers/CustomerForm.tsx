@@ -79,12 +79,12 @@ export default function CustomerForm() {
         queryFn: () => api.get(`/customers/${id}`).then((r) => r.data.data as Customer),
     });
 
-    const { data: priceGroups } = useQuery({
+    const { data: priceGroups, refetch: refetchPriceGroups, isFetching: isFetchingPriceGroups } = useQuery({
         queryKey: ['priceGroups'],
         queryFn: () => api.get('/products/meta/price-groups').then((r) => r.data.data),
     });
 
-    const { data: globalCustomerGroups } = useQuery<any[]>({
+    const { data: globalCustomerGroups, refetch: refetchCustomerGroups, isFetching: isFetchingCustomerGroups } = useQuery<any[]>({
         queryKey: ['global-strings', 'CUSTOMER_GROUP'],
         queryFn: async () => {
             const res = await api.get('/global-strings?group=CUSTOMER_GROUP');
@@ -336,6 +336,9 @@ export default function CustomerForm() {
                                 options={[{ value: '', label: 'Default' }, ...(priceGroups || []).map((pg: any) => ({ value: pg.id, label: pg.name }))]}
                                 placeholder="Default"
                                 searchable
+                                onRefresh={() => refetchPriceGroups()}
+                                refreshing={isFetchingPriceGroups}
+                                refreshLabel="Refresh price groups"
                             />
                         </div>
                     </div>
@@ -403,6 +406,9 @@ export default function CustomerForm() {
                                 ]}
                                 placeholder="Quick add customer group..."
                                 searchable
+                                onRefresh={() => refetchCustomerGroups()}
+                                refreshing={isFetchingCustomerGroups}
+                                refreshLabel="Refresh groups"
                             />
                         </div>
                         {errors.tags && <p className="text-xs text-red-600 mt-1">{errors.tags}</p>}

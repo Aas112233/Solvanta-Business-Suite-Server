@@ -17,7 +17,7 @@ export default function SalesReturn() {
     const [returnsLimit, setReturnsLimit] = useState(8);
     const [returnsSearch, setReturnsSearch] = useState('');
 
-    const { data: invoiceData, isLoading: invoiceLoading } = useQuery({
+    const { data: invoiceData, isLoading: invoiceLoading, refetch: refetchInvoices, isFetching: isFetchingInvoices } = useQuery({
         queryKey: ['sales-return', 'invoices', invoiceSearch],
         queryFn: () => api.get('/sales/invoices', { params: { page: 1, limit: 50, search: invoiceSearch.trim() || undefined } }).then((r) => r.data),
     });
@@ -151,6 +151,9 @@ export default function SalesReturn() {
                                 options={[{ value: '', label: 'Select invoice' }, ...invoiceRows.map((row: any) => ({ value: row.id, label: `${row.invoiceNo} - ${row.customer?.name || 'Walk-in'}` }))]}
                                 placeholder='Select invoice'
                                 searchable
+                                onRefresh={() => refetchInvoices()}
+                                refreshing={isFetchingInvoices}
+                                refreshLabel="Refresh invoices"
                             />
                             {invoiceLoading && <p className="mt-1 text-xs text-gray-500">Loading invoices...</p>}
                             {!invoiceLoading && (

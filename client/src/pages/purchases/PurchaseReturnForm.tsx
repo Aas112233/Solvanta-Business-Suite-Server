@@ -34,7 +34,7 @@ export default function PurchaseReturnForm() {
         enabled: isEdit && !!returnId,
     });
 
-    const { data: purchases } = useQuery({
+    const { data: purchases, refetch: refetchPurchases, isFetching: isFetchingPurchases } = useQuery({
         queryKey: ['purchases', 'for-return'],
         queryFn: () => api.get('/purchases', { params: { page: 1, limit: 200 } }).then((r) => r.data.data),
     });
@@ -201,6 +201,9 @@ export default function PurchaseReturnForm() {
                                     options={[{ value: '', label: 'Select Purchase' }, ...filteredPurchases.map((p: any) => ({ value: p.id, label: `${p.purchaseNo} - ${p.supplier?.name}` }))]}
                                     placeholder='Select Purchase'
                                     searchable
+                                    onRefresh={() => refetchPurchases()}
+                                    refreshing={isFetchingPurchases}
+                                    refreshLabel="Refresh purchases"
                                 />
                             </div>
                             <div>

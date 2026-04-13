@@ -1,13 +1,59 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { randomUUID } from 'crypto';
 import { prisma } from '../../lib/prisma.js';
 import { env } from '../../config/env.js';
 import { AppError } from '../../utils/AppError.js';
 import { ALL_PERMISSIONS } from '../../config/permissions.js';
-import { isEmailSuperAdmin } from '../../middleware/superAdmin.js';
+import { resolveSuperAdminAccess } from '../../middleware/superAdmin.js';
+import { SUPER_ADMIN_PERMISSIONS } from '../super-admin/super-admin.permissions.js';
 
 const jwtExpiry = env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'];
 const jwtRefreshExpiry = env.JWT_REFRESH_EXPIRES_IN as jwt.SignOptions['expiresIn'];
+
+export interface ImpersonationContext {
+    actorUserId: string;
+    actorEmail: string;
+    actorName: string;
+    actorCompanyId: string;
+    reason: string;
+    startedAt: string;
+    sessionId: string;
+}
+
+interface AccessTokenPayload {
+    userId: string;
+    companyId: string;
+    impersonation?: ImpersonationContext;
+}
+
+interface RefreshTokenPayload extends AccessTokenPayload {
+    type: 'refresh' | 'impersonation_refresh';
+}
+
+function signAccessToken(payload: AccessTokenPayload) {
+    return jwt.sign(payload, env.JWT_SECRET, { expiresIn: jwtExpiry });
+}
+
+function signRefreshToken(payload: RefreshTokenPayload) {
+    return jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: jwtRefreshExpiry });
+}
+
+function buildImpersonationTokens(target: { id: string; companyId: string }, impersonation: ImpersonationContext) {
+    return {
+        accessToken: signAccessToken({
+            userId: target.id,
+            companyId: target.companyId,
+            impersonation,
+        }),
+        refreshToken: signRefreshToken({
+            userId: target.id,
+            companyId: target.companyId,
+            type: 'impersonation_refresh',
+            impersonation,
+        }),
+    };
+}
 
 export class AuthService {
     static async login(email: string, password: string) {
@@ -50,7 +96,11 @@ export class AuthService {
         const companySettings = (fullUser.company?.settings && typeof fullUser.company.settings === 'object' && !Array.isArray(fullUser.company.settings))
             ? fullUser.company.settings as Record<string, any>
             : {};
-        const isSuperAdmin = isEmailSuperAdmin(fullUser.email);
+        const superAdminAccess = resolveSuperAdminAccess({
+            email: fullUser.email,
+            rolePermissions: fullUser.role?.permissions || [],
+        });
+        const isSuperAdmin = superAdminAccess.isSuperAdmin;
         const effectiveBranches = isSuperAdmin
             ? await prisma.branch.findMany({
                 where: { companyId: fullUser.companyId },
@@ -59,17 +109,8 @@ export class AuthService {
             })
             : fullUser.branches.map((ub) => ub.branch);
 
-        const accessToken = jwt.sign(
-            { userId: user.id, companyId: user.companyId },
-            env.JWT_SECRET,
-            { expiresIn: jwtExpiry }
-        );
-
-        const refreshToken = jwt.sign(
-            { userId: user.id, companyId: user.companyId, type: 'refresh' },
-            env.JWT_REFRESH_SECRET,
-            { expiresIn: jwtRefreshExpiry }
-        );
+        const accessToken = signAccessToken({ userId: user.id, companyId: user.companyId });
+        const refreshToken = signRefreshToken({ userId: user.id, companyId: user.companyId, type: 'refresh' });
 
         // Store refresh token
         try {
@@ -104,16 +145,58 @@ export class AuthService {
                 },
                 branches: effectiveBranches,
                 isSuperAdmin,
+                superAdminPermissions: superAdminAccess.superAdminPermissions,
             },
         };
     }
 
     static async refresh(refreshToken: string) {
         try {
-            const decoded = jwt.verify(refreshToken, env.JWT_REFRESH_SECRET) as {
-                userId: string;
-                companyId: string;
-            };
+            const decoded = jwt.verify(refreshToken, env.JWT_REFRESH_SECRET) as RefreshTokenPayload;
+
+            if (decoded.type === 'impersonation_refresh') {
+                if (!decoded.impersonation) {
+                    throw AppError.unauthorized('Invalid impersonation refresh token');
+                }
+
+                const [actor, target] = await Promise.all([
+                    prisma.user.findUnique({
+                        where: { id: decoded.impersonation.actorUserId },
+                        include: {
+                            role: { select: { permissions: true } },
+                        },
+                    }),
+                    prisma.user.findUnique({
+                        where: { id: decoded.userId },
+                        select: { id: true, companyId: true, isActive: true },
+                    }),
+                ]);
+
+                if (!actor || !actor.isActive) {
+                    throw AppError.unauthorized('Impersonation actor is no longer active');
+                }
+
+                const actorSuperAdminAccess = resolveSuperAdminAccess({
+                    email: actor.email,
+                    rolePermissions: actor.role?.permissions || [],
+                });
+
+                if (
+                    !actorSuperAdminAccess.isSuperAdmin
+                    || !actorSuperAdminAccess.superAdminPermissions.includes(SUPER_ADMIN_PERMISSIONS.USERS_IMPERSONATE)
+                ) {
+                    throw AppError.unauthorized('Impersonation permission is no longer available');
+                }
+
+                if (!target || !target.isActive) {
+                    throw AppError.unauthorized('Impersonated user is no longer available');
+                }
+
+                return buildImpersonationTokens(
+                    { id: target.id, companyId: target.companyId },
+                    decoded.impersonation,
+                );
+            }
 
             const user = await prisma.user.findUnique({
                 where: { id: decoded.userId },
@@ -123,17 +206,8 @@ export class AuthService {
                 throw AppError.unauthorized('Invalid refresh token');
             }
 
-            const accessToken = jwt.sign(
-                { userId: user.id, companyId: user.companyId },
-                env.JWT_SECRET,
-                { expiresIn: jwtExpiry }
-            );
-
-            const newRefreshToken = jwt.sign(
-                { userId: user.id, companyId: user.companyId, type: 'refresh' },
-                env.JWT_REFRESH_SECRET,
-                { expiresIn: jwtRefreshExpiry }
-            );
+            const accessToken = signAccessToken({ userId: user.id, companyId: user.companyId });
+            const newRefreshToken = signRefreshToken({ userId: user.id, companyId: user.companyId, type: 'refresh' });
 
             await prisma.user.update({
                 where: { id: user.id },
@@ -147,10 +221,85 @@ export class AuthService {
         }
     }
 
-    static async logout(userId: string) {
+    static async logout(userId: string, options?: { isImpersonating?: boolean }) {
+        if (options?.isImpersonating) {
+            return;
+        }
+
         await prisma.user.update({
             where: { id: userId },
             data: { refreshToken: null },
         });
+    }
+
+    static async createImpersonationSession(params: {
+        actorUserId: string;
+        targetUserId: string;
+        reason: string;
+    }) {
+        const actor = await prisma.user.findUnique({
+            where: { id: params.actorUserId },
+            include: {
+                role: { select: { permissions: true } },
+            },
+        });
+
+        if (!actor || !actor.isActive) {
+            throw AppError.forbidden('Super admin account is not active');
+        }
+
+        const actorSuperAdminAccess = resolveSuperAdminAccess({
+            email: actor.email,
+            rolePermissions: actor.role?.permissions || [],
+        });
+
+        if (
+            !actorSuperAdminAccess.isSuperAdmin
+            || !actorSuperAdminAccess.superAdminPermissions.includes(SUPER_ADMIN_PERMISSIONS.USERS_IMPERSONATE)
+        ) {
+            throw AppError.forbidden('Missing permission to impersonate tenant users');
+        }
+
+        const targetUser = await prisma.user.findUnique({
+            where: { id: params.targetUserId },
+            include: {
+                role: { select: { permissions: true } },
+            },
+        });
+
+        if (!targetUser || !targetUser.isActive) {
+            throw AppError.notFound('User');
+        }
+
+        if (targetUser.id === actor.id) {
+            throw AppError.badRequest('Cannot impersonate your own account');
+        }
+
+        const targetSuperAdminAccess = resolveSuperAdminAccess({
+            email: targetUser.email,
+            rolePermissions: targetUser.role?.permissions || [],
+        });
+
+        if (targetSuperAdminAccess.isSuperAdmin) {
+            throw AppError.badRequest('Super admin accounts cannot be impersonated');
+        }
+
+        const impersonation: ImpersonationContext = {
+            actorUserId: actor.id,
+            actorEmail: actor.email,
+            actorName: actor.name,
+            actorCompanyId: actor.companyId,
+            reason: params.reason.trim(),
+            startedAt: new Date().toISOString(),
+            sessionId: randomUUID(),
+        };
+
+        return {
+            ...buildImpersonationTokens(
+                { id: targetUser.id, companyId: targetUser.companyId },
+                impersonation,
+            ),
+            impersonation,
+        };
     }
 }

@@ -20,7 +20,7 @@ export default function TransferForm() {
     const [showItemSelector, setShowItemSelector] = useState(false);
 
     // Fetch Branches
-    const { data: branches } = useQuery({
+    const { data: branches, refetch: refetchBranches, isFetching: isFetchingBranches } = useQuery({
         queryKey: ['branches'],
         queryFn: () => api.get('/branches').then((r: any) => r.data.data)
     });
@@ -158,6 +158,8 @@ export default function TransferForm() {
                             options={[{ value: '', label: 'Select Origin Branch' }, ...(branches || []).map((b: any) => ({ value: b.id, label: b.name }))]}
                             placeholder='Select Origin Branch'
                             searchable
+                            onRefresh={refetchBranches}
+                            refreshing={isFetchingBranches}
                         />
                     </div>
                     <div>
@@ -171,6 +173,8 @@ export default function TransferForm() {
                                     .filter((b: any) => b.id !== fromBranchId)
                                     .map((b: any) => ({ value: b.id, label: b.name }))
                             ]}
+                            onRefresh={refetchBranches}
+                            refreshing={isFetchingBranches}
                             placeholder='Select Destination Branch'
                             searchable
                         />

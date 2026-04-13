@@ -2,7 +2,8 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { useThemeStore } from '../stores/themeStore';
-import { isCurrentUserSuperAdmin } from '../lib/superAdmin';
+import { SUPER_ADMIN_PERMISSIONS, type SuperAdminPermission } from '../lib/superAdminPermissions';
+import api from '../lib/api';
 import {
     LayoutDashboard, Users, ShoppingCart, Package, Warehouse,
     Receipt, BookOpen, BarChart3, Settings, LogOut,
@@ -11,6 +12,8 @@ import {
     BadgeDollarSign, Boxes, Landmark, ShieldCheck, Briefcase, Globe, Wrench
 } from 'lucide-react';
 import LanguageSwitcher from './ui/LanguageSwitcher';
+import toast from 'react-hot-toast';
+import SupportSessionPanel from './support/SupportSessionPanel';
 
 interface NavItem {
     to?: string;
@@ -19,6 +22,7 @@ interface NavItem {
     section: NavSectionKey;
     permission?: string;
     superAdminOnly?: boolean;
+    superAdminPermission?: SuperAdminPermission;
     roles?: string[];
     children?: NavChildItem[];
 }
@@ -29,6 +33,7 @@ interface NavChildItem {
     category?: string;
     permission?: string;
     superAdminOnly?: boolean;
+    superAdminPermission?: SuperAdminPermission;
     roles?: string[];
 }
 
@@ -271,11 +276,12 @@ const navItems: NavItem[] = [
         section: 'Administration',
         superAdminOnly: true,
         children: [
-            { to: '/super-admin/dashboard', label: 'Dashboard', category: 'Overview', superAdminOnly: true },
-            { to: '/super-admin/companies', label: 'Company Management', category: 'Tenant', superAdminOnly: true },
-            { to: '/super-admin/modules', label: 'Module Controls', category: 'Tenant', superAdminOnly: true },
-            { to: '/super-admin/broadcasts', label: 'Announcements', category: 'Governance', superAdminOnly: true },
-            { to: '/super-admin/audit', label: 'Audit Logs', category: 'Governance', superAdminOnly: true },
+            { to: '/super-admin/dashboard', label: 'Dashboard', category: 'Overview', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.DASHBOARD_READ },
+            { to: '/super-admin/companies', label: 'Company Management', category: 'Tenant', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.TENANTS_READ },
+            { to: '/super-admin/modules', label: 'Module Controls', category: 'Tenant', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.TENANTS_MANAGE },
+            { to: '/super-admin/broadcasts', label: 'Announcements', category: 'Governance', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.ANNOUNCEMENTS_READ },
+            { to: '/super-admin/support-sessions', label: 'Support Sessions', category: 'Governance', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.AUDIT_READ },
+            { to: '/super-admin/audit', label: 'Audit Logs', category: 'Governance', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.AUDIT_READ },
         ],
     },
 ];
@@ -351,7 +357,8 @@ export default function Layout() {
     const [expandedItems, setExpandedItems] = useState<string[]>([]);
     const [expandedChildGroups, setExpandedChildGroups] = useState<string[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
-    const { user, hasPermission, logout } = useAuthStore();
+    const [showSupportSessionPanel, setShowSupportSessionPanel] = useState(false);
+    const { user, hasPermission, logout, restoreOriginalSession } = useAuthStore();
     const theme = useThemeStore((s) => s.theme);
     const toggleTheme = useThemeStore((s) => s.toggleTheme);
     const navigate = useNavigate();
@@ -384,7 +391,35 @@ export default function Layout() {
         navigate('/login');
     };
 
-    const canAccessSuperAdmin = isCurrentUserSuperAdmin();
+    const canAccessSuperAdmin = useAuthStore((s) => Boolean(s.user?.isSuperAdmin));
+    const hasSuperAdminPermission = useAuthStore((s) => s.hasSuperAdminPermission);
+    const isImpersonating = useAuthStore((s) => s.isImpersonating());
+
+    const handleExitImpersonation = async () => {
+        try {
+            await api.post('/auth/impersonation/stop');
+        } catch (error: any) {
+            toast.error(error?.response?.data?.error?.message || 'Failed to close impersonation session');
+            return;
+        }
+
+        const restored = restoreOriginalSession();
+        if (!restored) {
+            logout();
+            navigate('/login');
+            return;
+        }
+
+        try {
+            const profile = await api.get('/users/me');
+            useAuthStore.getState().setUser(profile.data.data);
+            toast.success('Returned to your super admin session');
+            navigate('/super-admin/companies');
+        } catch {
+            logout();
+            navigate('/login');
+        }
+    };
 
     const isChildRouteActive = (to: string): boolean => {
         const [childPath, childSearch] = to.split('?');
@@ -395,8 +430,12 @@ export default function Layout() {
     };
 
     const filteredNav = useMemo(() => {
-        const canAccessNode = (node: { superAdminOnly?: boolean; roles?: string[]; permission?: string }) => {
+        const canAccessNode = (node: { superAdminOnly?: boolean; superAdminPermission?: SuperAdminPermission; roles?: string[]; permission?: string }) => {
             if (node.superAdminOnly && !canAccessSuperAdmin) return false;
+            if (node.superAdminOnly) {
+                if (node.superAdminPermission && !hasSuperAdminPermission(node.superAdminPermission)) return false;
+                return true;
+            }
             if (canAccessSuperAdmin) return true;
             if (node.roles && node.roles.length > 0) {
                 const userRole = user?.role?.name;
@@ -437,7 +476,7 @@ export default function Layout() {
 
             return null;
         }).filter(Boolean) as NavItem[];
-    }, [navItems, canAccessSuperAdmin, hasPermission, searchTerm, user]);
+    }, [canAccessSuperAdmin, hasPermission, hasSuperAdminPermission, searchTerm, user]);
 
     const groupedNav = useMemo(() => {
         const groups = NAV_SECTION_ORDER.map((section) => ({
@@ -448,16 +487,19 @@ export default function Layout() {
     }, [filteredNav]);
 
     useEffect(() => {
-        if (searchTerm) {
-            const firstItem = filteredNav.find((item) => (item.children?.length || 0) > 0);
-            setExpandedItems(firstItem ? [firstItem.label] : []);
-            if (firstItem) {
-                const firstGroup = groupChildrenByCategory(firstItem.children || [])[0];
-                setExpandedChildGroups(firstGroup ? [getChildGroupKey(firstItem.section, firstItem.label, firstGroup.category)] : []);
-            } else {
-                setExpandedChildGroups([]);
-            }
-        }
+        const trimmedSearchTerm = searchTerm.trim();
+        if (!trimmedSearchTerm) return;
+
+        const matchingParents = filteredNav.filter((item) => (item.children?.length || 0) > 0);
+        setExpandedItems(matchingParents.map((item) => item.label));
+
+        const matchingGroupKeys = matchingParents.flatMap((item) =>
+            groupChildrenByCategory(item.children || []).map((group) =>
+                getChildGroupKey(item.section, item.label, group.category)
+            )
+        );
+
+        setExpandedChildGroups(matchingGroupKeys);
     }, [searchTerm, filteredNav]);
 
     useEffect(() => {
@@ -562,9 +604,6 @@ export default function Layout() {
                                 <div className="relative">
                                     <div className={`px-2 pt-2 pb-1 flex items-center justify-between transition-all duration-300 ${sidebarOpen ? 'opacity-100 max-h-10' : 'opacity-0 max-h-0 overflow-hidden p-0'}`}>
                                         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[#475569]">{section}</p>
-                                        <span className="inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-md bg-slate-100 text-[10px] font-bold text-slate-500">
-                                            {items.length}
-                                        </span>
                                     </div>
                                     <div className={`mx-auto h-px bg-slate-200/60 transition-all duration-300 ${sidebarOpen ? 'opacity-0 my-0 w-full' : 'opacity-100 my-1 w-8'}`} />
                                 </div>
@@ -593,9 +632,6 @@ export default function Layout() {
                                                         )}
                                                     </div>
                                                     <div className={`ml-auto flex items-center gap-2 transition-all duration-200 ${sidebarOpen ? 'opacity-100' : 'opacity-0 w-0 overflow-hidden'}`}>
-                                                        <span className={`inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full text-[10px] font-bold ${isActiveParent ? 'bg-brand-100 text-brand-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                            {item.children?.length || 0}
-                                                        </span>
                                                         <ChevronDown
                                                             size={16}
                                                             className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
@@ -647,12 +683,9 @@ export default function Layout() {
                                                                             }`}
                                                                     >
                                                                         <span className="min-w-0 flex-1 whitespace-normal break-words leading-tight text-left">{group.category}</span>
-                                                                        <span className={`ml-auto inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full text-[10px] font-bold ${isGroupActive ? 'bg-brand-100 text-brand-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                                            {group.children.length}
-                                                                        </span>
                                                                         <ChevronDown
                                                                             size={14}
-                                                                            className={`ml-1 transition-transform duration-200 ${isGroupExpanded ? 'rotate-180' : ''}`}
+                                                                            className={`ml-auto transition-transform duration-200 ${isGroupExpanded ? 'rotate-180' : ''}`}
                                                                         />
                                                                     </button>
 
@@ -762,7 +795,39 @@ export default function Layout() {
                 {/* Content */}
                 <main className="flex-1 overflow-y-auto px-4 py-6 md:px-6 lg:px-8 custom-scrollbar">
                     <div className="w-full min-w-0 animate-scale-in">
+                        {isImpersonating && user?.impersonation && (
+                            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                                <div>
+                                    <p className="text-sm font-semibold text-amber-900">
+                                        Impersonating {user.name} ({user.email})
+                                    </p>
+                                    <p className="mt-1 text-xs text-amber-800">
+                                        Started by {user.impersonation.actorName} ({user.impersonation.actorEmail}) on {new Date(user.impersonation.startedAt).toLocaleString()}
+                                    </p>
+                                    <p className="mt-1 text-xs text-amber-800">
+                                        Reason: {user.impersonation.reason}
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSupportSessionPanel(true)}
+                                    className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                                >
+                                    Session Notes
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => { void handleExitImpersonation(); }}
+                                    className="rounded-lg bg-amber-900 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-950"
+                                >
+                                    Exit Impersonation
+                                </button>
+                            </div>
+                        )}
                         <Outlet />
+                        {isImpersonating && showSupportSessionPanel && (
+                            <SupportSessionPanel onClose={() => setShowSupportSessionPanel(false)} />
+                        )}
                     </div>
                 </main>
             </div>

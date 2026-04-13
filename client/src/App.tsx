@@ -105,6 +105,7 @@ import {
     SuperAdminCompanyProfile,
     SuperAdminDashboard,
     SuperAdminModules,
+    SuperAdminSupportSessions,
     SuperAdminShell,
     Taxes,
     TodaySalesSummary,
@@ -277,6 +278,7 @@ function DynamicTitle() {
         else if (path.startsWith('/roles')) suffix = 'Roles';
         else if (path.startsWith('/super-admin/dashboard')) suffix = 'Admin Dashboard';
         else if (path.startsWith('/super-admin/companies')) suffix = 'Admin Companies';
+        else if (path.startsWith('/super-admin/support-sessions')) suffix = 'Support Sessions';
         else if (path.startsWith('/super-admin')) suffix = 'Super Admin';
         else if (path.startsWith('/login')) suffix = 'Login';
 
@@ -467,6 +469,7 @@ export default function App() {
                         <Route path="customers/:id" element={<CustomerForm />} />
                         <Route path="suppliers" element={<PermissionRoute permission="supplier.view" title="Supplier List"><Suppliers /></PermissionRoute>} />
                         <Route path="suppliers/ledger" element={<PermissionRoute permission="supplier.view" title="Supplier Ledger"><SupplierLedger /></PermissionRoute>} />
+                        <Route path="suppliers/:id" element={<PermissionRoute permission="supplier.view" title="Supplier Profile"><Suppliers /></PermissionRoute>} />
 
                         {/* Items Module */}
                         <Route path="items" element={<ItemsList />} />
@@ -648,6 +651,7 @@ export default function App() {
                             <Route path="modules" element={<SuperAdminModules />} />
                             <Route path="broadcasts" element={<SuperAdminBroadcasts />} />
                             <Route path="audit" element={<SuperAdminAudit />} />
+                            <Route path="support-sessions" element={<SuperAdminSupportSessions />} />
                         </Route>
                     </Route>
                 </Routes>

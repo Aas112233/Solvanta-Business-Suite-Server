@@ -119,7 +119,7 @@ export default function ShiftHistory() {
     const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('');
     const [closeShiftTarget, setCloseShiftTarget] = useState<{ shiftId: string; terminalCode: string; openingCash: number } | null>(null);
 
-    const { data: terminalsData } = useQuery({
+    const { data: terminalsData, refetch: refetchTerminals, isFetching: isFetchingTerminals } = useQuery({
         queryKey: ['pos-terminals'],
         queryFn: () => api.get('/pos-terminals').then((r) => r.data.data),
     });
@@ -379,6 +379,9 @@ export default function ShiftHistory() {
                             options={[{ value: '', label: 'All Terminals' }, ...terminals.map((t: any) => ({ value: t.id, label: `${t.code} — ${t.name}` }))]}
                             placeholder="All Terminals"
                             searchable
+                            onRefresh={() => refetchTerminals()}
+                            refreshing={isFetchingTerminals}
+                            refreshLabel="Refresh terminals"
                         />
                     </div>
 
