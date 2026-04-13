@@ -14,7 +14,8 @@ interface ServiceInvoiceItemInput {
     discount?: number;
 }
 
-const SUPPORTED_PAYMENT_METHODS = new Set(['CASH', 'CARD', 'BANK_TRANSFER', 'STC_PAY', 'CREDIT']);
+export const SERVICE_INVOICE_PAYMENT_METHODS = ['CASH', 'CARD', 'BANK_TRANSFER', 'STC_PAY', 'CREDIT'] as const;
+const SUPPORTED_PAYMENT_METHODS = new Set<string>(SERVICE_INVOICE_PAYMENT_METHODS);
 
 function roundMoney(value: number): number {
     return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -49,23 +50,15 @@ export const createServiceInvoice = async (req: Request, res: Response) => {
             notes,
             items,
         } = req.body as {
-            branchId?: string;
+            branchId: string;
             customerId?: string | null;
             walkInCustomerName?: string | null;
             walkInPhone?: string | null;
             invoiceDate?: string;
-            paymentMethod?: string;
+            paymentMethod?: (typeof SERVICE_INVOICE_PAYMENT_METHODS)[number];
             notes?: string | null;
-            items?: ServiceInvoiceItemInput[];
+            items: ServiceInvoiceItemInput[];
         };
-
-        if (!branchId) throw AppError.badRequest('Branch is required');
-        if (!customerId && !walkInCustomerName) {
-            throw AppError.badRequest('Either customerId or walkInCustomerName is required');
-        }
-        if (!Array.isArray(items) || items.length === 0) {
-            throw AppError.badRequest('At least one service item is required');
-        }
 
         if (!req.user!.isSuperAdmin && req.user!.branchIds.length > 0 && !req.user!.branchIds.includes(String(branchId))) {
             throw AppError.forbidden('You do not have access to create invoices for this branch');
@@ -171,8 +164,8 @@ export const createServiceInvoice = async (req: Request, res: Response) => {
                     branchId: branch.id,
                     invoiceNo,
                     customerId: customerId ? String(customerId) : null,
-                    walkInCustomerName: walkInCustomerName ? String(walkInCustomerName).trim() : null,
-                    walkInPhone: walkInPhone ? String(walkInPhone).trim() : null,
+                    walkInCustomerName: customerId ? null : walkInCustomerName ? String(walkInCustomerName).trim() : null,
+                    walkInPhone: customerId ? null : walkInPhone ? String(walkInPhone).trim() : null,
                     subtotal,
                     discountTotal,
                     taxTotal,

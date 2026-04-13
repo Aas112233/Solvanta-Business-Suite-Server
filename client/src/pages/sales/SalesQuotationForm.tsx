@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { ArrowLeft, Pencil, Plus, Save, Trash, X, Package } from 'lucide-react';
+import { z } from 'zod';
 import api from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import ItemSelectorModal from '@/components/inventory/ItemSelectorModal';
@@ -19,6 +20,104 @@ type QuotationItem = {
     taxAmount: number;
 };
 
+type QuotationFormErrors = Partial<Record<'customerName' | 'validUntil' | 'notes' | 'terms' | 'items', string>>;
+type QuotationItemErrors = Partial<Record<'description' | 'qty' | 'unitPrice' | 'discount' | 'taxAmount', string>>;
+
+function isValidDateInput(value: string) {
+    if (!value) return true;
+    return !Number.isNaN(new Date(`${value}T00:00:00.000`).getTime());
+}
+
+function normalizeOptionalString(value: unknown) {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+}
+
+function mapQuotationIssues(issues: z.ZodIssue[]) {
+    const nextErrors: QuotationFormErrors = {};
+    issues.forEach((issue) => {
+        const root = issue.path[0];
+        if (root === 'items') {
+            nextErrors.items ??= issue.message;
+            return;
+        }
+        if (
+            root === 'customerName' ||
+            root === 'validUntil' ||
+            root === 'notes' ||
+            root === 'terms'
+        ) {
+            nextErrors[root] ??= issue.message;
+        }
+    });
+    return nextErrors;
+}
+
+function mapItemIssues(issues: z.ZodIssue[]) {
+    const nextErrors: QuotationItemErrors = {};
+    issues.forEach((issue) => {
+        const root = issue.path[0];
+        if (
+            root === 'description' ||
+            root === 'qty' ||
+            root === 'unitPrice' ||
+            root === 'discount' ||
+            root === 'taxAmount'
+        ) {
+            nextErrors[root] ??= issue.message;
+        }
+    });
+    return nextErrors;
+}
+
+const quotationItemSchema = z.object({
+    productId: z.string().optional(),
+    description: z.string().trim().min(1, 'Item description is required'),
+    unitCode: z.string().trim().min(1, 'Unit code is required').max(40, 'Unit code is too long'),
+    qty: z.number().positive('Quantity must be greater than zero'),
+    unitPrice: z.number().min(0, 'Unit price cannot be negative'),
+    discount: z.number().min(0, 'Discount cannot be negative'),
+    taxAmount: z.number().min(0, 'Tax cannot be negative'),
+}).superRefine((item, ctx) => {
+    const gross = Number(item.qty) * Number(item.unitPrice);
+    if (Number(item.discount || 0) > gross) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['discount'],
+            message: 'Discount cannot exceed line gross amount',
+        });
+    }
+});
+
+const salesQuotationFormSchema = z.object({
+    customerId: z.preprocess(normalizeOptionalString, z.string().optional()),
+    customerName: z.preprocess(normalizeOptionalString, z.string().max(200, 'Customer name must be 200 characters or less').optional()),
+    validUntil: z.preprocess(normalizeOptionalString, z.string().refine(isValidDateInput, 'Valid until date is invalid').optional()),
+    notes: z.preprocess(normalizeOptionalString, z.string().max(2000, 'Notes must be 2000 characters or less').optional()),
+    terms: z.preprocess(normalizeOptionalString, z.string().max(5000, 'Terms must be 5000 characters or less').optional()),
+    items: z.array(quotationItemSchema).min(1, 'Add at least one item'),
+}).superRefine((data, ctx) => {
+    if (!data.customerId && !data.customerName) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['customerName'],
+            message: 'Select a customer or enter a walk-in customer name',
+        });
+    }
+
+    if (data.validUntil) {
+        const validUntilDate = new Date(`${data.validUntil}T23:59:59.999`);
+        if (validUntilDate < new Date()) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['validUntil'],
+                message: 'Valid until date cannot be in the past',
+            });
+        }
+    }
+});
+
 export default function SalesQuotationForm() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
@@ -32,8 +131,10 @@ export default function SalesQuotationForm() {
     const [terms, setTerms] = useState('');
     const [items, setItems] = useState<QuotationItem[]>([]);
     const [showItemSelector, setShowItemSelector] = useState(false);
+    const [formErrors, setFormErrors] = useState<QuotationFormErrors>({});
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
     const [editForm, setEditForm] = useState<QuotationItem | null>(null);
+    const [editErrors, setEditErrors] = useState<QuotationItemErrors>({});
 
     const {
         data: customers,
@@ -75,48 +176,67 @@ export default function SalesQuotationForm() {
             taxAmount: 0,
         };
         setItems((prev) => [...prev, row]);
+        setFormErrors((current) => ({ ...current, items: undefined }));
         toast.success(`Added ${row.description}`);
     };
 
     const removeItem = (idx: number) => {
         setItems((prev) => prev.filter((_, i) => i !== idx));
+        setFormErrors((current) => ({ ...current, items: undefined }));
     };
 
     const startEditItem = (idx: number) => {
         setEditingIndex(idx);
         setEditForm({ ...items[idx] });
+        setEditErrors({});
     };
 
     const cancelEditItem = () => {
         setEditingIndex(null);
         setEditForm(null);
+        setEditErrors({});
     };
 
     const saveEditItem = () => {
         if (editingIndex === null || !editForm) return;
-        if (!editForm.description.trim()) return toast.error('Item description is required');
-        if (Number(editForm.qty) <= 0) return toast.error('Quantity must be greater than zero');
-        if (Number(editForm.unitPrice) < 0) return toast.error('Unit price cannot be negative');
-        if (Number(editForm.discount) < 0) return toast.error('Discount cannot be negative');
-        if (Number(editForm.taxAmount) < 0) return toast.error('Tax cannot be negative');
+        const parsed = quotationItemSchema.safeParse(editForm);
+        if (!parsed.success) {
+            setEditErrors(mapItemIssues(parsed.error.issues));
+            toast.error('Please fix the highlighted item fields');
+            return;
+        }
 
-        setItems((prev) => prev.map((row, i) => (i === editingIndex ? editForm : row)));
+        setItems((prev) => prev.map((row, i) => (i === editingIndex ? { ...parsed.data, productId: parsed.data.productId || '' } : row)));
         setEditingIndex(null);
         setEditForm(null);
+        setEditErrors({});
+        setFormErrors((current) => ({ ...current, items: undefined }));
     };
 
     const handleSubmit = () => {
-        if (!customerId && !customerName.trim()) return toast.error('Select customer or enter customer name');
-        if (items.length === 0) return toast.error('Add at least one item');
-        if (items.some((i) => !i.description.trim() || Number(i.qty) <= 0)) return toast.error('Please complete all item rows');
+        const parsed = salesQuotationFormSchema.safeParse({
+            customerId,
+            customerName,
+            validUntil,
+            notes,
+            terms,
+            items,
+        });
+        if (!parsed.success) {
+            setFormErrors(mapQuotationIssues(parsed.error.issues));
+            toast.error('Please fix the highlighted fields');
+            return;
+        }
+
+        setFormErrors({});
 
         createMut.mutate({
-            customerId: customerId || undefined,
-            customerName: customerId ? undefined : customerName.trim(),
-            validUntil: validUntil || undefined,
-            notes: notes || undefined,
-            terms: terms || undefined,
-            items: items.map((i) => ({
+            customerId: parsed.data.customerId || undefined,
+            customerName: parsed.data.customerId ? undefined : parsed.data.customerName,
+            validUntil: parsed.data.validUntil || undefined,
+            notes: parsed.data.notes || undefined,
+            terms: parsed.data.terms || undefined,
+            items: parsed.data.items.map((i) => ({
                 productId: i.productId || undefined,
                 description: i.description,
                 unitCode: i.unitCode,
@@ -145,13 +265,13 @@ export default function SalesQuotationForm() {
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Customer</label>
                                 <AppDropdown
                                     value={customerId}
-                                    onChange={(v) => setCustomerId(v)}
+                                    onChange={(v) => {
+                                        setCustomerId(v);
+                                        setFormErrors((current) => ({ ...current, customerName: undefined }));
+                                    }}
                                     options={[{ value: '', label: 'Select Customer' }, ...(customers || []).map((c: any) => ({ value: c.id, label: `${c.name} (${c.customerCode || '-'})` }))]}
                                     placeholder='Select Customer'
                                     searchable
-                                    onRefresh={refetchCustomers}
-                                    refreshing={isFetchingCustomers}
-                                    refreshLabel="Refresh customers"
                                     onRefresh={() => refetchCustomers()}
                                     refreshing={isFetchingCustomers}
                                     refreshLabel="Refresh customers"
@@ -161,6 +281,9 @@ export default function SalesQuotationForm() {
                                         ✓ Price channel active
                                     </p>
                                 )}
+                                {formErrors.customerName && (
+                                    <p className="mt-1 text-xs text-red-600">{formErrors.customerName}</p>
+                                )}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Walk-in Customer Name</label>
@@ -168,21 +291,29 @@ export default function SalesQuotationForm() {
                                     value={customerName}
                                     onChange={(e) => {
                                         setCustomerName(e.target.value);
+                                        setFormErrors((current) => ({ ...current, customerName: undefined }));
                                         if (e.target.value.trim()) setCustomerId('');
                                     }}
                                     disabled={!!customerId}
-                                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm disabled:bg-gray-50"
+                                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm disabled:bg-gray-50 ${formErrors.customerName ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
                                     placeholder="Optional if customer selected"
                                 />
+                                {formErrors.customerName && (
+                                    <p className="mt-1 text-xs text-red-600">{formErrors.customerName}</p>
+                                )}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Valid Until</label>
                                 <input
                                     type="date"
                                     value={validUntil}
-                                    onChange={(e) => setValidUntil(e.target.value)}
-                                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                    onChange={(e) => {
+                                        setValidUntil(e.target.value);
+                                        setFormErrors((current) => ({ ...current, validUntil: undefined }));
+                                    }}
+                                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${formErrors.validUntil ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
                                 />
+                                {formErrors.validUntil && <p className="mt-1 text-xs text-red-600">{formErrors.validUntil}</p>}
                             </div>
                         </div>
                     </div>
@@ -208,6 +339,8 @@ export default function SalesQuotationForm() {
                                         setItems([...items, newItem]);
                                         setEditingIndex(items.length);
                                         setEditForm(newItem);
+                                        setEditErrors({});
+                                        setFormErrors((current) => ({ ...current, items: undefined }));
                                     }}
                                     className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all text-xs font-bold"
                                 >
@@ -269,16 +402,37 @@ export default function SalesQuotationForm() {
                                 </tbody>
                             </table>
                         </div>
+                        {formErrors.items && <p className="text-sm text-red-600">{formErrors.items}</p>}
                     </div>
 
                     <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm space-y-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                            <textarea rows={3} className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Add any external notes..." value={notes} onChange={(e) => setNotes(e.target.value)} />
+                            <textarea
+                                rows={3}
+                                className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${formErrors.notes ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                                placeholder="Add any external notes..."
+                                value={notes}
+                                onChange={(e) => {
+                                    setNotes(e.target.value);
+                                    setFormErrors((current) => ({ ...current, notes: undefined }));
+                                }}
+                            />
+                            {formErrors.notes && <p className="mt-1 text-xs text-red-600">{formErrors.notes}</p>}
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Terms &amp; Conditions</label>
-                            <textarea rows={3} className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Payment terms, validity terms, delivery notes..." value={terms} onChange={(e) => setTerms(e.target.value)} />
+                            <textarea
+                                rows={3}
+                                className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${formErrors.terms ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                                placeholder="Payment terms, validity terms, delivery notes..."
+                                value={terms}
+                                onChange={(e) => {
+                                    setTerms(e.target.value);
+                                    setFormErrors((current) => ({ ...current, terms: undefined }));
+                                }}
+                            />
+                            {formErrors.terms && <p className="mt-1 text-xs text-red-600">{formErrors.terms}</p>}
                         </div>
                     </div>
                 </div>
@@ -303,24 +457,76 @@ export default function SalesQuotationForm() {
                     <div className="space-y-4">
                         <div>
                             <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Description</label>
-                            <input value={editForm.description} onChange={(e) => setEditForm((prev) => prev ? ({ ...prev, description: e.target.value }) : prev)} className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+                            <input
+                                value={editForm.description}
+                                onChange={(e) => {
+                                    setEditForm((prev) => prev ? ({ ...prev, description: e.target.value }) : prev);
+                                    setEditErrors((current) => ({ ...current, description: undefined }));
+                                }}
+                                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${editErrors.description ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                            />
+                            {editErrors.description && <p className="mt-1 text-xs text-red-600">{editErrors.description}</p>}
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Qty</label>
-                                <input type="number" min={0} step="0.01" value={editForm.qty} onChange={(e) => setEditForm((prev) => prev ? ({ ...prev, qty: Number(e.target.value) }) : prev)} className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={editForm.qty}
+                                    onChange={(e) => {
+                                        setEditForm((prev) => prev ? ({ ...prev, qty: Number(e.target.value) }) : prev);
+                                        setEditErrors((current) => ({ ...current, qty: undefined }));
+                                    }}
+                                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${editErrors.qty ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                                />
+                                {editErrors.qty && <p className="mt-1 text-xs text-red-600">{editErrors.qty}</p>}
                             </div>
                             <div>
                                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Unit Price</label>
-                                <input type="number" min={0} step="0.01" value={editForm.unitPrice} onChange={(e) => setEditForm((prev) => prev ? ({ ...prev, unitPrice: Number(e.target.value) }) : prev)} className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={editForm.unitPrice}
+                                    onChange={(e) => {
+                                        setEditForm((prev) => prev ? ({ ...prev, unitPrice: Number(e.target.value) }) : prev);
+                                        setEditErrors((current) => ({ ...current, unitPrice: undefined }));
+                                    }}
+                                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${editErrors.unitPrice ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                                />
+                                {editErrors.unitPrice && <p className="mt-1 text-xs text-red-600">{editErrors.unitPrice}</p>}
                             </div>
                             <div>
                                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Discount</label>
-                                <input type="number" min={0} step="0.01" value={editForm.discount} onChange={(e) => setEditForm((prev) => prev ? ({ ...prev, discount: Number(e.target.value) }) : prev)} className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={editForm.discount}
+                                    onChange={(e) => {
+                                        setEditForm((prev) => prev ? ({ ...prev, discount: Number(e.target.value) }) : prev);
+                                        setEditErrors((current) => ({ ...current, discount: undefined }));
+                                    }}
+                                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${editErrors.discount ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                                />
+                                {editErrors.discount && <p className="mt-1 text-xs text-red-600">{editErrors.discount}</p>}
                             </div>
                             <div>
                                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Tax</label>
-                                <input type="number" min={0} step="0.01" value={editForm.taxAmount} onChange={(e) => setEditForm((prev) => prev ? ({ ...prev, taxAmount: Number(e.target.value) }) : prev)} className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={editForm.taxAmount}
+                                    onChange={(e) => {
+                                        setEditForm((prev) => prev ? ({ ...prev, taxAmount: Number(e.target.value) }) : prev);
+                                        setEditErrors((current) => ({ ...current, taxAmount: undefined }));
+                                    }}
+                                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${editErrors.taxAmount ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                                />
+                                {editErrors.taxAmount && <p className="mt-1 text-xs text-red-600">{editErrors.taxAmount}</p>}
                             </div>
                         </div>
                         <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-sm flex justify-between">

@@ -17,6 +17,10 @@ const featureLabelMap: Record<keyof FeatureFlags, string> = {
     reports: 'Reports',
     bom: 'Production Recipes',
     production: 'Production',
+    sales: 'Sales',
+    items: 'Items / Products',
+    suppliers: 'Suppliers',
+    hr: 'Human Resources',
 };
 
 export default function SuperAdminModules() {

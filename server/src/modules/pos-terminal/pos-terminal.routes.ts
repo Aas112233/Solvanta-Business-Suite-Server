@@ -80,7 +80,7 @@ function isManagerOrAdmin(user: any): boolean {
 }
 
 // GET /pos-terminals
-posTerminalRoutes.get('/', async (req, res, next) => {
+posTerminalRoutes.get('/', requirePermission(PERMISSIONS.POS_ACCESS), async (req, res, next) => {
     try {
         const companyId = req.user!.companyId;
         const hasManagePerm = req.user?.permissions?.includes(PERMISSIONS.POS_MANAGE_TERMINALS);
@@ -136,7 +136,7 @@ posTerminalRoutes.get('/', async (req, res, next) => {
 });
 
 // GET /pos-terminals/:id
-posTerminalRoutes.get('/:id', async (req, res, next) => {
+posTerminalRoutes.get('/:id', requirePermission(PERMISSIONS.POS_ACCESS), async (req, res, next) => {
     try {
         const terminal = await (prisma as any).pOSTerminal.findFirst({
             where: { id: req.params.id, companyId: req.user!.companyId },
@@ -454,7 +454,7 @@ posTerminalRoutes.post('/:id/open-shift', requireAnyPermission(PERMISSIONS.POS_S
 });
 
 // GET /pos-terminals/:id/active-shift
-posTerminalRoutes.get('/:id/active-shift', async (req, res, next) => {
+posTerminalRoutes.get('/:id/active-shift', requirePermission(PERMISSIONS.POS_ACCESS), async (req, res, next) => {
     try {
         const shift = await (prisma as any).pOSShift.findFirst({
             where: {

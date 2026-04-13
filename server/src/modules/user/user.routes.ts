@@ -10,6 +10,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { resolveSuperAdminAccess } from '../../middleware/superAdmin.js';
 import { enforceTenantCreateWithinLimit } from '../super-admin/tenant-intelligence.js';
+import { getSuperAdminSettings, resolveFeatureFlags } from '../super-admin/super-admin.settings.js';
 
 export const userRoutes = Router();
 userRoutes.use(authenticate);
@@ -101,6 +102,8 @@ userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) =>
             logoUrl: safe.company.logoUrl,
             setupCompleted: companySettings.setupCompleted !== false, // default true for existing companies
         };
+        const superAdminSettings = getSuperAdminSettings(safe.company.settings);
+        const enabledModules = resolveFeatureFlags(superAdminSettings.featureFlags);
         const superAdminAccess = resolveSuperAdminAccess({
             email: safe.email,
             rolePermissions: safe.role?.permissions || [],
@@ -123,6 +126,7 @@ userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) =>
             } : safe.role,
             company: companyData,
             branches: effectiveBranches,
+            enabledModules,
             isSuperAdmin,
             superAdminPermissions: isImpersonating ? [] : superAdminAccess.superAdminPermissions,
             impersonation: req.user?.impersonation

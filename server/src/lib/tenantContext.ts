@@ -9,6 +9,8 @@ export const tenantStorage = new AsyncLocalStorage<{
     companyId: string;
     userId?: string;
     activeBranchId?: string;
+    ipAddress?: string;
+    userAgent?: string;
     impersonation?: {
         sessionId: string;
         actorUserId: string;
@@ -22,3 +24,10 @@ export const tenantStorage = new AsyncLocalStorage<{
 export const getTenant = () => tenantStorage.getStore();
 export const getCompanyId = () => tenantStorage.getStore()?.companyId;
 export const getUserId = () => tenantStorage.getStore()?.userId;
+export const getRequestContext = () => {
+    const store = tenantStorage.getStore();
+    return {
+        ipAddress: store?.ipAddress,
+        userAgent: store?.userAgent,
+    };
+};

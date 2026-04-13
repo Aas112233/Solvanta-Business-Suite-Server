@@ -16,6 +16,10 @@ export type FeatureFlags = {
     reports: boolean;
     bom: boolean;
     production: boolean;
+    sales: boolean;
+    items: boolean;
+    suppliers: boolean;
+    hr: boolean;
 };
 
 export type TenantLimits = {
@@ -494,6 +498,17 @@ export async function deleteSuperAdminAnnouncement(announcementId: string) {
 
 export async function updateTenantUserPassword(tenantId: string, userId: string, password: string) {
     await api.patch(`/super-admin/tenants/${tenantId}/users/${userId}/password`, { password });
+}
+
+export async function createTenantUser(tenantId: string, payload: {
+    name: string;
+    email: string;
+    password: string;
+    role?: string;
+    phone?: string;
+}) {
+    const res = await api.post(`/super-admin/tenants/${tenantId}/users`, payload);
+    return res.data.data as TenantUser;
 }
 
 export async function impersonateTenantUser(

@@ -194,7 +194,7 @@ export const prisma = basePrisma.$extends({
                 const changeOperations = ['create', 'update', 'delete', 'updateMany', 'deleteMany', 'upsert'];
                 if (changeOperations.includes(operation) && model !== 'AuditLog') {
                     const tenant = tenantStorage.getStore();
-                    enqueueAuditLog({
+                    const auditData: any = {
                         companyId,
                         userId: tenant?.userId || 'SYSTEM',
                         branchId: tenant?.activeBranchId,
@@ -202,7 +202,18 @@ export const prisma = basePrisma.$extends({
                         entity: model,
                         entityId: (result as any)?.id || undefined,
                         after: attachAuditMetadata(result as any, tenant?.impersonation),
-                    });
+                        ipAddress: tenant?.ipAddress || null,
+                        userAgent: tenant?.userAgent || null,
+                    };
+
+                    // Capture `before` state for updates and deletes
+                    if ((operation === 'update' || operation === 'delete' || operation === 'updateMany' || operation === 'deleteMany') && args?.where) {
+                        // For automatic filtering, the original where clause has companyId injected
+                        // We can't easily fetch the old record here without performance impact
+                        // The `before` field will be populated by manual audit writes in route handlers
+                    }
+
+                    enqueueAuditLog(auditData);
                 }
 
                 return result;

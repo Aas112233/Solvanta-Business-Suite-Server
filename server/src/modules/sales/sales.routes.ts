@@ -15,13 +15,89 @@ import { InventoryService } from '../inventory/InventoryService.js';
 export const salesRoutes = Router();
 salesRoutes.use(authenticate);
 
+const objectIdRegex = /^[a-f\d]{24}$/i;
+const SALES_PAYMENT_METHODS = ['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER'] as const;
+const SALES_RECEIPT_PAYMENT_METHODS = ['CASH', 'CARD', 'BANK_TRANSFER', 'STC_PAY'] as const;
+
+function normalizeOptionalString(value: unknown) {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+}
+
+function isValidDateInput(value: string) {
+    const normalized = value.includes('T') ? value : `${value}T00:00:00.000`;
+    return !Number.isNaN(new Date(normalized).getTime());
+}
+
+function toComparableDate(value?: string) {
+    if (!value) return null;
+    const normalized = value.includes('T') ? value : `${value}T00:00:00.000`;
+    const date = new Date(normalized);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function addSalesItemIssues(
+    items: Array<{ productId?: string; unitCode?: string; qty: number; unitPrice: number; discount?: number }>,
+    ctx: z.RefinementCtx
+) {
+    items.forEach((item, index) => {
+        const discount = Number(item.discount || 0);
+        const gross = Number(item.qty) * Number(item.unitPrice);
+        if (item.productId && !item.unitCode) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['items', index, 'unitCode'],
+                message: 'unitCode is required when productId is provided',
+            });
+        }
+        if (discount > gross) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['items', index, 'discount'],
+                message: 'Discount cannot exceed qty * unitPrice',
+            });
+        }
+    });
+}
+
+const objectIdSchema = z.string().regex(objectIdRegex, 'Invalid id');
+const optionalObjectIdSchema = z.preprocess(normalizeOptionalString, objectIdSchema.optional());
+const optionalTrimmedString = (maxLength: number) =>
+    z.preprocess(normalizeOptionalString, z.string().min(1).max(maxLength).optional());
+const optionalDateStringSchema = z.preprocess(
+    normalizeOptionalString,
+    z.string().refine(isValidDateInput, 'Invalid date').optional()
+);
+const salesPaymentMethodSchema = z.preprocess(
+    (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+    z.enum(SALES_PAYMENT_METHODS)
+);
+const salesReceiptPaymentMethodSchema = z.preprocess(
+    (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+    z.enum(SALES_RECEIPT_PAYMENT_METHODS)
+);
+
 const salesReturnSchema = z.object({
-    reason: z.string().max(300).optional(),
-    notes: z.string().max(1000).optional(),
+    reason: optionalTrimmedString(300),
+    notes: optionalTrimmedString(1000),
     items: z.array(z.object({
-        invoiceItemId: z.string().min(1),
+        invoiceItemId: objectIdSchema,
         qty: z.number().positive(),
     })).min(1),
+}).superRefine((data, ctx) => {
+    const seen = new Set<string>();
+    data.items.forEach((item, index) => {
+        if (seen.has(item.invoiceItemId)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['items', index, 'invoiceItemId'],
+                message: 'Duplicate invoiceItemId is not allowed',
+            });
+            return;
+        }
+        seen.add(item.invoiceItemId);
+    });
 });
 
 const salesInvoiceQuerySchema = paginationSchema.extend({
@@ -61,10 +137,10 @@ const salesPaymentsQuerySchema = paginationSchema.extend({
 
 const salesReceivePaymentSchema = z.object({
     amount: z.number().positive(),
-    paymentMethod: z.string().min(1),
-    paymentDate: z.string().optional(),
-    referenceNo: z.string().max(100).optional(),
-    notes: z.string().max(1000).optional(),
+    paymentMethod: salesReceiptPaymentMethodSchema,
+    paymentDate: optionalDateStringSchema,
+    referenceNo: optionalTrimmedString(100),
+    notes: optionalTrimmedString(1000),
 });
 
 const salesQuotationQuerySchema = paginationSchema.extend({
@@ -72,26 +148,54 @@ const salesQuotationQuerySchema = paginationSchema.extend({
 });
 
 const salesQuotationItemSchema = z.object({
-    productId: z.string().min(1).optional(),
-    description: z.string().min(1),
-    unitCode: z.string().min(1).optional(),
+    productId: optionalObjectIdSchema,
+    description: z.string().trim().min(1),
+    unitCode: optionalTrimmedString(40),
     qty: z.number().positive(),
     unitPrice: z.number().nonnegative(),
     discount: z.number().nonnegative().default(0),
     taxAmount: z.number().nonnegative().default(0),
+}).superRefine((item, ctx) => {
+    const gross = Number(item.qty) * Number(item.unitPrice);
+    if (item.productId && !item.unitCode) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['unitCode'],
+            message: 'unitCode is required when productId is provided',
+        });
+    }
+    if (Number(item.discount || 0) > gross) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['discount'],
+            message: 'Discount cannot exceed qty * unitPrice',
+        });
+    }
 });
 
 const salesQuotationCreateSchema = z.object({
-    customerId: z.string().min(1).optional(),
-    customerName: z.string().max(200).optional(),
-    validUntil: z.string().optional(),
-    notes: z.string().max(2000).optional(),
-    terms: z.string().max(5000).optional(),
+    customerId: optionalObjectIdSchema,
+    customerName: optionalTrimmedString(200),
+    validUntil: optionalDateStringSchema,
+    notes: optionalTrimmedString(2000),
+    terms: optionalTrimmedString(5000),
     items: z.array(salesQuotationItemSchema).min(1),
+}).superRefine((data, ctx) => {
+    addSalesItemIssues(data.items, ctx);
+    const validUntil = data.validUntil
+        ? new Date(data.validUntil.includes('T') ? data.validUntil : `${data.validUntil}T23:59:59.999`)
+        : null;
+    if (validUntil && validUntil < new Date()) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['validUntil'],
+            message: 'validUntil cannot be in the past',
+        });
+    }
 });
 
 const salesQuotationConvertSchema = z.object({
-    paymentMethod: z.enum(['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER']).optional(),
+    paymentMethod: salesPaymentMethodSchema.optional(),
 });
 
 const salesOrderQuerySchema = paginationSchema.extend({
@@ -101,31 +205,78 @@ const salesOrderQuerySchema = paginationSchema.extend({
 });
 
 const salesOrderItemSchema = z.object({
-    productId: z.string().min(1).optional(),
-    description: z.string().min(1),
-    unitCode: z.string().min(1).optional(),
+    productId: optionalObjectIdSchema,
+    description: z.string().trim().min(1),
+    unitCode: optionalTrimmedString(40),
     qty: z.number().positive(),
     unitPrice: z.number().nonnegative(),
     discount: z.number().nonnegative().default(0),
     taxAmount: z.number().nonnegative().default(0),
+}).superRefine((item, ctx) => {
+    const gross = Number(item.qty) * Number(item.unitPrice);
+    if (item.productId && !item.unitCode) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['unitCode'],
+            message: 'unitCode is required when productId is provided',
+        });
+    }
+    if (Number(item.discount || 0) > gross) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['discount'],
+            message: 'Discount cannot exceed qty * unitPrice',
+        });
+    }
 });
 
 const salesOrderCreateSchema = z.object({
-    customerId: z.string().min(1).optional(),
-    customerName: z.string().max(200).optional(),
-    date: z.string().optional(),
-    deliveryDate: z.string().optional(),
-    notes: z.string().max(2000).optional(),
-    terms: z.string().max(5000).optional(),
+    customerId: optionalObjectIdSchema,
+    customerName: optionalTrimmedString(200),
+    date: optionalDateStringSchema,
+    deliveryDate: optionalDateStringSchema,
+    notes: optionalTrimmedString(2000),
+    terms: optionalTrimmedString(5000),
     items: z.array(salesOrderItemSchema).min(1),
+}).superRefine((data, ctx) => {
+    addSalesItemIssues(data.items, ctx);
+    const date = toComparableDate(data.date);
+    const deliveryDate = toComparableDate(data.deliveryDate);
+    if (date && deliveryDate && deliveryDate < date) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['deliveryDate'],
+            message: 'deliveryDate must be on or after date',
+        });
+    }
 });
 
-const salesOrderUpdateSchema = salesOrderCreateSchema.partial().extend({
+const salesOrderUpdateSchema = z.object({
+    customerId: optionalObjectIdSchema,
+    customerName: optionalTrimmedString(200),
+    date: optionalDateStringSchema,
+    deliveryDate: optionalDateStringSchema,
+    notes: optionalTrimmedString(2000),
+    terms: optionalTrimmedString(5000),
+    items: z.array(salesOrderItemSchema).min(1).optional(),
     status: z.enum(['DRAFT', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'INVOICED']).optional(),
+}).superRefine((data, ctx) => {
+    if (data.items) {
+        addSalesItemIssues(data.items, ctx);
+    }
+    const date = toComparableDate(data.date);
+    const deliveryDate = toComparableDate(data.deliveryDate);
+    if (date && deliveryDate && deliveryDate < date) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['deliveryDate'],
+            message: 'deliveryDate must be on or after date',
+        });
+    }
 });
 
 const salesOrderConvertSchema = z.object({
-    paymentMethod: z.enum(['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER']).optional(),
+    paymentMethod: salesPaymentMethodSchema.optional(),
 });
 
 const salesPricingGroupSchema = z.object({

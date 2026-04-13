@@ -38,6 +38,7 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
                         // Base styles
                         'h-10',
                         'rounded-lg',
+                        'appearance-none',
                         'border border-border',
                         'bg-background-card',
                         'text-text-primary',

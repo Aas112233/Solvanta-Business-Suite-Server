@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { ArrowLeft, Plus, Save, Trash, Pencil, X, Search, FileDown, Loader2 } from 'lucide-react';
+import { z } from 'zod';
 import api from '@/lib/api';
 import ItemSelectorModal from '@/components/inventory/ItemSelectorModal';
 import SupplierCreateModal from '@/components/suppliers/SupplierCreateModal';
@@ -14,6 +15,79 @@ import {
     GLOBAL_STRING_GROUPS,
 } from '../../lib/globalStrings';
 
+type PurchaseFormItem = {
+    id?: string;
+    productId: string;
+    productName?: string;
+    unitCode: string;
+    qty: number;
+    unitCost: number;
+    lineTotal: number;
+    taxRate?: number;
+    product?: any;
+};
+
+type PurchaseFormErrors = Partial<Record<'supplierId' | 'branchId' | 'paymentMethod' | 'invoiceNoSupplier' | 'notes' | 'items', string>>;
+
+const PURCHASE_PAYMENT_METHODS = ['CASH', 'CARD', 'BANK_TRANSFER', 'CREDIT'] as const;
+
+function normalizeOptionalString(value: unknown) {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+}
+
+function mapPurchaseIssues(issues: z.ZodIssue[]) {
+    const nextErrors: PurchaseFormErrors = {};
+    issues.forEach((issue) => {
+        const root = issue.path[0];
+        if (root === 'items') {
+            nextErrors.items ??= issue.message;
+            return;
+        }
+        if (
+            root === 'supplierId' ||
+            root === 'branchId' ||
+            root === 'paymentMethod' ||
+            root === 'invoiceNoSupplier' ||
+            root === 'notes'
+        ) {
+            nextErrors[root] ??= issue.message;
+        }
+    });
+    return nextErrors;
+}
+
+const purchaseFormItemSchema = z.object({
+    productId: z.string().trim().min(1, 'Each line must include a product'),
+    unitCode: z.string().trim().min(1, 'Each line must include a unit'),
+    qty: z.number().positive('Quantity must be greater than zero'),
+    unitCost: z.number().min(0, 'Unit cost cannot be negative'),
+    lineTotal: z.number().min(0, 'Line total cannot be negative'),
+    taxRate: z.number().min(0).optional(),
+}).superRefine((item, ctx) => {
+    const expectedLineTotal = Number(item.qty) * Number(item.unitCost);
+    if (!Number.isFinite(expectedLineTotal) || expectedLineTotal < 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['lineTotal'],
+            message: 'Line total is invalid',
+        });
+    }
+});
+
+const purchaseFormSchema = z.object({
+    supplierId: z.preprocess(normalizeOptionalString, z.string().min(1, 'Supplier is required')),
+    branchId: z.preprocess(normalizeOptionalString, z.string().min(1, 'Warehouse is required')),
+    paymentMethod: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(PURCHASE_PAYMENT_METHODS, { message: 'Select a valid payment method' })
+    ),
+    invoiceNoSupplier: z.preprocess(normalizeOptionalString, z.string().max(120, 'Invoice number must be 120 characters or less').optional()),
+    notes: z.preprocess(normalizeOptionalString, z.string().max(1000, 'Notes must be 1000 characters or less').optional()),
+    items: z.array(purchaseFormItemSchema).min(1, 'Add at least one item'),
+});
+
 export default function PurchaseForm() {
     const navigate = useNavigate();
     const { id } = useParams();
@@ -24,13 +98,14 @@ export default function PurchaseForm() {
     const [paymentMethod, setPaymentMethod] = useState('');
     const [invoiceNoSupplier, setInvoiceNoSupplier] = useState('');
     const [notes, setNotes] = useState('');
-    const [items, setItems] = useState<any[]>([]);
+    const [items, setItems] = useState<PurchaseFormItem[]>([]);
     const [showItemSelector, setShowItemSelector] = useState(false);
     const [showSupplierModal, setShowSupplierModal] = useState(false);
     const canAddItems = Boolean(supplierId && branchId);
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
     const [searchPO, setSearchPO] = useState('');
     const [isSearchingPO, setIsSearchingPO] = useState(false);
+    const [formErrors, setFormErrors] = useState<PurchaseFormErrors>({});
 
     const {
         data: suppliers,
@@ -69,7 +144,7 @@ export default function PurchaseForm() {
         enabled: isEdit,
     });
 
-    useMemo(() => {
+    useEffect(() => {
         if (!isEdit || !purchaseData) return;
         setSupplierId(purchaseData.supplierId || '');
         setBranchId(purchaseData.branchId || '');
@@ -106,10 +181,16 @@ export default function PurchaseForm() {
             setItems(prev => [...prev, item]);
             toast.success(`Added ${item.productName || item.name}`);
         }
+        setFormErrors((current) => ({ ...current, items: undefined }));
     };
 
     const handleOpenAddItem = () => {
         if (!canAddItems) {
+            setFormErrors((current) => ({
+                ...current,
+                supplierId: supplierId ? undefined : 'Supplier is required before adding items',
+                branchId: branchId ? undefined : 'Warehouse is required before adding items',
+            }));
             toast.error('Select supplier and warehouse first');
             return;
         }
@@ -118,6 +199,7 @@ export default function PurchaseForm() {
 
     const removeItem = (idx: number) => {
         setItems(items.filter((_, i) => i !== idx));
+        setFormErrors((current) => ({ ...current, items: undefined }));
     };
 
     const startEditItem = (idx: number) => {
@@ -145,6 +227,7 @@ export default function PurchaseForm() {
                 product: i.product,
             })));
             setSearchPO('');
+            setFormErrors({});
             toast.success(`Imported PO: ${po.poNo}`);
         } catch (err: any) {
             toast.error(err.response?.data?.error?.message || 'Purchase Order not found');
@@ -171,20 +254,34 @@ export default function PurchaseForm() {
     });
 
     const handleSubmit = () => {
-        if (!supplierId || !branchId || !paymentMethod) return toast.error('Missing required header info');
-        if (items.length === 0) return toast.error('No items added');
-
-        saveMut.mutate({
+        const parsed = purchaseFormSchema.safeParse({
             supplierId,
             branchId,
             paymentMethod,
             invoiceNoSupplier,
             notes,
-            items: items.map(i => ({
+            items,
+        });
+        if (!parsed.success) {
+            setFormErrors(mapPurchaseIssues(parsed.error.issues));
+            toast.error('Please fix the highlighted fields');
+            return;
+        }
+
+        setFormErrors({});
+
+        saveMut.mutate({
+            supplierId: parsed.data.supplierId,
+            branchId: parsed.data.branchId,
+            paymentMethod: parsed.data.paymentMethod,
+            invoiceNoSupplier: parsed.data.invoiceNoSupplier,
+            notes: parsed.data.notes,
+            items: parsed.data.items.map((i, index) => ({
+                ...items[index],
                 ...i,
                 qty: Number(i.qty),
                 unitCost: Number(i.unitCost),
-                taxAmount: (i.lineTotal || 0) * (i.taxRate ?? i.product?.tax?.rate ?? i.product?.taxRate ?? 0.15)
+                taxAmount: (i.lineTotal || 0) * (i.taxRate ?? items[index]?.product?.tax?.rate ?? items[index]?.product?.taxRate ?? 0.15)
             }))
         });
     };
@@ -236,7 +333,10 @@ export default function PurchaseForm() {
                                 </div>
                                 <AppDropdown
                                     value={supplierId}
-                                    onChange={(v) => setSupplierId(v)}
+                                    onChange={(v) => {
+                                        setSupplierId(v);
+                                        setFormErrors((current) => ({ ...current, supplierId: undefined }));
+                                    }}
                                     options={[{ value: '', label: 'Select Supplier' }, ...(suppliers || []).map((s: any) => ({ value: s.id, label: `${s.name} (${s.supplierCode})` }))]}
                                     placeholder='Select Supplier'
                                     searchable
@@ -244,12 +344,16 @@ export default function PurchaseForm() {
                                     refreshing={isFetchingSuppliers}
                                     refreshLabel="Refresh suppliers"
                                 />
+                                {formErrors.supplierId && <p className="mt-1 text-xs text-red-600">{formErrors.supplierId}</p>}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Warehouse</label>
                                 <AppDropdown
                                     value={branchId}
-                                    onChange={(v) => setBranchId(v)}
+                                    onChange={(v) => {
+                                        setBranchId(v);
+                                        setFormErrors((current) => ({ ...current, branchId: undefined }));
+                                    }}
                                     options={[{ value: '', label: 'Select Warehouse' }, ...(branches || []).map((b: any) => ({ value: b.id, label: `${b.name} (${b.code})` }))]}
                                     placeholder='Select Warehouse'
                                     searchable
@@ -257,22 +361,37 @@ export default function PurchaseForm() {
                                     refreshing={isFetchingBranches}
                                     refreshLabel="Refresh warehouses"
                                 />
+                                {formErrors.branchId && <p className="mt-1 text-xs text-red-600">{formErrors.branchId}</p>}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Invoice No</label>
-                                <input type="text" placeholder="e.g. INV-001" className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={invoiceNoSupplier} onChange={(e) => setInvoiceNoSupplier(e.target.value)} />
+                                <input
+                                    type="text"
+                                    placeholder="e.g. INV-001"
+                                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${formErrors.invoiceNoSupplier ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                                    value={invoiceNoSupplier}
+                                    onChange={(e) => {
+                                        setInvoiceNoSupplier(e.target.value);
+                                        setFormErrors((current) => ({ ...current, invoiceNoSupplier: undefined }));
+                                    }}
+                                />
+                                {formErrors.invoiceNoSupplier && <p className="mt-1 text-xs text-red-600">{formErrors.invoiceNoSupplier}</p>}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Payment</label>
                                 <AppDropdown
                                     value={paymentMethod}
-                                    onChange={(v) => setPaymentMethod(v)}
+                                    onChange={(v) => {
+                                        setPaymentMethod(v);
+                                        setFormErrors((current) => ({ ...current, paymentMethod: undefined }));
+                                    }}
                                     options={paymentMethodOptions}
                                     placeholder='Select Method'
                                     onRefresh={() => refetchPaymentMethods()}
                                     refreshing={isFetchingPaymentMethods}
                                     refreshLabel="Refresh methods"
                                 />
+                                {formErrors.paymentMethod && <p className="mt-1 text-xs text-red-600">{formErrors.paymentMethod}</p>}
                             </div>
                         </div>
                     </div>
@@ -330,11 +449,22 @@ export default function PurchaseForm() {
                                 </tbody>
                             </table>
                         </div>
+                        {formErrors.items && <p className="text-sm text-red-600">{formErrors.items}</p>}
                     </div>
 
                     <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                         <label className="block text-sm font-medium text-gray-700 mb-1">Additional Notes</label>
-                        <textarea rows={3} className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Add any internal remarks..." value={notes} onChange={(e) => setNotes(e.target.value)} />
+                        <textarea
+                            rows={3}
+                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm ${formErrors.notes ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                            placeholder="Add any internal remarks..."
+                            value={notes}
+                            onChange={(e) => {
+                                setNotes(e.target.value);
+                                setFormErrors((current) => ({ ...current, notes: undefined }));
+                            }}
+                        />
+                        {formErrors.notes && <p className="mt-1 text-xs text-red-600">{formErrors.notes}</p>}
                     </div>
                 </div>
 

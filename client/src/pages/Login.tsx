@@ -14,6 +14,7 @@ import {
     type LucideIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { z } from 'zod';
 import { Badge, Button, Card, Input } from '../components/ui';
 
 const heroFeatures: Array<{ icon: LucideIcon; title: string; subtitle: string }> = [
@@ -24,11 +25,17 @@ const heroFeatures: Array<{ icon: LucideIcon; title: string; subtitle: string }>
 
 const trustBadges = ['PCI DSS Compliant', '256-bit Encryption'];
 
+const loginSchema = z.object({
+    email: z.string().trim().min(1, 'Email is required').email('Enter a valid email address'),
+    password: z.string().min(1, 'Password is required'),
+});
+
 export default function Login() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
     const navigate = useNavigate();
     const { setTokens, setUser } = useAuthStore();
 
@@ -40,14 +47,24 @@ export default function Login() {
         const enteredEmail = (email || String(formData.get('login_identifier') || '')).trim();
         const enteredPassword = password || String(formData.get('login_secret') || '');
 
-        if (!enteredEmail || !enteredPassword) {
-            toast.error('Please fill all fields');
+        const parsed = loginSchema.safeParse({ email: enteredEmail, password: enteredPassword });
+        if (!parsed.success) {
+            const nextErrors: { email?: string; password?: string } = {};
+            parsed.error.issues.forEach((issue) => {
+                const field = issue.path[0];
+                if (field === 'email' || field === 'password') {
+                    nextErrors[field] ??= issue.message;
+                }
+            });
+            setErrors(nextErrors);
+            toast.error('Please fix the highlighted fields');
             return;
         }
 
+        setErrors({});
         setLoading(true);
         try {
-            const { data } = await api.post('/auth/login', { email: enteredEmail, password: enteredPassword });
+            const { data } = await api.post('/auth/login', parsed.data);
             const accessToken = data?.data?.accessToken ?? data?.data?.token;
             const refreshToken = data?.data?.refreshToken;
             if (!accessToken || !refreshToken) {
@@ -118,11 +135,16 @@ export default function Login() {
                                     required
                                     autoComplete="username"
                                     value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
+                                    onChange={(e) => {
+                                        setEmail(e.target.value);
+                                        setErrors((current) => ({ ...current, email: undefined }));
+                                    }}
                                     icon={<Mail size={18} />}
                                     placeholder="Enter your email"
                                     fullWidth
+                                    error={!!errors.email}
                                 />
+                                {errors.email && <p className="text-sm text-danger">{errors.email}</p>}
                             </div>
 
                             <div className="space-y-2">
@@ -140,11 +162,15 @@ export default function Login() {
                                         required
                                         autoComplete="current-password"
                                         value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
+                                        onChange={(e) => {
+                                            setPassword(e.target.value);
+                                            setErrors((current) => ({ ...current, password: undefined }));
+                                        }}
                                         icon={<Lock size={18} />}
                                         placeholder="Enter your password"
                                         fullWidth
                                         className="pr-11"
+                                        error={!!errors.password}
                                     />
                                     <button
                                         type="button"
@@ -160,6 +186,7 @@ export default function Login() {
                                         )}
                                     </button>
                                 </div>
+                                {errors.password && <p className="text-sm text-danger">{errors.password}</p>}
                             </div>
 
                             <div className="flex items-center justify-between gap-4">

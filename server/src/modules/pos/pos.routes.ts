@@ -22,6 +22,33 @@ function isBranchAdmin(req: any): boolean {
     return req.user?.permissions?.includes(ADMIN_BRANCH_PERMISSION);
 }
 
+const objectIdRegex = /^[a-f\d]{24}$/i;
+const POS_PAYMENT_METHODS = ['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER'] as const;
+
+function normalizeOptionalString(value: unknown) {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+}
+
+function normalizeNullableString(value: unknown) {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? null : trimmed;
+}
+
+const objectIdSchema = z.string().regex(objectIdRegex, 'Invalid id');
+const optionalObjectIdSchema = z.preprocess(normalizeOptionalString, objectIdSchema.optional());
+const nullableObjectIdSchema = z.preprocess(normalizeNullableString, objectIdSchema.nullable().optional());
+const optionalTrimmedString = (maxLength: number) =>
+    z.preprocess(normalizeOptionalString, z.string().min(1).max(maxLength).optional());
+const posPaymentMethodSchema = z.preprocess(
+    (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+    z.enum(POS_PAYMENT_METHODS)
+);
+
 async function assertBranchAccessible(req: any, branchId: string): Promise<void> {
     const companyId = req.user!.companyId;
     if (!isBranchAdmin(req) && !req.user!.branchIds.includes(branchId)) {
@@ -35,35 +62,133 @@ async function assertBranchAccessible(req: any, branchId: string): Promise<void>
 }
 
 const posItemSchema = z.object({
-    productId: z.string().optional().nullable(),
-    serviceId: z.string().optional().nullable(),
-    unitCode: z.string().optional().nullable(),
+    productId: nullableObjectIdSchema,
+    serviceId: nullableObjectIdSchema,
+    unitCode: z.preprocess(normalizeNullableString, z.string().min(1).max(40).nullable().optional()),
     qty: z.number().positive(),
     unitPrice: z.number().min(0).optional().nullable(),
     discount: z.number().min(0).optional().default(0),
     taxAmount: z.number().min(0).optional().default(0),
     lineTotal: z.number().min(0).optional().nullable(),
+}).superRefine((item, ctx) => {
+    if (!item.productId && !item.serviceId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['productId'],
+            message: 'Each line must include either productId or serviceId',
+        });
+    }
+    if (item.productId && item.serviceId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['serviceId'],
+            message: 'A line cannot include both productId and serviceId',
+        });
+    }
+    if (item.productId && !item.unitCode) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['unitCode'],
+            message: 'unitCode is required for product lines',
+        });
+    }
+    if (item.serviceId && (item.unitPrice === undefined || item.unitPrice === null)) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['unitPrice'],
+            message: 'unitPrice is required for service lines',
+        });
+    }
+    if (item.serviceId) {
+        const gross = Number(item.qty) * Number(item.unitPrice || 0);
+        if (Number(item.discount || 0) > gross) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['discount'],
+                message: 'Discount cannot exceed qty * unitPrice for service lines',
+            });
+        }
+    }
 });
 
 const posInvoiceSchema = z.object({
-    customerId: z.string().optional().nullable(),
-    clientRequestId: z.string().max(120).optional(),
+    customerId: nullableObjectIdSchema,
+    clientRequestId: optionalTrimmedString(120),
     items: z.array(posItemSchema).min(1),
     subtotal: z.number().min(0).optional(),
     discountTotal: z.number().min(0).optional().default(0),
     taxTotal: z.number().min(0).optional().default(0),
     grandTotal: z.number().min(0).optional(),
-    paymentMethod: z.string().min(1),
+    paymentMethod: posPaymentMethodSchema,
     cashReceived: z.number().min(0).optional().default(0),
     cardReceived: z.number().min(0).optional().default(0),
     changeGiven: z.number().min(0).optional().default(0),
-    notes: z.string().optional(),
-    branchId: z.string().optional(),
-    posTerminalId: z.string().optional().nullable(),
-    posShiftId: z.string().optional().nullable(),
+    notes: optionalTrimmedString(4000),
+    branchId: optionalObjectIdSchema,
+    posTerminalId: nullableObjectIdSchema,
+    posShiftId: nullableObjectIdSchema,
     // Loyalty
-    loyaltyCustomerId: z.string().optional().nullable(),
+    loyaltyCustomerId: nullableObjectIdSchema,
     loyaltyPointsRedeemed: z.number().min(0).optional().default(0),
+}).superRefine((data, ctx) => {
+    if (data.paymentMethod === 'CREDIT' && !data.customerId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['customerId'],
+            message: 'customerId is required for CREDIT payment',
+        });
+    }
+    if (data.paymentMethod === 'CASH' && Number(data.cardReceived || 0) > 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['cardReceived'],
+            message: 'cardReceived must be 0 for CASH payment',
+        });
+    }
+    if ((data.paymentMethod === 'CARD' || data.paymentMethod === 'BANK_TRANSFER') && Number(data.cashReceived || 0) > 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['cashReceived'],
+            message: 'cashReceived must be 0 for non-cash payment methods',
+        });
+    }
+    if ((data.paymentMethod === 'CARD' || data.paymentMethod === 'BANK_TRANSFER' || data.paymentMethod === 'CREDIT') && Number(data.changeGiven || 0) > 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['changeGiven'],
+            message: 'changeGiven is only allowed for CASH or MIXED payments',
+        });
+    }
+    if (data.paymentMethod === 'CREDIT' && (Number(data.cashReceived || 0) > 0 || Number(data.cardReceived || 0) > 0)) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['cashReceived'],
+            message: 'CREDIT payment should not include received cash or card amounts',
+        });
+    }
+    if (data.paymentMethod === 'MIXED') {
+        if (Number(data.cashReceived || 0) <= 0) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['cashReceived'],
+                message: 'cashReceived is required for MIXED payment',
+            });
+        }
+        if (Number(data.cardReceived || 0) <= 0) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['cardReceived'],
+                message: 'cardReceived is required for MIXED payment',
+            });
+        }
+    }
+    if (Number(data.loyaltyPointsRedeemed || 0) > 0 && !data.loyaltyCustomerId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['loyaltyCustomerId'],
+            message: 'loyaltyCustomerId is required when redeeming points',
+        });
+    }
 });
 
 const loyaltyCustomerSchema = z.object({
@@ -519,22 +644,31 @@ posRoutes.post('/session/login', requireAnyPermission(PERMISSIONS.POS_ACCESS, PE
         const companyId = req.user!.companyId;
         const { terminalId, email, password } = req.body;
 
+        // SECURITY FIX: Only allow users to create POS sessions for themselves
+        // Prevents unauthorized users from attempting to login as other users
+        if (req.user!.email.toLowerCase() !== email.toLowerCase()) {
+            throw AppError.forbidden('Can only create POS session for your own account. Use your own credentials.');
+        }
+
         const terminal: any = await (prisma as any).pOSTerminal.findFirst({
             where: { id: terminalId, companyId, isActive: true },
             include: { branch: { select: { id: true, name: true, code: true } } },
         });
         if (!terminal) throw AppError.notFound('Terminal not found or inactive');
 
+        // Verify the authenticated user's identity (not just any user)
         const user: any = await prisma.user.findFirst({
-            where: { companyId, email: String(email).trim().toLowerCase() },
+            where: { id: req.user!.id, companyId },
             include: {
                 role: { select: { name: true, permissions: true } },
                 branches: { select: { branchId: true } },
             },
         });
-        if (!user || !user.isActive) throw AppError.unauthorized('Invalid email or password');
+        if (!user || !user.isActive) throw AppError.unauthorized('User account is invalid or inactive');
+
+        // Still verify password for additional security
         const ok = await bcrypt.compare(String(password), user.passwordHash);
-        if (!ok) throw AppError.unauthorized('Invalid email or password');
+        if (!ok) throw AppError.unauthorized('Invalid password');
 
         const perms = user.role?.permissions || [];
         if (!hasPosPermission(perms)) {
@@ -876,11 +1010,12 @@ posRoutes.get('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSION
 });
 
 // GET /pos/invoices/:id
-posRoutes.get('/invoices/:id', async (req, res, next) => {
+posRoutes.get('/invoices/:id', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), async (req, res, next) => {
     try {
+        const invoiceId = String(req.params.id);
         const branchScope = isBranchAdmin(req) ? {} : { branchId: { in: req.user!.branchIds } };
         const invoice = await prisma.pOSInvoice.findFirst({
-            where: { id: req.params.id, companyId: req.user!.companyId, ...branchScope },
+            where: { id: invoiceId, companyId: req.user!.companyId, ...branchScope },
             include: {
                 customer: true,
                 loyaltyCustomer: true,

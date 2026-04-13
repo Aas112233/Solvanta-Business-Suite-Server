@@ -185,9 +185,6 @@ export default function SupplierLedger() {
                                     searchable
                                     onRefresh={refetchSuppliers}
                                     refreshing={isFetchingSuppliers}
-                                    refreshLabel="Refresh suppliers"
-                                    onRefresh={refetchSuppliers}
-                                    refreshing={isFetchingSuppliers}
                                 />
                             </div>
                         </div>

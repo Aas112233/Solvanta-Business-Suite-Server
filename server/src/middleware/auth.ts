@@ -177,10 +177,15 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
         req.activeBranchId = req.user.branchIds[0];
 
         // Setup Tenant Context for the rest of the request
+        const ipAddress = req.ip || req.socket?.remoteAddress || undefined;
+        const userAgent = req.get('user-agent') || undefined;
+
         tenantStorage.run({
             companyId: userCoId,
             userId: user.id,
             activeBranchId: req.activeBranchId,
+            ipAddress,
+            userAgent,
             impersonation: impersonation
                 ? {
                     sessionId: impersonation.sessionId,
@@ -234,13 +239,7 @@ export function requirePermission(...permissions: Permission[]) {
             next();
             return;
         }
-        const hasAll = permissions.every((p) => {
-            if (userPerms.includes(p)) return true;
-            // Check for master permission (module.access)
-            const module = p.split('.')[0];
-            if (userPerms.includes(`${module}.access`)) return true;
-            return false;
-        });
+        const hasAll = permissions.every((p) => userPerms.includes(p));
 
         if (!hasAll) {
             console.error(`[Auth Debug] 403 Forbidden. User: ${req.user.email}, Role: ${req.user.roleId}`);
@@ -286,13 +285,7 @@ export function requireAnyPermission(...permissions: Permission[]) {
             next();
             return;
         }
-        const hasAny = effectivePermissions.some((p) => {
-            if (userPerms.includes(p)) return true;
-            // Check for master permission (module.access)
-            const module = p.split('.')[0];
-            if (userPerms.includes(`${module}.access`)) return true;
-            return false;
-        });
+        const hasAny = effectivePermissions.some((p) => userPerms.includes(p));
 
         if (!hasAny) {
             next(AppError.forbidden(`Missing any of permissions: ${permissions.join(', ')}`));

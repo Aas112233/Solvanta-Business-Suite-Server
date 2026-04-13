@@ -2,6 +2,7 @@ import { app } from './app.js';
 import { env } from './config/env.js';
 import { basePrisma, prisma } from './lib/prisma.js';
 import { logger } from './lib/logger.js';
+import { ensureDatabaseIndexes } from './lib/indexManager.js';
 import os from 'os';
 
 const MAX_RETRIES = 5;
@@ -61,6 +62,9 @@ async function main() {
             logger.error('Failed to connect to database. Exiting...');
             process.exit(1);
         }
+
+        // Ensure database indexes are created for optimal performance
+        await ensureDatabaseIndexes();
 
         app.listen(Number(env.PORT), env.HOST, () => {
             const localUrl = `http://localhost:${env.PORT}`;

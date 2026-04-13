@@ -33,6 +33,10 @@ type FeatureFlags = {
     reports: boolean;
     bom: boolean;
     production: boolean;
+    sales: boolean;
+    items: boolean;
+    suppliers: boolean;
+    hr: boolean;
 };
 
 interface Tenant {
@@ -112,6 +116,10 @@ const featureLabelMap: Record<keyof FeatureFlags, string> = {
     reports: 'Reports',
     bom: 'Production Recipes',
     production: 'Production',
+    sales: 'Sales',
+    items: 'Items / Products',
+    suppliers: 'Suppliers',
+    hr: 'Human Resources',
 };
 
 export default function SuperAdminPanel() {

@@ -25,7 +25,7 @@ const branchPatchSchema = branchSchema.partial().strict().refine(
 );
 
 // GET /branches
-branchRoutes.get('/', async (req, res, next) => {
+branchRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES), async (req, res, next) => {
     try {
         const includeInactive = typeof req.query.includeInactive === 'string'
             && ['1', 'true', 'yes'].includes(req.query.includeInactive.toLowerCase());
@@ -42,7 +42,7 @@ branchRoutes.get('/', async (req, res, next) => {
 });
 
 // GET /branches/:id
-branchRoutes.get('/:id', async (req, res, next) => {
+branchRoutes.get('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES), async (req, res, next) => {
     try {
         const branchId = String(req.params.id);
         const branch = await prisma.branch.findFirst({

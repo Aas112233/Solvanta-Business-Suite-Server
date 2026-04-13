@@ -35,7 +35,7 @@ const updateSchema = z.object({
 
 // ── GET / ───────────────────────────────────────────────────────
 // List all global strings for a group
-globalStringRoutes.get('/', async (req, res, next) => {
+globalStringRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), async (req, res, next) => {
     try {
         const { group } = req.query;
         const strings = await (prisma as any).globalString.findMany({

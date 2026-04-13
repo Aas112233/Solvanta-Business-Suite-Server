@@ -15,13 +15,21 @@ interface ServiceMasterData {
     isActive?: boolean;
 }
 
+interface ServiceListQuery {
+    isActive?: boolean | string;
+    category?: string;
+    search?: string;
+}
+
 export class ServiceService {
-    static async list(companyId: string, query: any) {
+    static async list(companyId: string, query: ServiceListQuery) {
         const { isActive, category, search } = query;
 
         const where: any = { companyId };
 
-        if (isActive !== undefined) {
+        if (typeof isActive === 'boolean') {
+            where.isActive = isActive;
+        } else if (typeof isActive === 'string') {
             where.isActive = isActive === 'true';
         }
 

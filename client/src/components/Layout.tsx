@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
+import type { EnabledModules } from '../stores/authStore';
 import { useThemeStore } from '../stores/themeStore';
 import { SUPER_ADMIN_PERMISSIONS, type SuperAdminPermission } from '../lib/superAdminPermissions';
 import api from '../lib/api';
@@ -21,9 +22,11 @@ interface NavItem {
     label: string;
     section: NavSectionKey;
     permission?: string;
+    anyPermissions?: string[];
     superAdminOnly?: boolean;
     superAdminPermission?: SuperAdminPermission;
     roles?: string[];
+    moduleKey?: keyof EnabledModules;
     children?: NavChildItem[];
 }
 
@@ -32,6 +35,7 @@ interface NavChildItem {
     label: string;
     category?: string;
     permission?: string;
+    anyPermissions?: string[];
     superAdminOnly?: boolean;
     superAdminPermission?: SuperAdminPermission;
     roles?: string[];
@@ -71,10 +75,11 @@ const navItems: NavItem[] = [
         label: 'Sales',
         section: 'Commerce',
         permission: 'sales.view',
+        moduleKey: 'sales',
         children: [
-            { to: '/sales/dashboard', label: 'Sales Dashboard', category: 'Overview' },
-            { to: '/sales/overview/today-summary', label: 'Sales Today Summary', category: 'Overview' },
-            { to: '/sales/overview/top-selling-items', label: 'Sales Top Selling Items', category: 'Overview' },
+            { to: '/sales/dashboard', label: 'Sales Dashboard', category: 'Overview', permission: 'sales.view' },
+            { to: '/sales/overview/today-summary', label: 'Sales Today Summary', category: 'Overview', permission: 'sales.view' },
+            { to: '/sales/overview/top-selling-items', label: 'Sales Top Selling Items', category: 'Overview', permission: 'sales.view' },
             { to: '/sales/overview/pending-payments', label: 'Sales Pending Payments', category: 'Overview', permission: 'sales.paymentView' },
             { to: '/sales/invoices', label: 'Sales Invoices', category: 'Invoicing', permission: 'sales.view' },
             { to: '/sales/invoices/new', label: 'Create Sales Invoice', category: 'Invoicing', permission: 'sales.create' },
@@ -108,13 +113,14 @@ const navItems: NavItem[] = [
         icon: MonitorSmartphone,
         label: 'POS',
         section: 'Commerce',
+        moduleKey: 'pos',
         children: [
-            { to: '/pos', label: 'POS Terminal', category: 'Terminal', permission: 'pos.terminalOnly' },
-            { to: '/pos/unposted', label: 'POS Unposted Invoices', category: 'Terminal', permission: 'pos.access' },
+            { to: '/pos', label: 'POS Terminal', category: 'Terminal', anyPermissions: ['pos.terminalOnly', 'pos.sell', 'pos.access'] },
+            { to: '/pos/unposted', label: 'POS Unposted Invoices', category: 'Terminal', anyPermissions: ['pos.sell', 'pos.access'] },
             { to: '/pos/hotkeys-shortcuts', label: 'POS Hotkeys & Shortcuts', category: 'Terminal', permission: 'pos.sell' },
             { to: '/pos/hold-resume', label: 'POS Hold & Resume', category: 'Terminal', permission: 'pos.sell' },
-            { to: '/pos/terminals', label: 'POS Management', category: 'Operations', permission: 'pos.manageTerminals' },
-            { to: '/pos/shifts', label: 'POS Shift History', category: 'Operations', permission: 'pos.viewShifts' },
+            { to: '/pos/terminals', label: 'POS Management', category: 'Operations', anyPermissions: ['pos.manageTerminals', 'pos.access'] },
+            { to: '/pos/shifts', label: 'POS Shift History', category: 'Operations', anyPermissions: ['pos.viewShifts', 'pos.viewOwnShifts', 'pos.access', 'pos.closeShift'] },
             { to: '/pos/receipt-print', label: 'POS Receipt Printing', category: 'Operations', permission: 'pos.access' },
             { to: '/pos/loyalty-settings', label: 'Happiness Price', category: 'Customers', permission: 'pos.access' },
             { to: '/pos/loyalty-customers', label: 'POS Walk-in Customers', category: 'Customers', permission: 'pos.access' },
@@ -125,13 +131,14 @@ const navItems: NavItem[] = [
         label: 'Items',
         section: 'Operations',
         permission: 'product.view',
+        moduleKey: 'items',
         children: [
-            { to: '/items', label: 'Item List', category: 'Catalog' },
-            { to: '/items/categories', label: 'Item Categories', category: 'Catalog' },
-            { to: '/items/groups', label: 'Item Groups', category: 'Catalog' },
-            { to: '/items/brands', label: 'Item Brands', category: 'Catalog' },
-            { to: '/items/unit-management', label: 'Item Unit Management', category: 'Catalog' },
-            { to: '/items/price-channels', label: 'Item Price Channels', category: 'Pricing' },
+            { to: '/items', label: 'Item List', category: 'Catalog', permission: 'product.view' },
+            { to: '/items/categories', label: 'Item Categories', category: 'Catalog', permission: 'product.view' },
+            { to: '/items/groups', label: 'Item Groups', category: 'Catalog', permission: 'product.view' },
+            { to: '/items/brands', label: 'Item Brands', category: 'Catalog', permission: 'product.view' },
+            { to: '/items/unit-management', label: 'Item Unit Management', category: 'Catalog', permission: 'product.view' },
+            { to: '/items/price-channels', label: 'Item Price Channels', category: 'Pricing', permission: 'product.editPricing' },
         ],
     },
     {
@@ -139,19 +146,21 @@ const navItems: NavItem[] = [
         label: 'Inventory',
         section: 'Operations',
         permission: 'inventory.view',
+        moduleKey: 'inventory',
         children: [
-            { to: '/inventory/stock', label: 'Inventory Stock Overview', category: 'Monitoring' },
-            { to: '/inventory/warehouses', label: 'Inventory Warehouses', category: 'Operations' },
-            { to: '/inventory/transfers', label: 'Inventory Stock Transfers', category: 'Operations' },
-            { to: '/inventory/stock-counts', label: 'Inventory Stock Counts', category: 'Operations' },
+            { to: '/inventory/stock', label: 'Inventory Stock Overview', category: 'Monitoring', permission: 'inventory.view' },
+            { to: '/inventory/warehouses', label: 'Inventory Warehouses', category: 'Operations', permission: 'inventory.view' },
+            { to: '/inventory/transfers', label: 'Inventory Stock Transfers', category: 'Operations', permission: 'inventory.transfer' },
+            { to: '/inventory/stock-counts', label: 'Inventory Stock Counts', category: 'Operations', permission: 'inventory.audit' },
             { to: '/inventory/analytics', label: 'Inventory Analytics', category: 'Insights', permission: 'inventory.viewAnalytics' },
-            { to: '/inventory/reports', label: 'Inventory Reports', category: 'Insights' },
+            { to: '/inventory/reports', label: 'Inventory Reports', category: 'Insights', permission: 'inventory.view' },
         ],
     },
     {
         icon: Wrench,
         label: 'Manufacturing',
         section: 'Operations',
+        moduleKey: 'production',
         children: [
             { to: '/production/orders', label: 'Production Orders', category: 'Execution', permission: 'production.view' },
             { to: '/production/bom', label: 'Production Recipes', category: 'Engineering', permission: 'bom.view' },
@@ -162,6 +171,7 @@ const navItems: NavItem[] = [
         label: 'Customers',
         section: 'Commerce',
         permission: 'crm.view',
+        moduleKey: 'crm',
         children: [
             { to: '/customers', label: 'Customer List', category: 'Directory' },
             { to: '/customers/groups', label: 'Customer Groups', category: 'Directory', permission: 'crm.manageGroups' },
@@ -174,6 +184,7 @@ const navItems: NavItem[] = [
         label: 'Suppliers',
         section: 'Commerce',
         permission: 'supplier.view',
+        moduleKey: 'suppliers',
         children: [
             { to: '/suppliers', label: 'Supplier List', category: 'Directory', permission: 'supplier.view' },
             { to: '/suppliers/ledger', label: 'Supplier Ledger', category: 'Finance', permission: 'supplier.view' },
@@ -184,11 +195,12 @@ const navItems: NavItem[] = [
         label: 'Purchases',
         section: 'Operations',
         permission: 'purchase.view',
+        moduleKey: 'purchases',
         children: [
-            { to: '/purchases', label: 'Purchase Overview', category: 'Overview' },
+            { to: '/purchases', label: 'Purchase Overview', category: 'Overview', permission: 'purchase.view' },
             { to: '/purchases/new', label: 'New Purchase', category: 'Transactions', permission: 'purchase.create' },
             { to: '/purchases/invoices', label: 'Purchase Invoices', category: 'Transactions', permission: 'purchase.view' },
-            { to: '/purchases/expense', label: 'Expense Purchases', category: 'Transactions', permission: 'purchase.view' },
+            { to: '/purchases/expense', label: 'Expense Purchases', category: 'Transactions', permission: 'accounting.expense' },
             { to: '/purchases/returns', label: 'Purchase Returns', category: 'Transactions', permission: 'purchase.return' },
             { to: '/purchases/requisitions', label: 'Purchase Requisitions', category: 'Procurement', permission: 'purchase.view' },
             { to: '/purchases/rfq', label: 'Purchase Request for Quotation', category: 'Procurement', permission: 'purchase.view' },
@@ -204,18 +216,19 @@ const navItems: NavItem[] = [
         label: 'Accounting',
         section: 'Insights',
         permission: 'accounting.view',
+        moduleKey: 'accounting',
         children: [
-            { to: '/accounting/coa', label: 'Accounting Chart of Accounts', category: 'Setup' },
-            { to: '/accounting/mappings', label: 'Accounting Mappings', category: 'Setup' },
-            { to: '/accounting/journals', label: 'Accounting General Journal', category: 'Ledger' },
-            { to: '/accounting/reports/general-ledger', label: 'General Ledger', category: 'Reports' },
-            { to: '/accounting/reports/trial-balance', label: 'Trial Balance', category: 'Reports' },
-            { to: '/accounting/reports/pl', label: 'Profit & Loss', category: 'Reports' },
-            { to: '/accounting/reports/balance-sheet', label: 'Balance Sheet', category: 'Reports' },
-            { to: '/bank/accounts', label: 'Bank Accounts', category: 'Banking' },
-            { to: '/bank/reconcile', label: 'Bank Reconciliation', category: 'Banking' },
-            { to: '/aging/ar', label: 'AR Aging', category: 'Receivables' },
-            { to: '/aging/ap', label: 'AP Aging', category: 'Payables' },
+            { to: '/accounting/coa', label: 'Accounting Chart of Accounts', category: 'Setup', permission: 'accounting.view' },
+            { to: '/accounting/mappings', label: 'Accounting Mappings', category: 'Setup', permission: 'accounting.view' },
+            { to: '/accounting/journals', label: 'Accounting General Journal', category: 'Ledger', permission: 'accounting.view' },
+            { to: '/accounting/reports/general-ledger', label: 'General Ledger', category: 'Reports', permission: 'accounting.view' },
+            { to: '/accounting/reports/trial-balance', label: 'Trial Balance', category: 'Reports', permission: 'accounting.view' },
+            { to: '/accounting/reports/pl', label: 'Profit & Loss', category: 'Reports', permission: 'accounting.view' },
+            { to: '/accounting/reports/balance-sheet', label: 'Balance Sheet', category: 'Reports', permission: 'accounting.view' },
+            { to: '/bank/accounts', label: 'Bank Accounts', category: 'Banking', permission: 'accounting.view' },
+            { to: '/bank/reconcile', label: 'Bank Reconciliation', category: 'Banking', permission: 'accounting.view' },
+            { to: '/aging/ar', label: 'AR Aging', category: 'Receivables', permission: 'accounting.view' },
+            { to: '/aging/ap', label: 'AP Aging', category: 'Payables', permission: 'accounting.view' },
         ],
     },
     {
@@ -223,51 +236,52 @@ const navItems: NavItem[] = [
         label: 'Reports',
         section: 'Insights',
         permission: 'reports.view',
+        moduleKey: 'reports',
         children: [
-            { to: '/reports/sales', label: 'Sales Invoice Report', category: 'Sales' },
-            { to: '/reports/sales-invoice-items', label: 'Sales Invoice Items', category: 'Sales' },
-            { to: '/reports/item-price-list', label: 'Item Price List', category: 'General' },
-            { to: '/reports/vat', label: 'VAT', category: 'General' },
-            { to: '/reports/inventory-current-stock', label: 'Inventory Current Stock', category: 'Stock' },
-            { to: '/reports/stock-on-date', label: 'Stock on a Date', category: 'Stock' },
-            { to: '/reports/stock-multiple-unit', label: 'Current Stock in Multiple Unit', category: 'Stock' },
-            { to: '/reports/moving-non-moving-stock', label: 'Moving and Non Moving Stock', category: 'Stock' },
-            { to: '/reports/stock-in-warehouses', label: 'Current Stock in Warehouses', category: 'Stock' },
-            { to: '/reports/running-stock-ledger', label: 'Running Stock Ledger', category: 'Stock' },
-            { to: '/reports/inventory-transaction-summary', label: 'Inventory Transaction Summary', category: 'Stock' },
-            { to: '/reports/purchase-invoices', label: 'Purchase Invoices Report', category: 'Purchase Reports' },
-            { to: '/reports/purchases-on-date', label: 'Purchases on a Date', category: 'Purchase Reports' },
-            { to: '/reports/purchase-payments', label: 'Purchase Payment Report', category: 'Purchase Reports' },
-            { to: '/reports/purchase-returns', label: 'Purchase Return Report', category: 'Purchase Reports' },
-            { to: '/reports/purchase-order', label: 'Purchase Order Report', category: 'Purchase Reports' },
+            { to: '/reports/sales', label: 'Sales Invoice Report', category: 'Sales', permission: 'reports.view' },
+            { to: '/reports/sales-invoice-items', label: 'Sales Invoice Items', category: 'Sales', permission: 'reports.view' },
+            { to: '/reports/item-price-list', label: 'Item Price List', category: 'General', permission: 'reports.view' },
+            { to: '/reports/vat', label: 'VAT', category: 'General', permission: 'reports.view' },
+            { to: '/reports/inventory-current-stock', label: 'Inventory Current Stock', category: 'Stock', permission: 'reports.view' },
+            { to: '/reports/stock-on-date', label: 'Stock on a Date', category: 'Stock', permission: 'reports.view' },
+            { to: '/reports/stock-multiple-unit', label: 'Current Stock in Multiple Unit', category: 'Stock', permission: 'reports.view' },
+            { to: '/reports/moving-non-moving-stock', label: 'Moving and Non Moving Stock', category: 'Stock', permission: 'reports.view' },
+            { to: '/reports/stock-in-warehouses', label: 'Current Stock in Warehouses', category: 'Stock', permission: 'reports.view' },
+            { to: '/reports/running-stock-ledger', label: 'Running Stock Ledger', category: 'Stock', permission: 'reports.view' },
+            { to: '/reports/inventory-transaction-summary', label: 'Inventory Transaction Summary', category: 'Stock', permission: 'reports.view' },
+            { to: '/reports/purchase-invoices', label: 'Purchase Invoices Report', category: 'Purchase Reports', permission: 'reports.view' },
+            { to: '/reports/purchases-on-date', label: 'Purchases on a Date', category: 'Purchase Reports', permission: 'reports.view' },
+            { to: '/reports/purchase-payments', label: 'Purchase Payment Report', category: 'Purchase Reports', permission: 'reports.view' },
+            { to: '/reports/purchase-returns', label: 'Purchase Return Report', category: 'Purchase Reports', permission: 'reports.view' },
+            { to: '/reports/purchase-order', label: 'Purchase Order Report', category: 'Purchase Reports', permission: 'reports.view' },
         ]
     },
     {
         icon: Briefcase,
         label: 'Human Resources',
         section: 'Human Resources',
-        permission: 'hr.employeeView',
+        anyPermissions: ['hr.employeeView', 'hr.departmentView', 'hr.positionView', 'hr.attendanceView', 'hr.leaveView'],
+        moduleKey: 'hr',
         children: [
             { to: '/hr/employees', label: 'Employee Directory', category: 'Directory', permission: 'hr.employeeView' },
             { to: '/hr/departments', label: 'Departments', category: 'Organization', permission: 'hr.departmentView' },
             { to: '/hr/positions', label: 'Positions', category: 'Organization', permission: 'hr.positionView' },
             { to: '/hr/attendance', label: 'Attendance', category: 'Time Management', permission: 'hr.attendanceView' },
             { to: '/hr/leaves', label: 'Leaves', category: 'Time Management', permission: 'hr.leaveView' },
-            { to: '/services', label: 'Sales Services', category: 'Sales Services', permission: 'service.view' },
+            { to: '/services', label: 'Sales Services', category: 'Sales Services', permission: 'sales.view' },
         ],
     },
     {
         icon: ShieldCheck,
         label: 'Administration',
         section: 'Administration',
-        permission: 'admin.manageUsers',
-        roles: ['Admin'],
+        anyPermissions: ['admin.manageUsers', 'admin.manageRoles', 'admin.manageSettings', 'admin.manageBranches', 'admin.viewAudit'],
         children: [
-            { to: '/users', label: 'User Accounts', category: 'Access' },
-            { to: '/roles', label: 'Roles & Permissions', category: 'Access' },
-            { to: '/settings', label: 'Global Settings', category: 'Configuration' },
-            { to: '/settings/taxes', label: 'Tax Management', category: 'Configuration' },
-            { to: '/settings/global-strings', label: 'App Setup (Strings)', category: 'Configuration', permission: 'admin.manageStrings' },
+            { to: '/users', label: 'User Accounts', category: 'Access', permission: 'admin.manageUsers' },
+            { to: '/roles', label: 'Roles & Permissions', category: 'Access', permission: 'admin.manageRoles' },
+            { to: '/settings', label: 'Global Settings', category: 'Configuration', permission: 'admin.manageSettings' },
+            { to: '/settings/taxes', label: 'Tax Management', category: 'Configuration', permission: 'admin.manageSettings' },
+            { to: '/settings/global-strings', label: 'App Setup (Strings)', category: 'Configuration', permission: 'admin.manageSettings' },
         ],
     },
     {
@@ -358,7 +372,7 @@ export default function Layout() {
     const [expandedChildGroups, setExpandedChildGroups] = useState<string[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [showSupportSessionPanel, setShowSupportSessionPanel] = useState(false);
-    const { user, hasPermission, logout, restoreOriginalSession } = useAuthStore();
+    const { user, hasPermission, isModuleEnabled, logout, restoreOriginalSession } = useAuthStore();
     const theme = useThemeStore((s) => s.theme);
     const toggleTheme = useThemeStore((s) => s.toggleTheme);
     const navigate = useNavigate();
@@ -430,7 +444,7 @@ export default function Layout() {
     };
 
     const filteredNav = useMemo(() => {
-        const canAccessNode = (node: { superAdminOnly?: boolean; superAdminPermission?: SuperAdminPermission; roles?: string[]; permission?: string }) => {
+        const canAccessNode = (node: { superAdminOnly?: boolean; superAdminPermission?: SuperAdminPermission; roles?: string[]; permission?: string; anyPermissions?: string[] }) => {
             if (node.superAdminOnly && !canAccessSuperAdmin) return false;
             if (node.superAdminOnly) {
                 if (node.superAdminPermission && !hasSuperAdminPermission(node.superAdminPermission)) return false;
@@ -442,11 +456,14 @@ export default function Layout() {
                 if (!userRole || !node.roles.includes(userRole)) return false;
             }
             if (node.permission && !hasPermission(node.permission)) return false;
+            if (node.anyPermissions && node.anyPermissions.length > 0 && !node.anyPermissions.some((permission) => hasPermission(permission))) return false;
             return true;
         };
 
         const items = navItems
             .map((item) => {
+                // Check tenant-level module gating first
+                if (item.moduleKey && !isModuleEnabled(item.moduleKey)) return null;
                 if (!canAccessNode(item)) return null;
                 const allowedChildren = item.children?.filter((child) => canAccessNode(child)) || [];
                 if (item.children && allowedChildren.length === 0 && !item.to) return null;
@@ -476,7 +493,7 @@ export default function Layout() {
 
             return null;
         }).filter(Boolean) as NavItem[];
-    }, [canAccessSuperAdmin, hasPermission, hasSuperAdminPermission, searchTerm, user]);
+    }, [canAccessSuperAdmin, hasPermission, hasSuperAdminPermission, isModuleEnabled, searchTerm, user]);
 
     const groupedNav = useMemo(() => {
         const groups = NAV_SECTION_ORDER.map((section) => ({

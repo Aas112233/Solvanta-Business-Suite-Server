@@ -15,15 +15,52 @@ productRoutes.use(authenticate);
 // ════════════ ZO SCHEMAS ════════════
 
 const itemCodeRegex = /^[0-9]{16}$/;
+const objectIdRegex = /^[a-f\d]{24}$/i;
 
 function normalizeCode(value: unknown): string {
     return String(value ?? '').trim().toUpperCase();
+}
+
+function normalizeOptionalString(value: unknown) {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+}
+
+function normalizeNullableString(value: unknown) {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? null : trimmed;
 }
 
 function normalizeCodeList(values: unknown[] | undefined | null): string[] {
     if (!Array.isArray(values)) return [];
     return Array.from(new Set(values.map((v) => normalizeCode(v)).filter(Boolean)));
 }
+
+const objectIdSchema = z.string().regex(objectIdRegex, 'Invalid id');
+const idParamsSchema = z.object({
+    id: objectIdSchema,
+});
+
+const requiredTrimmedString = (label: string, maxLength: number) =>
+    z.preprocess(
+        normalizeOptionalString,
+        z.string().min(1, `${label} is required`).max(maxLength, `${label} must be ${maxLength} characters or less`)
+    );
+
+const optionalTrimmedString = (maxLength: number) =>
+    z.preprocess(normalizeOptionalString, z.string().min(1).max(maxLength).optional());
+
+const optionalNullableTrimmedString = (maxLength: number) =>
+    z.preprocess(normalizeNullableString, z.string().min(1).max(maxLength).nullable().optional());
+
+const optionalNullableObjectIdSchema = z.preprocess(
+    normalizeNullableString,
+    objectIdSchema.nullable().optional()
+);
 
 // --- Centralized Uniqueness Check Function ---
 // Ensures a code (ItemCode, UnitCode, or Barcode) is unique across the company
@@ -92,6 +129,22 @@ async function checkCodeUniqueness(companyId: string, code: string, context: str
     }
 }
 
+async function assertCategoryExists(companyId: string, categoryId: string) {
+    const category = await prisma.category.findFirst({
+        where: { id: categoryId, companyId },
+        select: { id: true },
+    });
+    if (!category) throw AppError.badRequest('Invalid category');
+}
+
+async function assertProductExists(companyId: string, productId: string) {
+    const product = await prisma.product.findFirst({
+        where: { id: productId, companyId, deletedAt: { isSet: false } } as any,
+        select: { id: true },
+    });
+    if (!product) throw AppError.notFound('Product');
+}
+
 
 const unitSchema = z.object({
     unitName: z.string().min(1),
@@ -152,6 +205,109 @@ const priceGroupSchema = z.object({
     name: z.string().min(1).max(100),
     code: z.string().optional(),
     isDefault: z.boolean().optional().default(false),
+});
+
+const priceGroupPatchSchema = z.object({
+    name: optionalTrimmedString(100),
+    code: optionalNullableTrimmedString(50),
+    isDefault: z.boolean().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field is required',
+});
+
+const productPricingItemSchema = z.object({
+    priceGroupId: objectIdSchema,
+    unitCode: requiredTrimmedString('Unit code', 50),
+    salePrice: z.coerce.number().min(0),
+    minimumNegotiationPrice: z.union([z.null(), z.coerce.number().min(0)]).optional(),
+}).strict().superRefine((value, ctx) => {
+    if (value.minimumNegotiationPrice !== undefined && value.minimumNegotiationPrice !== null && value.minimumNegotiationPrice > value.salePrice) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['minimumNegotiationPrice'],
+            message: 'Minimum negotiation price cannot exceed sale price',
+        });
+    }
+});
+
+const productPricingSchema = z.object({
+    prices: z.array(productPricingItemSchema).max(500).default([]),
+}).strict().superRefine((value, ctx) => {
+    const seen = new Set<string>();
+    value.prices.forEach((price, index) => {
+        const key = `${price.priceGroupId}::${normalizeCode(price.unitCode)}`;
+        if (seen.has(key)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['prices', index],
+                message: 'Duplicate price group and unit combination',
+            });
+            return;
+        }
+        seen.add(key);
+    });
+});
+
+const categoryCreateSchema = z.object({
+    name: requiredTrimmedString('Category name', 100),
+    code: optionalNullableTrimmedString(50),
+    parentId: optionalNullableObjectIdSchema,
+}).strict();
+
+const categoryPatchSchema = z.object({
+    name: optionalTrimmedString(100),
+    code: optionalNullableTrimmedString(50),
+    parentId: optionalNullableObjectIdSchema,
+}).strict().refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field is required',
+});
+
+const groupCreateSchema = z.object({
+    name: requiredTrimmedString('Group name', 100),
+    code: optionalNullableTrimmedString(50),
+}).strict();
+
+const groupPatchSchema = z.object({
+    name: optionalTrimmedString(100),
+    code: optionalNullableTrimmedString(50),
+}).strict().refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field is required',
+});
+
+const brandCreateSchema = z.object({
+    name: requiredTrimmedString('Brand name', 100),
+}).strict();
+
+const brandPatchSchema = z.object({
+    name: optionalTrimmedString(100),
+}).strict().refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field is required',
+});
+
+const priceGroupCustomersSchema = z.object({
+    customerIds: z.array(objectIdSchema).max(1000).default([]),
+}).strict();
+
+const priceGroupPricingSchema = z.object({
+    prices: z.array(z.object({
+        productId: objectIdSchema,
+        unitCode: requiredTrimmedString('Unit code', 50),
+        salePrice: z.union([z.null(), z.coerce.number().min(0)]),
+    }).strict()).max(1000).default([]),
+}).strict().superRefine((value, ctx) => {
+    const seen = new Set<string>();
+    value.prices.forEach((price, index) => {
+        const key = `${price.productId}::${normalizeCode(price.unitCode)}`;
+        if (seen.has(key)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['prices', index],
+                message: 'Duplicate product and unit combination',
+            });
+            return;
+        }
+        seen.add(key);
+    });
 });
 
 const posSyncQuerySchema = z.object({
@@ -1029,32 +1185,61 @@ productRoutes.delete('/:productId/units/:unitId', requireAnyPermission(PERMISSIO
 
 // ════════════ PRICING CHANNELS (BULK UPSERT) ════════════
 
-productRoutes.put('/:id/pricing', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_PRICING), async (req, res, next) => {
+productRoutes.put('/:id/pricing', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_PRICING), validate({ params: idParamsSchema, body: productPricingSchema }), async (req, res, next) => {
     try {
-        // Body: { prices: [{ priceGroupId, unitCode, salePrice }] }
-        const { prices } = req.body;
-        if (!Array.isArray(prices)) throw AppError.badRequest('Prices must be an array');
+        const companyId = req.user!.companyId;
+        const productId = req.params.id as string;
+        const { prices } = req.body as z.infer<typeof productPricingSchema>;
+
+        const product = await prisma.product.findFirst({
+            where: { id: productId, companyId, deletedAt: { isSet: false } } as any,
+            include: { units: { select: { unitCode: true } } },
+        });
+        if (!product) throw AppError.notFound('Product');
+
+        const uniquePriceGroupIds = Array.from(new Set(prices.map((price) => price.priceGroupId)));
+        if (uniquePriceGroupIds.length > 0) {
+            const validPriceGroupCount = await (prisma as any).priceGroup.count({
+                where: { companyId, id: { in: uniquePriceGroupIds } },
+            });
+            if (validPriceGroupCount !== uniquePriceGroupIds.length) {
+                throw AppError.badRequest('One or more price groups are invalid');
+            }
+        }
+
+        const validUnitCodes = new Set(product.units.map((unit) => normalizeCode(unit.unitCode)));
+        const normalizedPrices = prices.map((price) => ({
+            ...price,
+            unitCode: normalizeCode(price.unitCode),
+            minimumNegotiationPrice: price.minimumNegotiationPrice ?? null,
+        }));
+
+        for (const price of normalizedPrices) {
+            if (!validUnitCodes.has(price.unitCode)) {
+                throw AppError.badRequest(`Unit ${price.unitCode} is invalid for product ${product.itemCode}`);
+            }
+        }
 
         await prisma.$transaction(
-            prices.map((p: any) =>
+            normalizedPrices.map((p) =>
                 prisma.productPriceGroup.upsert({
                     where: {
                         productId_priceGroupId_unitCode: {
-                            productId: req.params.id as string,
+                            productId,
                             priceGroupId: p.priceGroupId,
                             unitCode: p.unitCode,
                         }
                     },
                     create: {
-                        productId: req.params.id as string,
+                        productId,
                         priceGroupId: p.priceGroupId,
                         unitCode: p.unitCode,
                         salePrice: p.salePrice,
-                        minimumNegotiationPrice: p.minimumNegotiationPrice !== undefined ? p.minimumNegotiationPrice : null
+                        minimumNegotiationPrice: p.minimumNegotiationPrice
                     },
                     update: {
                         salePrice: p.salePrice,
-                        minimumNegotiationPrice: p.minimumNegotiationPrice !== undefined ? p.minimumNegotiationPrice : null
+                        minimumNegotiationPrice: p.minimumNegotiationPrice
                     }
                 })
             )
@@ -1066,85 +1251,153 @@ productRoutes.put('/:id/pricing', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT,
 // ════════════ MASTER DATA ════════════
 
 // Categories
-productRoutes.get('/meta/categories', async (req, res, next) => {
+productRoutes.get('/meta/categories', requirePermission(PERMISSIONS.PRODUCT_VIEW), async (req, res, next) => {
     try {
         const categories = await prisma.category.findMany({ where: { companyId: req.user!.companyId }, orderBy: { name: 'asc' } });
         sendSuccess(res, categories);
     } catch (error) { next(error); }
 });
-productRoutes.post('/meta/categories', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), async (req, res, next) => {
+productRoutes.post('/meta/categories', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ body: categoryCreateSchema }), async (req, res, next) => {
     try {
-        const category = await prisma.category.create({ data: { ...req.body, companyId: req.user!.companyId } });
+        const companyId = req.user!.companyId;
+        const { name, code, parentId } = req.body as z.infer<typeof categoryCreateSchema>;
+        if (parentId) {
+            await assertCategoryExists(companyId, parentId);
+        }
+        const category = await prisma.category.create({
+            data: {
+                companyId,
+                name,
+                code: code ? String(code).trim().toUpperCase() : null,
+                parentId: parentId ?? null,
+            }
+        });
         sendSuccess(res, category);
     } catch (error) { next(error); }
 });
-productRoutes.patch('/meta/categories/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), async (req, res, next) => {
+productRoutes.patch('/meta/categories/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema, body: categoryPatchSchema }), async (req, res, next) => {
     try {
-        const category = await prisma.category.update({ where: { id: req.params.id as string }, data: req.body });
+        const companyId = req.user!.companyId;
+        const id = req.params.id as string;
+        const { name, code, parentId } = req.body as z.infer<typeof categoryPatchSchema>;
+        const existing = await prisma.category.findFirst({ where: { id, companyId }, select: { id: true } });
+        if (!existing) throw AppError.notFound('Category');
+        if (parentId === id) throw AppError.badRequest('Category cannot be its own parent');
+        if (parentId) {
+            await assertCategoryExists(companyId, parentId);
+        }
+        const category = await prisma.category.update({
+            where: { id },
+            data: {
+                ...(name !== undefined ? { name } : {}),
+                ...(code !== undefined ? { code: code ? String(code).trim().toUpperCase() : null } : {}),
+                ...(parentId !== undefined ? { parentId: parentId ?? null } : {}),
+            }
+        });
         sendSuccess(res, category);
     } catch (error) { next(error); }
 });
-productRoutes.delete('/meta/categories/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), async (req, res, next) => {
+productRoutes.delete('/meta/categories/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
-        await prisma.category.delete({ where: { id: req.params.id as string } });
+        const companyId = req.user!.companyId;
+        const id = req.params.id as string;
+        const existing = await prisma.category.findFirst({ where: { id, companyId }, select: { id: true } });
+        if (!existing) throw AppError.notFound('Category');
+        await prisma.category.delete({ where: { id } });
         sendSuccess(res, { message: 'Category deleted' });
     } catch (error) { next(error); }
 });
 
 // Groups
-productRoutes.get('/meta/groups', async (req, res, next) => {
+productRoutes.get('/meta/groups', requirePermission(PERMISSIONS.PRODUCT_VIEW), async (req, res, next) => {
     try {
         const groups = await (prisma as any).itemGroup.findMany({ where: { companyId: req.user!.companyId }, orderBy: { name: 'asc' } });
         sendSuccess(res, groups);
     } catch (error) { next(error); }
 });
-productRoutes.post('/meta/groups', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), async (req, res, next) => {
+productRoutes.post('/meta/groups', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ body: groupCreateSchema }), async (req, res, next) => {
     try {
-        const group = await (prisma as any).itemGroup.create({ data: { ...req.body, companyId: req.user!.companyId } });
+        const companyId = req.user!.companyId;
+        const { name, code } = req.body as z.infer<typeof groupCreateSchema>;
+        const group = await (prisma as any).itemGroup.create({
+            data: {
+                companyId,
+                name,
+                code: code ? String(code).trim().toUpperCase() : null,
+            }
+        });
         sendSuccess(res, group);
     } catch (error) { next(error); }
 });
-productRoutes.patch('/meta/groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), async (req, res, next) => {
+productRoutes.patch('/meta/groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema, body: groupPatchSchema }), async (req, res, next) => {
     try {
-        const group = await (prisma as any).itemGroup.update({ where: { id: req.params.id as string }, data: req.body });
+        const companyId = req.user!.companyId;
+        const id = req.params.id as string;
+        const { name, code } = req.body as z.infer<typeof groupPatchSchema>;
+        const existing = await (prisma as any).itemGroup.findFirst({ where: { id, companyId }, select: { id: true } });
+        if (!existing) throw AppError.notFound('Group');
+        const group = await (prisma as any).itemGroup.update({
+            where: { id },
+            data: {
+                ...(name !== undefined ? { name } : {}),
+                ...(code !== undefined ? { code: code ? String(code).trim().toUpperCase() : null } : {}),
+            }
+        });
         sendSuccess(res, group);
     } catch (error) { next(error); }
 });
-productRoutes.delete('/meta/groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), async (req, res, next) => {
+productRoutes.delete('/meta/groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
-        await (prisma as any).itemGroup.delete({ where: { id: req.params.id as string } });
+        const companyId = req.user!.companyId;
+        const id = req.params.id as string;
+        const existing = await (prisma as any).itemGroup.findFirst({ where: { id, companyId }, select: { id: true } });
+        if (!existing) throw AppError.notFound('Group');
+        await (prisma as any).itemGroup.delete({ where: { id } });
         sendSuccess(res, { message: 'Group deleted' });
     } catch (error) { next(error); }
 });
 
 // Brands
-productRoutes.get('/meta/brands', async (req, res, next) => {
+productRoutes.get('/meta/brands', requirePermission(PERMISSIONS.PRODUCT_VIEW), async (req, res, next) => {
     try {
         const brands = await prisma.brand.findMany({ where: { companyId: req.user!.companyId }, orderBy: { name: 'asc' } });
         sendSuccess(res, brands);
     } catch (error) { next(error); }
 });
-productRoutes.post('/meta/brands', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), async (req, res, next) => {
+productRoutes.post('/meta/brands', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ body: brandCreateSchema }), async (req, res, next) => {
     try {
-        const brand = await prisma.brand.create({ data: { ...req.body, companyId: req.user!.companyId } });
+        const brand = await prisma.brand.create({
+            data: {
+                companyId: req.user!.companyId,
+                name: req.body.name,
+            }
+        });
         sendSuccess(res, brand);
     } catch (error) { next(error); }
 });
-productRoutes.patch('/meta/brands/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), async (req, res, next) => {
+productRoutes.patch('/meta/brands/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema, body: brandPatchSchema }), async (req, res, next) => {
     try {
-        const brand = await prisma.brand.update({ where: { id: req.params.id as string }, data: req.body });
+        const companyId = req.user!.companyId;
+        const id = req.params.id as string;
+        const existing = await prisma.brand.findFirst({ where: { id, companyId }, select: { id: true } });
+        if (!existing) throw AppError.notFound('Brand');
+        const brand = await prisma.brand.update({ where: { id }, data: { name: req.body.name } });
         sendSuccess(res, brand);
     } catch (error) { next(error); }
 });
-productRoutes.delete('/meta/brands/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), async (req, res, next) => {
+productRoutes.delete('/meta/brands/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
-        await prisma.brand.delete({ where: { id: req.params.id as string } });
+        const companyId = req.user!.companyId;
+        const id = req.params.id as string;
+        const existing = await prisma.brand.findFirst({ where: { id, companyId }, select: { id: true } });
+        if (!existing) throw AppError.notFound('Brand');
+        await prisma.brand.delete({ where: { id } });
         sendSuccess(res, { message: 'Brand deleted' });
     } catch (error) { next(error); }
 });
 
 // Price Groups (Channels)
-productRoutes.get('/meta/price-groups', async (req, res, next) => {
+productRoutes.get('/meta/price-groups', requirePermission(PERMISSIONS.PRODUCT_VIEW), async (req, res, next) => {
     try {
         const groups = await (prisma as any).priceGroup.findMany({
             where: { companyId: req.user!.companyId },
@@ -1183,7 +1436,7 @@ productRoutes.post('/meta/price-groups', requireAnyPermission(PERMISSIONS.PRODUC
         sendSuccess(res, group);
     } catch (error) { next(error); }
 });
-productRoutes.patch('/meta/price-groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), async (req, res, next) => {
+productRoutes.patch('/meta/price-groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema, body: priceGroupPatchSchema }), async (req, res, next) => {
     try {
         const companyId = req.user!.companyId;
         const id = req.params.id as string;
@@ -1193,10 +1446,11 @@ productRoutes.patch('/meta/price-groups/:id', requireAnyPermission(PERMISSIONS.P
         });
         if (!existing) throw AppError.notFound('Price Group');
 
+        const { name, code, isDefault } = req.body as z.infer<typeof priceGroupPatchSchema>;
         const payload = {
-            ...(req.body.name !== undefined ? { name: String(req.body.name).trim() } : {}),
-            ...(req.body.code !== undefined ? { code: req.body.code ? String(req.body.code).trim().toUpperCase() : null } : {}),
-            ...(req.body.isDefault !== undefined ? { isDefault: Boolean(req.body.isDefault) } : {}),
+            ...(name !== undefined ? { name } : {}),
+            ...(code !== undefined ? { code: code ? String(code).trim().toUpperCase() : null } : {}),
+            ...(isDefault !== undefined ? { isDefault } : {}),
         };
 
         const group = await prisma.$transaction(async (tx) => {
@@ -1276,17 +1530,16 @@ productRoutes.get('/meta/price-groups/:id', requirePermission(PERMISSIONS.PRODUC
 });
 
 // PUT /products/meta/price-groups/:id/customers
-productRoutes.put('/meta/price-groups/:id/customers', requirePermission(PERMISSIONS.CRM_EDIT), async (req, res, next) => {
+productRoutes.put('/meta/price-groups/:id/customers', requirePermission(PERMISSIONS.CRM_EDIT), validate({ params: idParamsSchema, body: priceGroupCustomersSchema }), async (req, res, next) => {
     try {
-        const schema = z.object({ customerIds: z.array(z.string()).default([]) });
-        const parsed = schema.parse(req.body);
         const companyId = req.user!.companyId;
         const groupId = req.params.id as string;
+        const { customerIds } = req.body as z.infer<typeof priceGroupCustomersSchema>;
 
         const group = await (prisma as any).priceGroup.findFirst({ where: { id: groupId, companyId }, select: { id: true } });
         if (!group) throw AppError.notFound('Price Group');
 
-        const uniqueCustomerIds = Array.from(new Set(parsed.customerIds));
+        const uniqueCustomerIds = Array.from(new Set(customerIds));
         if (uniqueCustomerIds.length > 0) {
             const validCount = await prisma.customer.count({
                 where: {
@@ -1318,23 +1571,16 @@ productRoutes.put('/meta/price-groups/:id/customers', requirePermission(PERMISSI
 });
 
 // PUT /products/meta/price-groups/:id/pricing
-productRoutes.put('/meta/price-groups/:id/pricing', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_PRICING), async (req, res, next) => {
+productRoutes.put('/meta/price-groups/:id/pricing', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_PRICING), validate({ params: idParamsSchema, body: priceGroupPricingSchema }), async (req, res, next) => {
     try {
-        const schema = z.object({
-            prices: z.array(z.object({
-                productId: z.string().min(1),
-                unitCode: z.string().min(1),
-                salePrice: z.number().min(0).nullable(),
-            })).default([]),
-        });
-        const parsed = schema.parse(req.body);
         const companyId = req.user!.companyId;
         const groupId = req.params.id as string;
+        const { prices } = req.body as z.infer<typeof priceGroupPricingSchema>;
 
         const group = await (prisma as any).priceGroup.findFirst({ where: { id: groupId, companyId }, select: { id: true } });
         if (!group) throw AppError.notFound('Price Group');
 
-        const normalizedPrices = parsed.prices.map((p) => ({
+        const normalizedPrices = prices.map((p) => ({
             productId: p.productId,
             unitCode: String(p.unitCode || '').trim().toUpperCase(),
             salePrice: p.salePrice,

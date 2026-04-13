@@ -1,8 +1,271 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
 import { prisma } from '../../lib/prisma.js';
 import { sendSuccess } from '../../utils/response.js';
 import { PERMISSIONS } from '../../config/permissions.js';
+import { AppError } from '../../utils/AppError.js';
+
+const objectIdSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid id');
+
+const ACCOUNT_TYPES = ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'] as const;
+const ACCOUNT_MAPPING_TYPES = [
+    'INVENTORY_ASSET',
+    'COGS_EXPENSE',
+    'SALES_REVENUE',
+    'SALES_RETURN',
+    'OUTPUT_TAX',
+    'INPUT_TAX',
+    'CASH',
+    'BANK',
+    'ACCOUNT_PAYABLE',
+    'ACCOUNT_RECEIVABLE',
+    'PURCHASE_RETURN',
+    'EXPENSE',
+    'DISCOUNT_GIVEN',
+    'DISCOUNT_RECEIVED',
+    'SHRINKAGE_EXPENSE',
+    'DAMAGED_GOODS_EXPENSE',
+    'TRANSFER_IN_TRANSIT',
+    'WIP_ASSET',
+    'PRODUCTION_VARIANCE',
+] as const;
+const ACCOUNT_ENTITY_TYPES = ['GLOBAL', 'BRANCH', 'PRODUCT', 'CATEGORY', 'CUSTOMER', 'SUPPLIER'] as const;
+
+function normalizeOptionalString(value: unknown) {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+}
+
+function normalizeNullableString(value: unknown) {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? null : trimmed;
+}
+
+function isValidDateInput(value: string) {
+    const normalized = value.includes('T') ? value : `${value}T00:00:00.000`;
+    return !Number.isNaN(new Date(normalized).getTime());
+}
+
+const idParamsSchema = z.object({
+    id: objectIdSchema,
+});
+
+const optionalObjectIdSchema = z.preprocess(normalizeOptionalString, objectIdSchema.optional());
+
+const nullableObjectIdSchema = z.preprocess(
+    normalizeNullableString,
+    objectIdSchema.nullable().optional()
+).transform((value) => value ?? null);
+
+const optionalTrimmedString = (maxLength: number) =>
+    z.preprocess(normalizeOptionalString, z.string().max(maxLength).optional());
+
+const nullableTrimmedString = (maxLength: number) =>
+    z.preprocess(
+        normalizeNullableString,
+        z.string().max(maxLength).nullable().optional()
+    ).transform((value) => value ?? null);
+
+const optionalDateStringSchema = z.preprocess(
+    normalizeOptionalString,
+    z.string().refine(isValidDateInput, 'Invalid date').optional()
+);
+
+const accountCreateSchema = z.object({
+    code: optionalTrimmedString(30),
+    name: z.string().trim().min(1, 'Account name is required').max(120, 'Account name must be 120 characters or less'),
+    type: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(ACCOUNT_TYPES)
+    ),
+    parentId: nullableObjectIdSchema,
+}).strict();
+
+const accountMappingSchema = z.object({
+    mappingType: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(ACCOUNT_MAPPING_TYPES)
+    ),
+    entityType: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(ACCOUNT_ENTITY_TYPES).default('GLOBAL')
+    ),
+    entityId: nullableObjectIdSchema,
+    accountId: objectIdSchema,
+}).strict().superRefine((data, ctx) => {
+    if (data.entityType === 'GLOBAL' && data.entityId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['entityId'],
+            message: 'entityId must be empty when entityType is GLOBAL',
+        });
+    }
+    if (data.entityType !== 'GLOBAL' && !data.entityId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['entityId'],
+            message: 'entityId is required for non-GLOBAL mappings',
+        });
+    }
+});
+
+const journalEntryListQuerySchema = z.object({
+    branchId: optionalObjectIdSchema,
+    startDate: optionalDateStringSchema,
+    endDate: optionalDateStringSchema,
+    skip: z.coerce.number().int().min(0).default(0),
+    take: z.coerce.number().int().min(1).max(500).default(50),
+}).superRefine((data, ctx) => {
+    if (!data.startDate || !data.endDate) return;
+
+    const startDate = new Date(data.startDate.includes('T') ? data.startDate : `${data.startDate}T00:00:00.000`);
+    const endDate = new Date(data.endDate.includes('T') ? data.endDate : `${data.endDate}T00:00:00.000`);
+    if (startDate > endDate) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['endDate'],
+            message: 'endDate must be on or after startDate',
+        });
+    }
+});
+
+const journalLineSchema = z.object({
+    accountId: objectIdSchema,
+    debit: z.coerce.number().min(0, 'Debit cannot be negative').finite('Debit must be a valid number').default(0),
+    credit: z.coerce.number().min(0, 'Credit cannot be negative').finite('Credit must be a valid number').default(0),
+}).strict().superRefine((line, ctx) => {
+    if (line.debit > 0 && line.credit > 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['credit'],
+            message: 'A line cannot have both debit and credit values',
+        });
+    }
+    if (line.debit <= 0 && line.credit <= 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['debit'],
+            message: 'A line must have either a debit or a credit value',
+        });
+    }
+});
+
+const journalEntryCreateSchema = z.object({
+    date: optionalDateStringSchema,
+    memo: nullableTrimmedString(1000),
+    branchId: nullableObjectIdSchema,
+    lines: z.array(journalLineSchema).min(2, 'A journal entry requires at least two lines').max(500, 'A maximum of 500 lines is allowed'),
+}).strict().superRefine((data, ctx) => {
+    const totalDebit = data.lines.reduce((sum, line) => sum + line.debit, 0);
+    const totalCredit = data.lines.reduce((sum, line) => sum + line.credit, 0);
+
+    if (totalDebit <= 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['lines'],
+            message: 'Journal entry must have a non-zero value',
+        });
+    }
+
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['lines'],
+            message: 'Debits must equal credits',
+        });
+    }
+});
+
+const asOfReportQuerySchema = z.object({
+    branchId: optionalObjectIdSchema,
+    asOfDate: optionalDateStringSchema,
+});
+
+const rangedReportQuerySchema = z.object({
+    branchId: optionalObjectIdSchema,
+    startDate: optionalDateStringSchema,
+    endDate: optionalDateStringSchema,
+}).superRefine((data, ctx) => {
+    if (!data.startDate || !data.endDate) return;
+
+    const startDate = new Date(data.startDate.includes('T') ? data.startDate : `${data.startDate}T00:00:00.000`);
+    const endDate = new Date(data.endDate.includes('T') ? data.endDate : `${data.endDate}T00:00:00.000`);
+    if (startDate > endDate) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['endDate'],
+            message: 'endDate must be on or after startDate',
+        });
+    }
+});
+
+const generalLedgerQuerySchema = z.object({
+    accountId: objectIdSchema,
+    branchId: optionalObjectIdSchema,
+    startDate: optionalDateStringSchema,
+    endDate: optionalDateStringSchema,
+}).superRefine((data, ctx) => {
+    if (!data.startDate || !data.endDate) return;
+
+    const startDate = new Date(data.startDate.includes('T') ? data.startDate : `${data.startDate}T00:00:00.000`);
+    const endDate = new Date(data.endDate.includes('T') ? data.endDate : `${data.endDate}T00:00:00.000`);
+    if (startDate > endDate) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['endDate'],
+            message: 'endDate must be on or after startDate',
+        });
+    }
+});
+
+async function assertBranchInCompany(companyId: string, branchId: string) {
+    const branch = await prisma.branch.findFirst({
+        where: { id: branchId, companyId },
+        select: { id: true },
+    });
+    if (!branch) throw AppError.badRequest('Invalid branch');
+}
+
+async function assertAccountInCompany(companyId: string, accountId: string) {
+    const account = await prisma.account.findFirst({
+        where: { id: accountId, companyId },
+        select: { id: true },
+    });
+    if (!account) throw AppError.badRequest('Invalid account');
+}
+
+async function assertMappingEntityExists(companyId: string, entityType: (typeof ACCOUNT_ENTITY_TYPES)[number], entityId: string | null) {
+    if (entityType === 'GLOBAL') return;
+    if (!entityId) throw AppError.badRequest('entityId is required for non-GLOBAL mappings');
+
+    let exists = null;
+    switch (entityType) {
+        case 'BRANCH':
+            exists = await prisma.branch.findFirst({ where: { id: entityId, companyId }, select: { id: true } });
+            break;
+        case 'PRODUCT':
+            exists = await prisma.product.findFirst({ where: { id: entityId, companyId }, select: { id: true } });
+            break;
+        case 'CATEGORY':
+            exists = await prisma.category.findFirst({ where: { id: entityId, companyId }, select: { id: true } });
+            break;
+        case 'CUSTOMER':
+            exists = await prisma.customer.findFirst({ where: { id: entityId, companyId }, select: { id: true } });
+            break;
+        case 'SUPPLIER':
+            exists = await prisma.supplier.findFirst({ where: { id: entityId, companyId }, select: { id: true } });
+            break;
+    }
+
+    if (!exists) {
+        throw AppError.badRequest(`Invalid entityId for entityType ${entityType}`);
+    }
+}
 
 export const accountingRoutes = Router();
 accountingRoutes.use(authenticate);
@@ -18,10 +281,14 @@ accountingRoutes.get('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_VIEW 
     } catch (error) { next(error); }
 });
 
-accountingRoutes.post('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+accountingRoutes.post('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ body: accountCreateSchema }), async (req, res, next) => {
     try {
         const { code, name, type, parentId } = req.body;
         const companyId = req.user!.companyId;
+
+        if (parentId) {
+            await assertAccountInCompany(companyId, parentId);
+        }
 
         let finalCode = code;
 
@@ -95,10 +362,13 @@ accountingRoutes.get('/mappings', requirePermission(PERMISSIONS.ACCOUNTING_VIEW 
     } catch (error) { next(error); }
 });
 
-accountingRoutes.post('/mappings', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+accountingRoutes.post('/mappings', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ body: accountMappingSchema }), async (req, res, next) => {
     try {
         const { mappingType, entityType, entityId, accountId } = req.body;
         const companyId = req.user!.companyId;
+
+        await assertAccountInCompany(companyId, accountId);
+        await assertMappingEntityExists(companyId, entityType, entityId);
 
         // Note: Using upsert or manually unquing because [companyId, mappingType, entityType, entityId] is unique
         const existing = await prisma.accountMapping.findFirst({
@@ -134,7 +404,7 @@ accountingRoutes.post('/mappings', requirePermission(PERMISSIONS.ACCOUNTING_POST
     } catch (error) { next(error); }
 });
 
-accountingRoutes.delete('/mappings/:id', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+accountingRoutes.delete('/mappings/:id', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         await prisma.accountMapping.delete({
             where: { id: req.params.id as string, companyId: req.user!.companyId }
@@ -144,9 +414,13 @@ accountingRoutes.delete('/mappings/:id', requirePermission(PERMISSIONS.ACCOUNTIN
 });
 
 // --- Journal Entries ---
-accountingRoutes.get('/journal-entries', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+accountingRoutes.get('/journal-entries', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: journalEntryListQuerySchema }), async (req, res, next) => {
     try {
         const { branchId, startDate, endDate, skip = 0, take = 50 } = req.query;
+
+        if (branchId && typeof branchId === 'string') {
+            await assertBranchInCompany(req.user!.companyId, branchId);
+        }
 
         let where: any = { companyId: req.user!.companyId };
         if (branchId) where.branchId = branchId;
@@ -203,25 +477,22 @@ accountingRoutes.get('/journal-entries', requirePermission(PERMISSIONS.ACCOUNTIN
     } catch (error) { next(error); }
 });
 
-accountingRoutes.post('/journal-entries', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+accountingRoutes.post('/journal-entries', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ body: journalEntryCreateSchema }), async (req, res, next) => {
     try {
         const { date, memo, branchId, lines } = req.body;
         const companyId = req.user!.companyId;
 
-        if (!lines || !Array.isArray(lines) || lines.length < 2) {
-            return res.status(400).json({ success: false, error: { message: 'A journal entry requires at least two lines', code: 'INVALID_LINES' } });
+        if (branchId) {
+            await assertBranchInCompany(companyId, branchId);
         }
 
-        // Validate debits = credits
-        const totalDebit = lines.reduce((sum, line) => sum + (Number(line.debit) || 0), 0);
-        const totalCredit = lines.reduce((sum, line) => sum + (Number(line.credit) || 0), 0);
-
-        if (Math.abs(totalDebit - totalCredit) > 0.01) {
-            return res.status(400).json({ success: false, error: { message: 'Debits must equal credits', code: 'UNBALANCED_JOURNAL' } });
-        }
-
-        if (totalDebit <= 0) {
-            return res.status(400).json({ success: false, error: { message: 'Journal entry must have a non-zero value', code: 'ZERO_VALUE' } });
+        const uniqueAccountIds = [...new Set((lines as Array<{ accountId: string }>).map((line) => line.accountId))];
+        const validAccounts = await prisma.account.findMany({
+            where: { companyId, id: { in: uniqueAccountIds } },
+            select: { id: true },
+        });
+        if (validAccounts.length !== uniqueAccountIds.length) {
+            throw AppError.badRequest('One or more journal line accounts are invalid');
         }
 
         // Generate Entry No
@@ -264,9 +535,13 @@ accountingRoutes.post('/journal-entries', requirePermission(PERMISSIONS.ACCOUNTI
 });
 
 // --- Trial Balance Extract ---
-accountingRoutes.get('/reports/trial-balance', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+accountingRoutes.get('/reports/trial-balance', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: asOfReportQuerySchema }), async (req, res, next) => {
     try {
         const { branchId, asOfDate } = req.query;
+
+        if (branchId && typeof branchId === 'string') {
+            await assertBranchInCompany(req.user!.companyId, branchId);
+        }
 
         // Sum all debits and credits grouped by account
         const whereClause: any = {
@@ -318,9 +593,13 @@ accountingRoutes.get('/reports/trial-balance', requirePermission(PERMISSIONS.ACC
 });
 
 // --- Profit & Loss Extract ---
-accountingRoutes.get('/reports/pl', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+accountingRoutes.get('/reports/pl', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: rangedReportQuerySchema }), async (req, res, next) => {
     try {
         const { branchId, startDate, endDate } = req.query;
+
+        if (branchId && typeof branchId === 'string') {
+            await assertBranchInCompany(req.user!.companyId, branchId);
+        }
 
         const whereClause: any = {
             journalEntry: {
@@ -387,9 +666,13 @@ accountingRoutes.get('/reports/pl', requirePermission(PERMISSIONS.ACCOUNTING_VIE
 });
 
 // --- Balance Sheet Extract ---
-accountingRoutes.get('/reports/balance-sheet', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+accountingRoutes.get('/reports/balance-sheet', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: asOfReportQuerySchema }), async (req, res, next) => {
     try {
         const { branchId, asOfDate } = req.query;
+
+        if (branchId && typeof branchId === 'string') {
+            await assertBranchInCompany(req.user!.companyId, branchId);
+        }
 
         // 1. Calculate retained earnings (Net income up to asOfDate)
         const reWhere: any = { journalEntry: { companyId: req.user!.companyId } };
@@ -462,16 +745,14 @@ accountingRoutes.get('/reports/balance-sheet', requirePermission(PERMISSIONS.ACC
 });
 
 // --- General Ledger Extract ---
-accountingRoutes.get('/reports/general-ledger', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+accountingRoutes.get('/reports/general-ledger', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: generalLedgerQuerySchema }), async (req, res, next) => {
     try {
         const { accountId, branchId, startDate, endDate } = req.query;
-
-        // If no account is selected, we might want to return an empty array or require it
-        if (!accountId) {
-            return res.status(400).json({ success: false, error: { message: "accountId is required for general ledger", code: 'MISSING_PARAM' } });
+        if (branchId && typeof branchId === 'string') {
+            await assertBranchInCompany(req.user!.companyId, branchId);
         }
 
-        const account = await prisma.account.findUnique({
+        const account = await prisma.account.findFirst({
             where: { id: accountId as string, companyId: req.user!.companyId }
         });
 

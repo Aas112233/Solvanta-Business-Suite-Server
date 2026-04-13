@@ -983,6 +983,10 @@ purchaseRoutes.put('/:id', requirePermission(PERMISSIONS.PURCHASE_CREATE), valid
             if (!existing) throw AppError.notFound('Purchase Invoice not found');
             if (existing.companyId !== companyId) throw AppError.notFound('Purchase Invoice not found');
             if (existing.status === 'CANCELLED') throw AppError.badRequest('Cannot edit cancelled invoice');
+            await assertBranchAccessible(req, existing.branchId);
+            if (branchId !== existing.branchId) {
+                throw AppError.badRequest('Changing branch on an existing purchase invoice is not supported');
+            }
 
             // 2. Check Payments
             const payments = await tx.purchasePayment.aggregate({
@@ -1061,12 +1065,6 @@ purchaseRoutes.put('/:id', requirePermission(PERMISSIONS.PURCHASE_CREATE), valid
                 where: { id: id as string },
                 data: {
                     supplierId,
-                    // branchId: We assume branch doesn't change for simplicity of stock logic, or block it. 
-                    // If branch changes, validation above (using existing.branchId) is insufficient.
-                    // For now, accept changing branchId but validation ran against OLD branch. 
-                    // This is technically wrong if we move stock to new branch but validate against old.
-                    // Correct: If branch changes, we REMOVE from Old Branch and ADD to New Branch.
-                    // Let's block branch change for simplicity or assume same branch.
                     branchId,
                     invoiceNoSupplier,
                     subtotal: newSubtotal,

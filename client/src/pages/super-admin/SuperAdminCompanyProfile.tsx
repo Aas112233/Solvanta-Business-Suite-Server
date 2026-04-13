@@ -24,6 +24,7 @@ import {
     updateTenantStatus,
     updateTenantUserStatus,
     updateTenantUserPassword,
+    createTenantUser,
 } from './api';
 
 type UserFilter = 'All' | 'Active' | 'Inactive';
@@ -103,7 +104,31 @@ export default function SuperAdminCompanyProfile() {
 
     const [userSearch, setUserSearch] = useState('');
     const [userFilter, setUserFilter] = useState<UserFilter>('All');
-    
+
+    // Role options for new user
+    const roleOptions = useMemo(() => [
+        { value: '', label: 'Select Role (Optional)' },
+        { value: 'Admin', label: 'Admin' },
+        { value: 'Manager', label: 'Manager' },
+        { value: 'Operations Associate', label: 'Operations Associate' },
+        { value: 'Accountant', label: 'Accountant' },
+        { value: 'Sales Associate', label: 'Sales Associate' },
+        { value: 'Cashier', label: 'Cashier' },
+        { value: 'Shopkeeper', label: 'Shopkeeper' },
+        { value: 'Viewer', label: 'Viewer' },
+    ], []);
+
+    // New User Form
+    const [showNewUserForm, setShowNewUserForm] = useState(false);
+    const [newUserForm, setNewUserForm] = useState({
+        name: '',
+        email: '',
+        password: '',
+        role: '',
+        phone: '',
+    });
+    const [newUserErrors, setNewUserErrors] = useState<Record<string, string>>({});
+
     // User Password Reset
     const [passwordResetUser, setPasswordResetUser] = useState<{ id: string; name: string } | null>(null);
     const [newPassword, setNewPassword] = useState('');
@@ -257,6 +282,26 @@ export default function SuperAdminCompanyProfile() {
             queryClient.invalidateQueries({ queryKey: ['super-admin', 'audit'] });
         },
         onError: () => toast.error('Failed to update user password'),
+    });
+
+    const createUserMutation = useMutation({
+        mutationFn: (payload: { name: string; email: string; password: string; role?: string; phone?: string }) =>
+            createTenantUser(id, payload),
+        onSuccess: () => {
+            toast.success('User created successfully');
+            setShowNewUserForm(false);
+            setNewUserForm({ name: '', email: '', password: '', role: '', phone: '' });
+            setNewUserErrors({});
+            queryClient.invalidateQueries({ queryKey: ['super-admin', 'tenant-control', id] });
+            queryClient.invalidateQueries({ queryKey: ['super-admin', 'audit'] });
+        },
+        onError: (error: any) => {
+            const message = error?.response?.data?.error?.message || 'Failed to create user';
+            toast.error(message);
+            if (error?.response?.data?.error?.details) {
+                setNewUserErrors(error.response.data.error.details);
+            }
+        },
     });
 
     const impersonationMutation = useMutation({
@@ -454,13 +499,12 @@ export default function SuperAdminCompanyProfile() {
                                         {module.monthlyActiveUsers} MAU • {module.eventCount30d} events in 30 days
                                     </p>
                                 </div>
-                                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${
-                                    module.status === 'adopted'
-                                        ? 'bg-emerald-50 text-emerald-700'
-                                        : module.status === 'unused'
-                                            ? 'bg-amber-50 text-amber-700'
-                                            : 'bg-slate-100 text-slate-700'
-                                }`}>
+                                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${module.status === 'adopted'
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : module.status === 'unused'
+                                        ? 'bg-amber-50 text-amber-700'
+                                        : 'bg-slate-100 text-slate-700'
+                                    }`}>
                                     {module.status}
                                 </span>
                             </div>
@@ -478,292 +522,398 @@ export default function SuperAdminCompanyProfile() {
             </section>
 
             {canManageBilling && (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h3 className="text-lg font-semibold text-slate-900">Plan & Billing Controls</h3>
-                <p className="text-xs text-slate-500">Override commercial plan and billing metrics used in super-admin reporting.</p>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <div>
-                        <label className="text-xs text-slate-600">Plan</label>
-                        <AppDropdown
-                            value={planDraft.plan}
-                            onChange={(v) => setPlanDraft(prev => ({ ...prev, plan: v as TenantPlan }))}
-                            options={[{ value: 'Starter', label: 'Starter' }, { value: 'Growth', label: 'Growth' }, { value: 'SOLVANTA', label: 'SOLVANTA' }]}
-                            placeholder='Starter'
-                        />
+                <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <h3 className="text-lg font-semibold text-slate-900">Plan & Billing Controls</h3>
+                    <p className="text-xs text-slate-500">Override commercial plan and billing metrics used in super-admin reporting.</p>
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <div>
+                            <label className="text-xs text-slate-600">Plan</label>
+                            <AppDropdown
+                                value={planDraft.plan}
+                                onChange={(v) => setPlanDraft(prev => ({ ...prev, plan: v as TenantPlan }))}
+                                options={[{ value: 'Starter', label: 'Starter' }, { value: 'Growth', label: 'Growth' }, { value: 'SOLVANTA', label: 'SOLVANTA' }]}
+                                placeholder='Starter'
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs text-slate-600">Monthly Revenue</label>
+                            <input
+                                type="number"
+                                min={0}
+                                value={planDraft.monthlyRevenue}
+                                onChange={(e) => setPlanDraft((prev) => ({ ...prev, monthlyRevenue: e.target.value }))}
+                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs text-slate-600">Failed Payments</label>
+                            <input
+                                type="number"
+                                min={0}
+                                value={planDraft.failedPayments}
+                                onChange={(e) => setPlanDraft((prev) => ({ ...prev, failedPayments: e.target.value }))}
+                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs text-slate-600">Next Billing Date</label>
+                            <input
+                                type="date"
+                                value={planDraft.nextBillingDate}
+                                onChange={(e) => setPlanDraft((prev) => ({ ...prev, nextBillingDate: e.target.value }))}
+                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                            />
+                        </div>
                     </div>
-                    <div>
-                        <label className="text-xs text-slate-600">Monthly Revenue</label>
-                        <input
-                            type="number"
-                            min={0}
-                            value={planDraft.monthlyRevenue}
-                            onChange={(e) => setPlanDraft((prev) => ({ ...prev, monthlyRevenue: e.target.value }))}
-                            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-                        />
-                    </div>
-                    <div>
-                        <label className="text-xs text-slate-600">Failed Payments</label>
-                        <input
-                            type="number"
-                            min={0}
-                            value={planDraft.failedPayments}
-                            onChange={(e) => setPlanDraft((prev) => ({ ...prev, failedPayments: e.target.value }))}
-                            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-                        />
-                    </div>
-                    <div>
-                        <label className="text-xs text-slate-600">Next Billing Date</label>
-                        <input
-                            type="date"
-                            value={planDraft.nextBillingDate}
-                            onChange={(e) => setPlanDraft((prev) => ({ ...prev, nextBillingDate: e.target.value }))}
-                            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-                        />
-                    </div>
-                </div>
-                <button
-                    type="button"
-                    onClick={() => planMutation.mutate()}
-                    disabled={planMutation.isPending}
-                    className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                    Save Plan Controls
-                </button>
-            </section>
+                    <button
+                        type="button"
+                        onClick={() => planMutation.mutate()}
+                        disabled={planMutation.isPending}
+                        className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                        Save Plan Controls
+                    </button>
+                </section>
             )}
 
             {canManageLimits && (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h3 className="text-lg font-semibold text-slate-900">Resource Limits</h3>
-                <p className="text-xs text-slate-500">Set enforced limits. Warnings start at 80% and 90%, new resources are blocked at the limit, and unresolved breaches auto-suspend after 7 days.</p>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div>
-                        <label className="text-xs text-slate-600">Max Users</label>
-                        <input
-                            type="number"
-                            min={1}
-                            value={limitsDraft.maxUsers}
-                            onChange={(e) => setLimitsDraft((prev) => ({ ...prev, maxUsers: e.target.value }))}
-                            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-                            placeholder="Unlimited"
-                        />
+                <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <h3 className="text-lg font-semibold text-slate-900">Resource Limits</h3>
+                    <p className="text-xs text-slate-500">Set enforced limits. Warnings start at 80% and 90%, new resources are blocked at the limit, and unresolved breaches auto-suspend after 7 days.</p>
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                            <label className="text-xs text-slate-600">Max Users</label>
+                            <input
+                                type="number"
+                                min={1}
+                                value={limitsDraft.maxUsers}
+                                onChange={(e) => setLimitsDraft((prev) => ({ ...prev, maxUsers: e.target.value }))}
+                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                placeholder="Unlimited"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs text-slate-600">Max Branches</label>
+                            <input
+                                type="number"
+                                min={1}
+                                value={limitsDraft.maxBranches}
+                                onChange={(e) => setLimitsDraft((prev) => ({ ...prev, maxBranches: e.target.value }))}
+                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                placeholder="Unlimited"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs text-slate-600">Max Products</label>
+                            <input
+                                type="number"
+                                min={1}
+                                value={limitsDraft.maxProducts}
+                                onChange={(e) => setLimitsDraft((prev) => ({ ...prev, maxProducts: e.target.value }))}
+                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                placeholder="Unlimited"
+                            />
+                        </div>
                     </div>
-                    <div>
-                        <label className="text-xs text-slate-600">Max Branches</label>
-                        <input
-                            type="number"
-                            min={1}
-                            value={limitsDraft.maxBranches}
-                            onChange={(e) => setLimitsDraft((prev) => ({ ...prev, maxBranches: e.target.value }))}
-                            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-                            placeholder="Unlimited"
-                        />
+                    <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                        Current usage: {controlCenter?.usage.users ?? tenant.totalUsers} users, {controlCenter?.usage.branches ?? tenant.totalBranches} branches, {controlCenter?.usage.products ?? tenant.totalProducts} products
                     </div>
-                    <div>
-                        <label className="text-xs text-slate-600">Max Products</label>
-                        <input
-                            type="number"
-                            min={1}
-                            value={limitsDraft.maxProducts}
-                            onChange={(e) => setLimitsDraft((prev) => ({ ...prev, maxProducts: e.target.value }))}
-                            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-                            placeholder="Unlimited"
-                        />
-                    </div>
-                </div>
-                <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                    Current usage: {controlCenter?.usage.users ?? tenant.totalUsers} users, {controlCenter?.usage.branches ?? tenant.totalBranches} branches, {controlCenter?.usage.products ?? tenant.totalProducts} products
-                </div>
-                {tenant.limitWarnings.length > 0 && (
-                    <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                        {tenant.limitWarnings.map((warning: Tenant['limitWarnings'][number]) => `${warning.label}: ${warning.count}/${warning.limit ?? 'Unlimited'} (${warning.percentUsed ?? 0}%)`).join(' • ')}
-                    </div>
-                )}
-                <button
-                    type="button"
-                    onClick={() => limitsMutation.mutate()}
-                    disabled={limitsMutation.isPending}
-                    className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                    Save Limits
-                </button>
-            </section>
+                    {tenant.limitWarnings.length > 0 && (
+                        <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                            {tenant.limitWarnings.map((warning: Tenant['limitWarnings'][number]) => `${warning.label}: ${warning.count}/${warning.limit ?? 'Unlimited'} (${warning.percentUsed ?? 0}%)`).join(' • ')}
+                        </div>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => limitsMutation.mutate()}
+                        disabled={limitsMutation.isPending}
+                        className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                        Save Limits
+                    </button>
+                </section>
             )}
 
             {canManageMaintenance && (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h3 className="text-lg font-semibold text-slate-900">Maintenance Lock</h3>
-                <p className="text-xs text-slate-500">When enabled, this tenant cannot access APIs except super-admin users.</p>
-                <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 p-3">
-                    <div>
-                        <p className="text-sm font-medium text-slate-900">Enable maintenance mode</p>
-                        <p className="text-xs text-slate-500">Block tenant access with a platform message.</p>
-                    </div>
-                    <input
-                        type="checkbox"
-                        checked={maintenanceDraft.enabled}
-                        onChange={(e) => setMaintenanceDraft((prev) => ({ ...prev, enabled: e.target.checked }))}
-                        className="h-4 w-4"
-                    />
-                </div>
-                <textarea
-                    rows={3}
-                    value={maintenanceDraft.message}
-                    onChange={(e) => setMaintenanceDraft((prev) => ({ ...prev, message: e.target.value }))}
-                    placeholder="Maintenance message shown to blocked users"
-                    className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-                />
-                <button
-                    type="button"
-                    onClick={() => maintenanceMutation.mutate()}
-                    disabled={maintenanceMutation.isPending}
-                    className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                    Save Maintenance Controls
-                </button>
-            </section>
-            )}
-
-            {canManageUsers && (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <h3 className="text-lg font-semibold text-slate-900">Tenant User Control</h3>
-                        <p className="text-xs text-slate-500">Activate or suspend individual users inside this tenant.</p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <h3 className="text-lg font-semibold text-slate-900">Maintenance Lock</h3>
+                    <p className="text-xs text-slate-500">When enabled, this tenant cannot access APIs except super-admin users.</p>
+                    <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 p-3">
+                        <div>
+                            <p className="text-sm font-medium text-slate-900">Enable maintenance mode</p>
+                            <p className="text-xs text-slate-500">Block tenant access with a platform message.</p>
+                        </div>
                         <input
-                            value={userSearch}
-                            onChange={(e) => setUserSearch(e.target.value)}
-                            placeholder="Search user..."
-                            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-slate-400"
-                        />
-                        <AppDropdown
-                            value={userFilter}
-                            onChange={(v) => setUserFilter(v as UserFilter)}
-                            options={[{ value: 'All', label: 'All' }, { value: 'Active', label: 'Active' }, { value: 'Inactive', label: 'Inactive' }]}
-                            placeholder='All'
+                            type="checkbox"
+                            checked={maintenanceDraft.enabled}
+                            onChange={(e) => setMaintenanceDraft((prev) => ({ ...prev, enabled: e.target.checked }))}
+                            className="h-4 w-4"
                         />
                     </div>
-                </div>
-
-                {loadingControlCenter && <p className="mt-4 text-sm text-slate-500">Loading tenant users...</p>}
-
-                {!loadingControlCenter && (
-                    <div className="mt-4 overflow-x-auto">
-                        {focusedUser && (
-                            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                                Focused user from support session: <span className="font-semibold">{focusedUser.name}</span> ({focusedUser.email})
-                            </div>
-                        )}
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500">
-                                    <th className="py-2 pr-3">Name</th>
-                                    <th className="py-2 pr-3">Role</th>
-                                    <th className="py-2 pr-3">Last Login</th>
-                                    <th className="py-2 pr-3">Status</th>
-                                    <th className="py-2">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredUsers.map((user) => (
-                                    <tr
-                                        key={user.id}
-                                        id={`tenant-user-row-${user.id}`}
-                                        className={`border-b border-slate-100 last:border-none ${focusedUserId === user.id ? 'bg-amber-50/70' : ''}`}
-                                    >
-                                        <td className="py-3 pr-3">
-                                            <p className="font-medium text-slate-900">{user.name}</p>
-                                            <p className="text-xs text-slate-500">{user.email}</p>
-                                        </td>
-                                        <td className="py-3 pr-3 text-slate-700">{user.role}</td>
-                                        <td className="py-3 pr-3 text-xs text-slate-500">
-                                            {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'Never'}
-                                        </td>
-                                        <td className="py-3 pr-3">
-                                            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${user.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-                                                {user.isActive ? 'Active' : 'Inactive'}
-                                            </span>
-                                        </td>
-                                        <td className="py-3">
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => userStatusMutation.mutate({ userId: user.id, isActive: !user.isActive })}
-                                                    className={`rounded-md px-2 py-1 text-xs font-medium text-white ${user.isActive ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
-                                                >
-                                                    {user.isActive ? 'Suspend' : 'Activate'}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setPasswordResetUser({ id: user.id, name: user.name });
-                                                        setNewPassword('');
-                                                    }}
-                                                    className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
-                                                >
-                                                    Password
-                                                </button>
-                                                {canImpersonateUsers && user.canImpersonate !== false && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            setImpersonationUser({ id: user.id, name: user.name, email: user.email });
-                                                            setImpersonationReason('');
-                                                            setImpersonationTicket('');
-                                                        }}
-                                                        className="rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
-                                                    >
-                                                        Impersonate
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                        {filteredUsers.length === 0 && <p className="py-4 text-sm text-slate-500">No users matched this filter.</p>}
-                    </div>
-                )}
-            </section>
-            )}
-
-            {canManageAnnouncements && (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h3 className="text-lg font-semibold text-slate-900">Tenant Announcement</h3>
-                <p className="text-xs text-slate-500">Send a control message only to this tenant.</p>
-                <div className="mt-4 space-y-3">
-                    <input
-                        value={announcement.title}
-                        onChange={(e) => setAnnouncement((prev) => ({ ...prev, title: e.target.value }))}
-                        placeholder="Announcement title"
-                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-                    />
                     <textarea
-                        rows={4}
-                        value={announcement.message}
-                        onChange={(e) => setAnnouncement((prev) => ({ ...prev, message: e.target.value }))}
-                        placeholder="Announcement message"
-                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-                    />
-                    <AppDropdown
-                        value={announcement.level}
-                        onChange={(v) => setAnnouncement(prev => ({ ...prev, level: v as 'info' | 'warning' | 'critical' }))}
-                        options={[{ value: 'info', label: 'Info' }, { value: 'warning', label: 'Warning' }, { value: 'critical', label: 'Critical' }]}
-                        placeholder='Info'
+                        rows={3}
+                        value={maintenanceDraft.message}
+                        onChange={(e) => setMaintenanceDraft((prev) => ({ ...prev, message: e.target.value }))}
+                        placeholder="Maintenance message shown to blocked users"
+                        className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
                     />
                     <button
                         type="button"
-                        onClick={() => announcementMutation.mutate()}
-                        disabled={announcementMutation.isPending || !announcement.title.trim() || !announcement.message.trim()}
-                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        onClick={() => maintenanceMutation.mutate()}
+                        disabled={maintenanceMutation.isPending}
+                        className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                     >
-                        Send Tenant Announcement
+                        Save Maintenance Controls
                     </button>
-                </div>
-            </section>
+                </section>
+            )}
+
+            {canManageUsers && (
+                <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <h3 className="text-lg font-semibold text-slate-900">Tenant User Control</h3>
+                            <p className="text-xs text-slate-500">Activate or suspend individual users inside this tenant.</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <input
+                                value={userSearch}
+                                onChange={(e) => setUserSearch(e.target.value)}
+                                placeholder="Search user..."
+                                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-slate-400"
+                            />
+                            <AppDropdown
+                                value={userFilter}
+                                onChange={(v) => setUserFilter(v as UserFilter)}
+                                options={[{ value: 'All', label: 'All' }, { value: 'Active', label: 'Active' }, { value: 'Inactive', label: 'Inactive' }]}
+                                placeholder='All'
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowNewUserForm(!showNewUserForm)}
+                                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                            >
+                                {showNewUserForm ? 'Cancel' : 'Add New User'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {showNewUserForm && (
+                        <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                            <h4 className="mb-3 text-sm font-semibold text-slate-900">Add New User</h4>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                    <label className="mb-1 block text-xs font-medium text-slate-700">Name *</label>
+                                    <input
+                                        value={newUserForm.name}
+                                        onChange={(e) => setNewUserForm(prev => ({ ...prev, name: e.target.value }))}
+                                        placeholder="Full name"
+                                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-slate-400 ${newUserErrors.name ? 'border-red-500' : 'border-slate-200'}`}
+                                    />
+                                    {newUserErrors.name && <p className="mt-1 text-xs text-red-600">{newUserErrors.name}</p>}
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs font-medium text-slate-700">Email *</label>
+                                    <input
+                                        value={newUserForm.email}
+                                        onChange={(e) => setNewUserForm(prev => ({ ...prev, email: e.target.value }))}
+                                        placeholder="Email address"
+                                        type="email"
+                                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-slate-400 ${newUserErrors.email ? 'border-red-500' : 'border-slate-200'}`}
+                                    />
+                                    {newUserErrors.email && <p className="mt-1 text-xs text-red-600">{newUserErrors.email}</p>}
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs font-medium text-slate-700">Password *</label>
+                                    <input
+                                        value={newUserForm.password}
+                                        onChange={(e) => setNewUserForm(prev => ({ ...prev, password: e.target.value }))}
+                                        placeholder="Password"
+                                        type="password"
+                                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-slate-400 ${newUserErrors.password ? 'border-red-500' : 'border-slate-200'}`}
+                                    />
+                                    {newUserErrors.password && <p className="mt-1 text-xs text-red-600">{newUserErrors.password}</p>}
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs font-medium text-slate-700">Role</label>
+                                    <AppDropdown
+                                        value={newUserForm.role}
+                                        onChange={(v) => setNewUserForm(prev => ({ ...prev, role: v }))}
+                                        options={roleOptions}
+                                        placeholder='Select Role (Optional)'
+                                    />
+                                </div>
+                                <div className="sm:col-span-2">
+                                    <label className="mb-1 block text-xs font-medium text-slate-700">Phone</label>
+                                    <input
+                                        value={newUserForm.phone}
+                                        onChange={(e) => setNewUserForm(prev => ({ ...prev, phone: e.target.value }))}
+                                        placeholder="Phone number"
+                                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                    />
+                                </div>
+                            </div>
+                            <div className="mt-3 flex justify-end gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowNewUserForm(false);
+                                        setNewUserForm({ name: '', email: '', password: '', role: '', phone: '' });
+                                        setNewUserErrors({});
+                                    }}
+                                    className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const errors: Record<string, string> = {};
+                                        if (!newUserForm.name.trim()) errors.name = 'Name is required';
+                                        if (!newUserForm.email.trim()) errors.email = 'Email is required';
+                                        else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newUserForm.email)) errors.email = 'Invalid email format';
+                                        if (!newUserForm.password.trim()) errors.password = 'Password is required';
+                                        else if (newUserForm.password.length < 6) errors.password = 'Password must be at least 6 characters';
+
+                                        if (Object.keys(errors).length > 0) {
+                                            setNewUserErrors(errors);
+                                            return;
+                                        }
+
+                                        createUserMutation.mutate({
+                                            name: newUserForm.name.trim(),
+                                            email: newUserForm.email.trim(),
+                                            password: newUserForm.password,
+                                            role: newUserForm.role.trim() || undefined,
+                                            phone: newUserForm.phone.trim() || undefined,
+                                        });
+                                    }}
+                                    disabled={createUserMutation.isPending}
+                                    className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                    {createUserMutation.isPending ? 'Creating...' : 'Create User'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {loadingControlCenter && <p className="mt-4 text-sm text-slate-500">Loading tenant users...</p>}
+
+                    {!loadingControlCenter && (
+                        <div className="mt-4 overflow-x-auto">
+                            {focusedUser && (
+                                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                    Focused user from support session: <span className="font-semibold">{focusedUser.name}</span> ({focusedUser.email})
+                                </div>
+                            )}
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500">
+                                        <th className="py-2 pr-3">Name</th>
+                                        <th className="py-2 pr-3">Role</th>
+                                        <th className="py-2 pr-3">Last Login</th>
+                                        <th className="py-2 pr-3">Status</th>
+                                        <th className="py-2">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredUsers.map((user) => (
+                                        <tr
+                                            key={user.id}
+                                            id={`tenant-user-row-${user.id}`}
+                                            className={`border-b border-slate-100 last:border-none ${focusedUserId === user.id ? 'bg-amber-50/70' : ''}`}
+                                        >
+                                            <td className="py-3 pr-3">
+                                                <p className="font-medium text-slate-900">{user.name}</p>
+                                                <p className="text-xs text-slate-500">{user.email}</p>
+                                            </td>
+                                            <td className="py-3 pr-3 text-slate-700">{user.role}</td>
+                                            <td className="py-3 pr-3 text-xs text-slate-500">
+                                                {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'Never'}
+                                            </td>
+                                            <td className="py-3 pr-3">
+                                                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${user.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                                                    {user.isActive ? 'Active' : 'Inactive'}
+                                                </span>
+                                            </td>
+                                            <td className="py-3">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => userStatusMutation.mutate({ userId: user.id, isActive: !user.isActive })}
+                                                        className={`rounded-md px-2 py-1 text-xs font-medium text-white ${user.isActive ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                                                    >
+                                                        {user.isActive ? 'Suspend' : 'Activate'}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setPasswordResetUser({ id: user.id, name: user.name });
+                                                            setNewPassword('');
+                                                        }}
+                                                        className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
+                                                    >
+                                                        Password
+                                                    </button>
+                                                    {canImpersonateUsers && user.canImpersonate !== false && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setImpersonationUser({ id: user.id, name: user.name, email: user.email });
+                                                                setImpersonationReason('');
+                                                                setImpersonationTicket('');
+                                                            }}
+                                                            className="rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                                                        >
+                                                            Impersonate
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            {filteredUsers.length === 0 && <p className="py-4 text-sm text-slate-500">No users matched this filter.</p>}
+                        </div>
+                    )}
+                </section>
+            )}
+
+            {canManageAnnouncements && (
+                <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <h3 className="text-lg font-semibold text-slate-900">Tenant Announcement</h3>
+                    <p className="text-xs text-slate-500">Send a control message only to this tenant.</p>
+                    <div className="mt-4 space-y-3">
+                        <input
+                            value={announcement.title}
+                            onChange={(e) => setAnnouncement((prev) => ({ ...prev, title: e.target.value }))}
+                            placeholder="Announcement title"
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                        />
+                        <textarea
+                            rows={4}
+                            value={announcement.message}
+                            onChange={(e) => setAnnouncement((prev) => ({ ...prev, message: e.target.value }))}
+                            placeholder="Announcement message"
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                        />
+                        <AppDropdown
+                            value={announcement.level}
+                            onChange={(v) => setAnnouncement(prev => ({ ...prev, level: v as 'info' | 'warning' | 'critical' }))}
+                            options={[{ value: 'info', label: 'Info' }, { value: 'warning', label: 'Warning' }, { value: 'critical', label: 'Critical' }]}
+                            placeholder='Info'
+                        />
+                        <button
+                            type="button"
+                            onClick={() => announcementMutation.mutate()}
+                            disabled={announcementMutation.isPending || !announcement.title.trim() || !announcement.message.trim()}
+                            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        >
+                            Send Tenant Announcement
+                        </button>
+                    </div>
+                </section>
             )}
 
             {/* Password Reset Modal */}

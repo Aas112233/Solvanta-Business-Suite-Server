@@ -35,7 +35,7 @@ async function ensureDefaultRoles(companyId: string) {
 }
 
 // GET /roles
-roleRoutes.get('/', async (req, res, next) => {
+roleRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_ROLES), async (req, res, next) => {
     try {
         await ensureDefaultRoles(req.user!.companyId);
         const roles = await prisma.role.findMany({
@@ -54,7 +54,7 @@ roleRoutes.get('/', async (req, res, next) => {
 });
 
 // GET /roles/permissions — list all available permissions
-roleRoutes.get('/permissions', (_req, res) => {
+roleRoutes.get('/permissions', requirePermission(PERMISSIONS.ADMIN_MANAGE_ROLES), (_req, res) => {
     sendSuccess(res, ALL_PERMISSIONS);
 });
 

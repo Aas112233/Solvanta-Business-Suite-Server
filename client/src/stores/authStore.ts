@@ -2,12 +2,28 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { SuperAdminPermission } from '../lib/superAdminPermissions';
 
+export interface EnabledModules {
+    crm: boolean;
+    inventory: boolean;
+    purchases: boolean;
+    accounting: boolean;
+    pos: boolean;
+    reports: boolean;
+    bom: boolean;
+    production: boolean;
+    sales: boolean;
+    items: boolean;
+    suppliers: boolean;
+    hr: boolean;
+}
+
 interface User {
     id: string;
     name: string;
     email: string;
     isSuperAdmin?: boolean;
     superAdminPermissions?: SuperAdminPermission[];
+    enabledModules?: EnabledModules;
     impersonation?: {
         isActive: boolean;
         actorUserId: string;
@@ -51,6 +67,7 @@ interface AuthState {
     hasSuperAdminPermission: (permission: SuperAdminPermission) => boolean;
     hasAnySuperAdminPermission: (permissions: SuperAdminPermission[]) => boolean;
     hasPermission: (permission: string) => boolean;
+    isModuleEnabled: (moduleKey: keyof EnabledModules) => boolean;
     logout: () => void;
 }
 
@@ -147,10 +164,16 @@ export const useAuthStore = create<AuthState>()(
 
                 const perms = user?.role?.permissions || [];
                 if (perms.includes('*')) return true;
-                // Check for master permission (any module.access)
-                const module = permission.split('.')[0];
-                if (perms.includes(`${module}.access`)) return true;
                 return perms.includes(permission);
+            },
+
+            isModuleEnabled: (moduleKey) => {
+                const user = get().user;
+                // Super admins always have all modules
+                if (user?.isSuperAdmin) return true;
+                // If no enabledModules data, default to all enabled
+                if (!user?.enabledModules) return true;
+                return user.enabledModules[moduleKey] !== false;
             },
 
             logout: () => set({

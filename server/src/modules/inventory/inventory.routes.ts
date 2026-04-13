@@ -1,12 +1,220 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
 import { AppError } from '../../utils/AppError.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import { PERMISSIONS } from '../../config/permissions.js';
 import { formatDocNo, nextCounter } from '../../utils/documentCounter.js';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { InventoryService } from './InventoryService.js';
+
+const objectIdSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid id');
+
+function normalizeOptionalString(value: unknown) {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+}
+
+function normalizeNullableString(value: unknown) {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? null : trimmed;
+}
+
+function isValidDateInput(value: string) {
+    const normalized = value.includes('T') ? value : `${value}T00:00:00.000`;
+    return !Number.isNaN(new Date(normalized).getTime());
+}
+
+function addDuplicateLineIssue(
+    ctx: z.RefinementCtx,
+    index: number,
+    message = 'Duplicate product/unit lines are not allowed'
+) {
+    ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['items', index],
+        message,
+    });
+}
+
+const STOCK_MOVEMENT_TYPES = [
+    'PURCHASE_RECEIPT',
+    'POS_SALE',
+    'TRANSFER_OUT',
+    'TRANSFER_IN',
+    'ADJUSTMENT',
+    'DAMAGE',
+    'EXPIRED',
+    'RETURN',
+    'PRODUCTION_ISSUE',
+    'PRODUCTION_RECEIPT',
+] as const;
+
+const TRANSFER_STATUSES = ['DRAFT', 'SENT', 'RECEIVED', 'CANCELLED'] as const;
+
+const STOCK_COUNT_STATUSES = ['DRAFT', 'PENDING', 'COMMITTED', 'CANCELLED'] as const;
+
+const idParamsSchema = z.object({
+    id: objectIdSchema,
+});
+
+const optionalObjectIdSchema = z.preprocess(normalizeOptionalString, objectIdSchema.optional());
+
+const nullableObjectIdSchema = z.preprocess(
+    normalizeNullableString,
+    objectIdSchema.nullable().optional()
+).transform((value) => value ?? null);
+
+const optionalTrimmedString = (maxLength: number) =>
+    z.preprocess(normalizeOptionalString, z.string().max(maxLength).optional());
+
+const nullableTrimmedString = (maxLength: number) =>
+    z.preprocess(
+        normalizeNullableString,
+        z.string().max(maxLength).nullable().optional()
+    ).transform((value) => value ?? null);
+
+const optionalBooleanSchema = z.preprocess((value) => {
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes'].includes(normalized)) return true;
+        if (['false', '0', 'no'].includes(normalized)) return false;
+    }
+    return value;
+}, z.boolean().optional());
+
+const optionalDateStringSchema = z.preprocess(
+    normalizeOptionalString,
+    z.string().refine(isValidDateInput, 'Invalid date').optional()
+);
+
+const paginationQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(1000).default(20),
+    search: optionalTrimmedString(120),
+});
+
+const stockListQuerySchema = paginationQuerySchema.extend({
+    branchId: optionalObjectIdSchema,
+    lowStock: optionalBooleanSchema,
+    productId: optionalObjectIdSchema,
+});
+
+const inventoryAlertsQuerySchema = z.object({
+    branchId: optionalObjectIdSchema,
+});
+
+const inventoryAdjustmentSchema = z.object({
+    productId: objectIdSchema,
+    branchId: objectIdSchema,
+    unitCode: z.string().trim().min(1, 'Unit code is required').max(20, 'Unit code must be 20 characters or less'),
+    qty: z.coerce.number()
+        .finite('Quantity must be a valid number')
+        .refine((value) => value !== 0, 'Quantity must be a non-zero number'),
+    type: z.preprocess(
+        normalizeOptionalString,
+        z.string().min(1, 'Movement type is required').max(40)
+    ).transform((value) => value.toUpperCase()),
+});
+
+const movementsQuerySchema = paginationQuerySchema.extend({
+    productId: optionalObjectIdSchema,
+    branchId: optionalObjectIdSchema,
+    type: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(STOCK_MOVEMENT_TYPES).optional()
+    ),
+    dateFrom: optionalDateStringSchema,
+    dateTo: optionalDateStringSchema,
+}).superRefine((data, ctx) => {
+    if (!data.dateFrom || !data.dateTo) return;
+
+    const startDate = new Date(data.dateFrom.includes('T') ? data.dateFrom : `${data.dateFrom}T00:00:00.000`);
+    const endDate = new Date(data.dateTo.includes('T') ? data.dateTo : `${data.dateTo}T00:00:00.000`);
+    if (startDate > endDate) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['dateTo'],
+            message: 'dateTo must be on or after dateFrom',
+        });
+    }
+});
+
+const transferItemSchema = z.object({
+    productId: objectIdSchema,
+    unitCode: z.string().trim().min(1, 'Unit code is required').max(20, 'Unit code must be 20 characters or less'),
+    qty: z.coerce.number().positive('Transfer quantity must be greater than zero').finite('Transfer quantity must be a valid number'),
+});
+
+const transferListQuerySchema = paginationQuerySchema.extend({
+    status: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(TRANSFER_STATUSES).optional()
+    ),
+    fromBranchId: optionalObjectIdSchema,
+    toBranchId: optionalObjectIdSchema,
+});
+
+const createTransferSchema = z.object({
+    fromBranchId: objectIdSchema,
+    toBranchId: objectIdSchema,
+    items: z.array(transferItemSchema)
+        .min(1, 'At least one transfer item is required')
+        .max(500, 'A maximum of 500 transfer items is allowed'),
+}).superRefine((data, ctx) => {
+    if (data.fromBranchId === data.toBranchId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['toBranchId'],
+            message: 'Source and destination branches must be different',
+        });
+    }
+
+    const seen = new Set<string>();
+    data.items.forEach((item, index) => {
+        const key = `${item.productId}::${item.unitCode}`.toLowerCase();
+        if (seen.has(key)) addDuplicateLineIssue(ctx, index, 'Duplicate transfer lines are not allowed');
+        seen.add(key);
+    });
+});
+
+const stockCountItemSchema = z.object({
+    productId: objectIdSchema,
+    unitCode: z.string().trim().min(1, 'Unit code is required').max(20, 'Unit code must be 20 characters or less'),
+    systemQty: z.coerce.number().min(0, 'System quantity cannot be negative').finite('System quantity must be a valid number').default(0),
+    countedQty: z.coerce.number().min(0, 'Counted quantity cannot be negative').finite('Counted quantity must be a valid number').default(0),
+    avgCost: z.coerce.number().min(0, 'Average cost cannot be negative').finite('Average cost must be a valid number').default(0),
+    salePrice: z.coerce.number().min(0, 'Sale price cannot be negative').finite('Sale price must be a valid number').default(0),
+});
+
+const stockCountSchema = z.object({
+    branchId: objectIdSchema,
+    priceGroupId: nullableObjectIdSchema,
+    notes: nullableTrimmedString(1000),
+    items: z.array(stockCountItemSchema)
+        .min(1, 'At least one stock count item is required')
+        .max(2000, 'A maximum of 2000 stock count items is allowed'),
+}).superRefine((data, ctx) => {
+    const seen = new Set<string>();
+    data.items.forEach((item, index) => {
+        const key = `${item.productId}::${item.unitCode}`.toLowerCase();
+        if (seen.has(key)) addDuplicateLineIssue(ctx, index, 'Duplicate stock count lines are not allowed');
+        seen.add(key);
+    });
+});
+
+const stockCountListQuerySchema = z.object({
+    branchId: optionalObjectIdSchema,
+    status: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(STOCK_COUNT_STATUSES).optional()
+    ),
+});
 
 
 const inventoryRoutes = Router();
@@ -89,7 +297,7 @@ async function assertBranchInCompany(companyId: string, branchId: string) {
 
 // GET /inventory/stock
 // Stock Overview
-inventoryRoutes.get('/stock', requirePermission(PERMISSIONS.INVENTORY_VIEW as any), async (req, res, next) => {
+inventoryRoutes.get('/stock', requirePermission(PERMISSIONS.INVENTORY_VIEW as any), validate({ query: stockListQuerySchema }), async (req, res, next) => {
     try {
         const { page = 1, limit = 20, search, branchId, lowStock, productId } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
@@ -103,7 +311,7 @@ inventoryRoutes.get('/stock', requirePermission(PERMISSIONS.INVENTORY_VIEW as an
             where.branchId = branchId;
         }
         if (productId && typeof productId === 'string') where.productId = productId;
-        if (typeof lowStock === 'string' && ['1', 'true', 'yes'].includes(lowStock.toLowerCase())) {
+        if (String(lowStock).toLowerCase() === 'true') {
             where.qtyOnHand = { lte: 5 };
         }
 
@@ -151,7 +359,7 @@ inventoryRoutes.get('/stock', requirePermission(PERMISSIONS.INVENTORY_VIEW as an
 
 // GET /inventory/alerts
 // Low Stock Alerts (Real logic)
-inventoryRoutes.get('/alerts', requirePermission(PERMISSIONS.INVENTORY_VIEW as any), async (req, res, next) => {
+inventoryRoutes.get('/alerts', requirePermission(PERMISSIONS.INVENTORY_VIEW as any), validate({ query: inventoryAlertsQuerySchema }), async (req, res, next) => {
     try {
         const { branchId } = req.query;
         const where: any = {
@@ -179,23 +387,11 @@ inventoryRoutes.get('/alerts', requirePermission(PERMISSIONS.INVENTORY_VIEW as a
 });
 
 // POST /inventory/adjust
-inventoryRoutes.post('/adjust', requirePermission(PERMISSIONS.INVENTORY_ADJUST as any), async (req, res, next) => {
+inventoryRoutes.post('/adjust', requirePermission(PERMISSIONS.INVENTORY_ADJUST as any), validate({ body: inventoryAdjustmentSchema }), async (req, res, next) => {
     try {
         const { productId, branchId, unitCode, qty, type } = req.body;
 
-        if (
-            !productId ||
-            !branchId ||
-            !unitCode ||
-            qty === undefined ||
-            qty === null ||
-            type === undefined ||
-            type === null ||
-            String(type).trim() === ''
-        ) throw AppError.badRequest('Missing required fields');
-
         const adjQty = Number(qty);
-        if (!Number.isFinite(adjQty) || adjQty === 0) throw AppError.badRequest('Quantity must be a non-zero number');
         const rawType = String(type).trim().toUpperCase();
         const { movementType, accountingType } = resolveAdjustmentTypes(rawType, adjQty);
         if (!MOVEMENT_TYPES.has(movementType)) throw AppError.badRequest('Invalid movement type');
@@ -256,7 +452,7 @@ inventoryRoutes.post('/adjust', requirePermission(PERMISSIONS.INVENTORY_ADJUST a
 
 // GET /inventory/movements
 // Stock Ledger / Movement History
-inventoryRoutes.get('/movements', requirePermission(PERMISSIONS.INVENTORY_VIEW as any), async (req, res, next) => {
+inventoryRoutes.get('/movements', requirePermission(PERMISSIONS.INVENTORY_VIEW as any), validate({ query: movementsQuerySchema }), async (req, res, next) => {
     try {
         const { page = 1, limit = 20, productId, branchId, type, search, dateFrom, dateTo } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
@@ -342,7 +538,7 @@ inventoryRoutes.get('/movements', requirePermission(PERMISSIONS.INVENTORY_VIEW a
 // ─── TRANSFERS ────────────────────────────────────────────────────────
 
 // GET /inventory/transfers
-inventoryRoutes.get('/transfers', requirePermission(PERMISSIONS.INVENTORY_VIEW as any), async (req, res, next) => {
+inventoryRoutes.get('/transfers', requirePermission(PERMISSIONS.INVENTORY_VIEW as any), validate({ query: transferListQuerySchema }), async (req, res, next) => {
     try {
         const { page = 1, limit = 20, status, fromBranchId, toBranchId, search } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
@@ -395,22 +591,15 @@ inventoryRoutes.get('/transfers', requirePermission(PERMISSIONS.INVENTORY_VIEW a
 });
 
 // POST /inventory/transfers (Create Draft)
-inventoryRoutes.post('/transfers', requirePermission(PERMISSIONS.INVENTORY_TRANSFER as any), async (req, res, next) => {
+inventoryRoutes.post('/transfers', requirePermission(PERMISSIONS.INVENTORY_TRANSFER as any), validate({ body: createTransferSchema }), async (req, res, next) => {
     try {
         const { fromBranchId, toBranchId, items } = req.body;
-        if (!fromBranchId || !toBranchId || !items || !items.length) throw AppError.badRequest('Missing required fields');
         if (fromBranchId === toBranchId) throw AppError.badRequest('Source and destination branches must be different');
 
         await Promise.all([
             assertBranchAccessible(req, fromBranchId),
             assertBranchAccessible(req, toBranchId),
         ]);
-        for (const item of items) {
-            if (!item.productId || !item.unitCode) throw AppError.badRequest('Transfer item missing productId/unitCode');
-            if (!Number.isFinite(Number(item.qty)) || Number(item.qty) <= 0) {
-                throw AppError.badRequest('Transfer qty must be > 0');
-            }
-        }
 
         const transferNo = formatDocNo('TRF', await nextCounter(prisma as any, req.user!.companyId, 'TRANSFER'));
 
@@ -440,7 +629,7 @@ inventoryRoutes.post('/transfers', requirePermission(PERMISSIONS.INVENTORY_TRANS
 });
 
 // GET /inventory/transfers/:id
-inventoryRoutes.get('/transfers/:id', requirePermission(PERMISSIONS.INVENTORY_VIEW as any), async (req, res, next) => {
+inventoryRoutes.get('/transfers/:id', requirePermission(PERMISSIONS.INVENTORY_VIEW as any), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         const transfer = await prisma.transfer.findFirst({
             where: {
@@ -471,7 +660,7 @@ inventoryRoutes.get('/transfers/:id', requirePermission(PERMISSIONS.INVENTORY_VI
 });
 
 // POST /inventory/transfers/:id/send (Deduct Stock)
-inventoryRoutes.post('/transfers/:id/send', requirePermission(PERMISSIONS.INVENTORY_TRANSFER as any), async (req, res, next) => {
+inventoryRoutes.post('/transfers/:id/send', requirePermission(PERMISSIONS.INVENTORY_TRANSFER as any), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         // @ts-ignore
         const transfer = await prisma.transfer.findFirst({
@@ -536,7 +725,7 @@ inventoryRoutes.post('/transfers/:id/send', requirePermission(PERMISSIONS.INVENT
 });
 
 // POST /inventory/transfers/:id/receive (Add Stock)
-inventoryRoutes.post('/transfers/:id/receive', requirePermission(PERMISSIONS.INVENTORY_TRANSFER as any), async (req, res, next) => {
+inventoryRoutes.post('/transfers/:id/receive', requirePermission(PERMISSIONS.INVENTORY_TRANSFER as any), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         // @ts-ignore
         const transfer = await prisma.transfer.findFirst({
@@ -654,10 +843,19 @@ inventoryRoutes.post('/transfers/:id/receive', requirePermission(PERMISSIONS.INV
 // ══════════════════════════════════════════════════════════════
 
 // GET /inventory/stock-counts
-inventoryRoutes.get('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_VIEW), async (req, res, next) => {
+inventoryRoutes.get('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ query: stockCountListQuerySchema }), async (req, res, next) => {
     try {
+        const { branchId, status } = req.query;
+        if (branchId && typeof branchId === 'string') {
+            await assertBranchAccessible(req, branchId);
+        }
         const counts = await (prisma as any).stockCount.findMany({
-            where: { companyId: req.user!.companyId, ...branchScope(req) },
+            where: {
+                companyId: req.user!.companyId,
+                ...branchScope(req),
+                ...(branchId ? { branchId } : {}),
+                ...(status ? { status } : {}),
+            },
             include: {
                 branch: { select: { name: true } },
                 createdBy: { select: { name: true } },
@@ -670,7 +868,7 @@ inventoryRoutes.get('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_VIE
 });
 
 // POST /inventory/stock-counts (Create Draft)
-inventoryRoutes.post('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_AUDIT), async (req, res, next) => {
+inventoryRoutes.post('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_AUDIT), validate({ body: stockCountSchema }), async (req, res, next) => {
     try {
         const { branchId, priceGroupId, notes, items } = req.body;
         await assertBranchAccessible(req, branchId);
@@ -703,7 +901,7 @@ inventoryRoutes.post('/stock-counts', requirePermission(PERMISSIONS.INVENTORY_AU
 });
 
 // PUT /inventory/stock-counts/:id
-inventoryRoutes.put('/stock-counts/:id', requirePermission(PERMISSIONS.INVENTORY_AUDIT), async (req, res, next) => {
+inventoryRoutes.put('/stock-counts/:id', requirePermission(PERMISSIONS.INVENTORY_AUDIT), validate({ params: idParamsSchema, body: stockCountSchema }), async (req, res, next) => {
     try {
         const { id } = req.params;
         const { branchId, priceGroupId, notes, items } = req.body;
@@ -743,7 +941,7 @@ inventoryRoutes.put('/stock-counts/:id', requirePermission(PERMISSIONS.INVENTORY
 
 
 // GET /inventory/stock-counts/:id
-inventoryRoutes.get('/stock-counts/:id', requirePermission(PERMISSIONS.INVENTORY_VIEW), async (req, res, next) => {
+inventoryRoutes.get('/stock-counts/:id', requirePermission(PERMISSIONS.INVENTORY_VIEW), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         const result = await (prisma as any).stockCount.findFirst({
             where: { id: req.params.id, companyId: req.user!.companyId, ...branchScope(req) },
@@ -765,7 +963,7 @@ inventoryRoutes.get('/stock-counts/:id', requirePermission(PERMISSIONS.INVENTORY
 });
 
 // POST /inventory/stock-counts/:id/commit
-inventoryRoutes.post('/stock-counts/:id/commit', requirePermission(PERMISSIONS.INVENTORY_AUDIT), async (req, res, next) => {
+inventoryRoutes.post('/stock-counts/:id/commit', requirePermission(PERMISSIONS.INVENTORY_AUDIT), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         const sc = await (prisma as any).stockCount.findFirst({
             where: { id: req.params.id, companyId: req.user!.companyId, ...branchScope(req) },

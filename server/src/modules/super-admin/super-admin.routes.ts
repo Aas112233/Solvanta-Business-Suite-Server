@@ -1116,6 +1116,121 @@ superAdminRoutes.patch('/tenants/:id/users/:userId/password', requireSuperAdminP
     }
 });
 
+superAdminRoutes.post('/tenants/:id/users', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.USERS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const companyId = String(req.params.id);
+
+        const createUserSchema = z.object({
+            name: z.string().trim().min(2).max(100),
+            email: z.string().trim().email(),
+            password: z.string().min(6).max(100),
+            role: z.string().trim().optional(),
+            phone: z.string().trim().max(40).optional(),
+        });
+
+        const parsed = createUserSchema.parse(req.body);
+        const normalizedEmail = parsed.email.trim().toLowerCase();
+        const requestedRoleName = parsed.role?.trim();
+
+        const company = await basePrisma.company.findUnique({
+            where: { id: companyId },
+            select: { id: true, name: true },
+        });
+
+        if (!company) throw AppError.notFound('Company');
+
+        const existingUser = await basePrisma.user.findFirst({
+            where: { email: normalizedEmail, companyId },
+            select: { id: true },
+        });
+
+        if (existingUser) {
+            throw AppError.conflict('User with this email already exists');
+        }
+
+        const passwordHash = await bcrypt.hash(parsed.password, 12);
+
+        const fallbackRole = DEFAULT_SYSTEM_ROLES.find((role) => role.name === 'Viewer');
+        if (!fallbackRole) throw AppError.internal('Default Viewer role is not configured');
+
+        const requestedSystemRole = requestedRoleName
+            ? DEFAULT_SYSTEM_ROLES.find((role) => role.name.trim().toLowerCase() === requestedRoleName.toLowerCase())
+            : null;
+        const desiredRoleName = requestedRoleName || fallbackRole.name;
+
+        let resolvedRole = await basePrisma.role.findFirst({
+            where: { companyId, name: desiredRoleName },
+            select: { id: true, name: true },
+        });
+
+        if (!resolvedRole) {
+            const roleTemplate = requestedSystemRole || (desiredRoleName === fallbackRole.name ? fallbackRole : null);
+            if (!roleTemplate) {
+                throw AppError.badRequest('Invalid role selected');
+            }
+
+            resolvedRole = await basePrisma.role.create({
+                data: {
+                    companyId,
+                    name: roleTemplate.name,
+                    permissions: [...roleTemplate.permissions] as string[],
+                },
+                select: { id: true, name: true },
+            });
+        }
+
+        const newUser = await basePrisma.user.create({
+            data: {
+                companyId,
+                name: parsed.name,
+                email: normalizedEmail,
+                passwordHash,
+                phone: parsed.phone || undefined,
+                roleId: resolvedRole.id,
+                isActive: true,
+            },
+            include: {
+                role: {
+                    select: {
+                        name: true,
+                    },
+                },
+            },
+        });
+
+        await writeAudit(
+            companyId as any,
+            req.user!.id,
+            'TENANT_USER_CREATED',
+            'User',
+            newUser.id,
+            {
+                userName: newUser.name,
+                userEmail: newUser.email,
+                role: newUser.role.name,
+            },
+            {
+                request: req,
+            },
+        );
+
+        sendSuccess(res, {
+            message: 'User created successfully',
+            user: {
+                id: newUser.id,
+                name: newUser.name,
+                email: newUser.email,
+                role: newUser.role.name,
+                isActive: newUser.isActive,
+                lastLoginAt: null,
+                createdAt: newUser.createdAt,
+            },
+        }, undefined, 201);
+    } catch (error) {
+        next(error);
+    }
+});
+
 superAdminRoutes.get('/tenants/:id/usage', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_READ), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = String(req.params.id);
@@ -1881,23 +1996,23 @@ superAdminRoutes.get('/audit/support-sessions/:sessionId', requireSuperAdminPerm
             .map((row) => {
                 const supportSession = extractSupportSessionMeta(row.after);
                 return ({
-                id: row.id,
-                action: row.action,
-                entity: row.entity,
-                entityId: row.entityId || '',
-                actor: supportSession?.actorEmail || row.user?.email || row.user?.name || 'unknown',
-                company: row.company?.name || 'unknown',
-                companyId: row.companyId,
-                createdAt: row.createdAt,
-                before: row.before,
-                after: row.after,
-                kind:
-                    row.action === 'TENANT_USER_IMPERSONATION_NOTE'
-                        ? 'note'
-                    : row.action === 'TENANT_USER_IMPERSONATION_STARTED' || row.action === 'TENANT_USER_IMPERSONATION_ENDED'
-                            ? 'session'
-                            : 'activity',
-            });
+                    id: row.id,
+                    action: row.action,
+                    entity: row.entity,
+                    entityId: row.entityId || '',
+                    actor: supportSession?.actorEmail || row.user?.email || row.user?.name || 'unknown',
+                    company: row.company?.name || 'unknown',
+                    companyId: row.companyId,
+                    createdAt: row.createdAt,
+                    before: row.before,
+                    after: row.after,
+                    kind:
+                        row.action === 'TENANT_USER_IMPERSONATION_NOTE'
+                            ? 'note'
+                            : row.action === 'TENANT_USER_IMPERSONATION_STARTED' || row.action === 'TENANT_USER_IMPERSONATION_ENDED'
+                                ? 'session'
+                                : 'activity',
+                });
             });
 
         let endedAt: Date | null = null;
@@ -2119,25 +2234,25 @@ superAdminRoutes.get('/audit', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIO
         const mapped = audit.map((row) => {
             const supportSession = extractSupportSessionMeta(row.after);
             return ({
-            id: row.id,
-            actor: supportSession?.actorEmail || row.user?.email || row.user?.name || 'unknown',
-            action: row.action,
-            target: `${row.entity}${row.entityId ? ` (${row.entityId})` : ''}`,
-            company: row.company?.name || 'unknown',
-            companyId: row.companyId,
-            sessionId: supportSession?.sessionId || '',
-            severity:
-                row.action.includes('SUSPEND') || row.action.includes('DELETE')
-                    ? 'Critical'
-                    : row.action.includes('MAINTENANCE') || row.action.includes('PASSWORD') || row.action.includes('LIMIT')
-                        ? 'Warning'
-                        : 'Info',
-            before: row.before,
-            after: row.after,
-            ipAddress: row.ipAddress || '',
-            userAgent: row.userAgent || '',
-            createdAt: row.createdAt,
-        });
+                id: row.id,
+                actor: supportSession?.actorEmail || row.user?.email || row.user?.name || 'unknown',
+                action: row.action,
+                target: `${row.entity}${row.entityId ? ` (${row.entityId})` : ''}`,
+                company: row.company?.name || 'unknown',
+                companyId: row.companyId,
+                sessionId: supportSession?.sessionId || '',
+                severity:
+                    row.action.includes('SUSPEND') || row.action.includes('DELETE')
+                        ? 'Critical'
+                        : row.action.includes('MAINTENANCE') || row.action.includes('PASSWORD') || row.action.includes('LIMIT')
+                            ? 'Warning'
+                            : 'Info',
+                before: row.before,
+                after: row.after,
+                ipAddress: row.ipAddress || '',
+                userAgent: row.userAgent || '',
+                createdAt: row.createdAt,
+            });
         });
 
         const filtered = mapped

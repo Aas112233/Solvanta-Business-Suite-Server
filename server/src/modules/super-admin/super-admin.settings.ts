@@ -1,6 +1,6 @@
 export type TenantStatus = 'Active' | 'Trial' | 'Suspended';
 export type TenantPlan = 'Starter' | 'Growth' | 'SOLVANTA';
-export type ModuleKey = 'crm' | 'inventory' | 'purchases' | 'accounting' | 'pos' | 'reports' | 'bom' | 'production';
+export type ModuleKey = 'crm' | 'inventory' | 'purchases' | 'accounting' | 'pos' | 'reports' | 'bom' | 'production' | 'sales' | 'items' | 'suppliers' | 'hr';
 
 export interface FeatureFlags {
     crm: boolean;
@@ -11,6 +11,10 @@ export interface FeatureFlags {
     reports: boolean;
     bom: boolean;
     production: boolean;
+    sales: boolean;
+    items: boolean;
+    suppliers: boolean;
+    hr: boolean;
 }
 
 export interface TenantBilling {
@@ -69,6 +73,10 @@ export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {
     reports: true,
     bom: true,
     production: true,
+    sales: true,
+    items: true,
+    suppliers: true,
+    hr: true,
 };
 
 const DEFAULT_BILLING: TenantBilling = {

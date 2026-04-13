@@ -1,9 +1,257 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
 import { prisma } from '../../lib/prisma.js';
 import { sendSuccess } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
 import { PERMISSIONS } from '../../config/permissions.js';
+
+const objectIdSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid id');
+
+function normalizeOptionalString(value: unknown) {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+}
+
+function normalizeNullableString(value: unknown) {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? null : trimmed;
+}
+
+function isValidDateInput(value: string) {
+    const normalized = value.includes('T') ? value : `${value}T00:00:00.000`;
+    return !Number.isNaN(new Date(normalized).getTime());
+}
+
+const BANK_ACCOUNT_TYPES = ['CHECKING', 'SAVINGS', 'CASH', 'CREDIT_CARD', 'LOAN', 'INVESTMENT'] as const;
+const BANK_TRANSACTION_TYPES = ['DEPOSIT', 'WITHDRAWAL', 'TRANSFER_IN', 'TRANSFER_OUT', 'FEE', 'INTEREST', 'DIRECT_DEBIT', 'CHECK', 'POS', 'ADJUSTMENT'] as const;
+const RECONCILIATION_STATUSES = ['UNRECONCILED', 'PARTIAL', 'RECONCILED'] as const;
+
+const idParamsSchema = z.object({
+    id: objectIdSchema,
+});
+
+const optionalObjectIdSchema = z.preprocess(normalizeOptionalString, objectIdSchema.optional());
+
+const nullableObjectIdSchema = z.preprocess(
+    normalizeNullableString,
+    objectIdSchema.nullable().optional()
+).transform((value) => value ?? null);
+
+const optionalTrimmedString = (maxLength: number) =>
+    z.preprocess(normalizeOptionalString, z.string().max(maxLength).optional());
+
+const nullableTrimmedString = (maxLength: number) =>
+    z.preprocess(
+        normalizeNullableString,
+        z.string().max(maxLength).nullable().optional()
+    ).transform((value) => value ?? null);
+
+const optionalBooleanSchema = z.preprocess((value) => {
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes'].includes(normalized)) return true;
+        if (['false', '0', 'no'].includes(normalized)) return false;
+    }
+    return value;
+}, z.boolean().optional());
+
+const optionalDateStringSchema = z.preprocess(
+    normalizeOptionalString,
+    z.string().refine(isValidDateInput, 'Invalid date').optional()
+);
+
+const currencySchema = z.preprocess(
+    normalizeOptionalString,
+    z.string()
+        .regex(/^[A-Z]{3}$/i, 'Currency must be a valid 3-letter code')
+        .optional()
+).transform((value) => value?.toUpperCase());
+
+const optionalIbanSchema = z.preprocess(
+    normalizeOptionalString,
+    z.string()
+        .regex(/^[A-Z0-9]{15,34}$/i, 'Invalid IBAN format')
+        .optional()
+).transform((value) => value?.toUpperCase());
+
+const optionalSwiftCodeSchema = z.preprocess(
+    normalizeOptionalString,
+    z.string()
+        .regex(/^[A-Z0-9]{8}([A-Z0-9]{3})?$/i, 'Invalid SWIFT code format')
+        .optional()
+).transform((value) => value?.toUpperCase());
+
+const nullableIbanSchema = z.preprocess(
+    normalizeNullableString,
+    z.string()
+        .regex(/^[A-Z0-9]{15,34}$/i, 'Invalid IBAN format')
+        .nullable()
+        .optional()
+).transform((value) => value?.toUpperCase() ?? null);
+
+const nullableSwiftCodeSchema = z.preprocess(
+    normalizeNullableString,
+    z.string()
+        .regex(/^[A-Z0-9]{8}([A-Z0-9]{3})?$/i, 'Invalid SWIFT code format')
+        .nullable()
+        .optional()
+).transform((value) => value?.toUpperCase() ?? null);
+
+const bankAccountBaseSchema = z.object({
+    accountName: z.string().trim().min(1, 'Account name is required').max(120, 'Account name must be 120 characters or less'),
+    accountNumber: z.string().trim().min(1, 'Account number is required').max(50, 'Account number must be 50 characters or less'),
+    bankName: z.string().trim().min(1, 'Bank name is required').max(120, 'Bank name must be 120 characters or less'),
+    branchName: nullableTrimmedString(120),
+    iban: nullableIbanSchema,
+    swiftCode: nullableSwiftCodeSchema,
+    accountType: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(BANK_ACCOUNT_TYPES).optional()
+    ),
+    currency: currencySchema,
+    openingBalance: z.coerce.number().min(0, 'Opening balance cannot be negative').finite('Opening balance must be a valid number').optional(),
+    branchId: nullableObjectIdSchema,
+    glAccountId: nullableObjectIdSchema,
+    notes: nullableTrimmedString(1000),
+    isDefault: optionalBooleanSchema,
+});
+
+const bankAccountCreateSchema = bankAccountBaseSchema.extend({
+    iban: optionalIbanSchema.transform((value) => value ?? null),
+    swiftCode: optionalSwiftCodeSchema.transform((value) => value ?? null),
+    accountType: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(BANK_ACCOUNT_TYPES).default('CHECKING')
+    ),
+    currency: currencySchema.transform((value) => value ?? 'SAR'),
+    openingBalance: z.coerce.number().min(0, 'Opening balance cannot be negative').finite('Opening balance must be a valid number').default(0),
+    isDefault: optionalBooleanSchema.default(false),
+});
+
+const bankAccountUpdateSchema = bankAccountBaseSchema.extend({
+    iban: nullableIbanSchema,
+    swiftCode: nullableSwiftCodeSchema,
+}).partial().refine(
+    (data) => Object.keys(data).length > 0,
+    { message: 'At least one field is required' }
+);
+
+const bankTransactionListQuerySchema = z.object({
+    bankAccountId: optionalObjectIdSchema,
+    startDate: optionalDateStringSchema,
+    endDate: optionalDateStringSchema,
+    isReconciled: optionalBooleanSchema,
+    transactionType: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(BANK_TRANSACTION_TYPES).optional()
+    ),
+    search: optionalTrimmedString(120),
+    reconciliationId: optionalObjectIdSchema,
+    skip: z.coerce.number().int().min(0).default(0),
+    take: z.coerce.number().int().min(1).max(500).default(50),
+}).superRefine((data, ctx) => {
+    if (!data.startDate || !data.endDate) return;
+
+    const startDate = new Date(data.startDate.includes('T') ? data.startDate : `${data.startDate}T00:00:00.000`);
+    const endDate = new Date(data.endDate.includes('T') ? data.endDate : `${data.endDate}T00:00:00.000`);
+    if (startDate > endDate) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['endDate'],
+            message: 'endDate must be on or after startDate',
+        });
+    }
+});
+
+const bankTransactionCreateSchema = z.object({
+    bankAccountId: objectIdSchema,
+    transactionDate: z.string().refine(isValidDateInput, 'Invalid transaction date'),
+    description: z.string().trim().min(1, 'Description is required').max(500, 'Description must be 500 characters or less'),
+    reference: nullableTrimmedString(120),
+    transactionType: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(BANK_TRANSACTION_TYPES)
+    ),
+    amount: z.coerce.number().finite('Amount must be a valid number').refine((value) => value !== 0, 'Amount must be non-zero'),
+    notes: nullableTrimmedString(1000),
+}).superRefine((data, ctx) => {
+    const positiveTypes = new Set(['DEPOSIT', 'TRANSFER_IN', 'INTEREST']);
+    const negativeTypes = new Set(['WITHDRAWAL', 'TRANSFER_OUT', 'FEE', 'DIRECT_DEBIT', 'CHECK', 'POS']);
+
+    if (positiveTypes.has(data.transactionType) && data.amount < 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['amount'],
+            message: `${data.transactionType} amount must be positive`,
+        });
+    }
+
+    if (negativeTypes.has(data.transactionType) && data.amount > 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['amount'],
+            message: `${data.transactionType} amount must be negative`,
+        });
+    }
+});
+
+const transactionReconcileSchema = z.object({
+    reconciliationId: objectIdSchema,
+});
+
+const reconciliationListQuerySchema = z.object({
+    bankAccountId: optionalObjectIdSchema,
+    status: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(RECONCILIATION_STATUSES).optional()
+    ),
+});
+
+const reconciliationCreateSchema = z.object({
+    bankAccountId: objectIdSchema,
+    statementDate: z.string().refine(isValidDateInput, 'Invalid statement date'),
+    statementNumber: optionalTrimmedString(100),
+    closingBalance: z.coerce.number().finite('Closing balance must be a valid number'),
+    openingBalance: z.coerce.number().finite('Opening balance must be a valid number').optional(),
+});
+
+const reconciliationMatchSchema = z.object({
+    transactionIds: z.array(objectIdSchema)
+        .min(1, 'At least one transaction is required')
+        .max(1000, 'A maximum of 1000 transactions can be matched at once'),
+}).superRefine((data, ctx) => {
+    const seen = new Set<string>();
+    data.transactionIds.forEach((id, index) => {
+        if (seen.has(id)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['transactionIds', index],
+                message: 'Duplicate transaction ids are not allowed',
+            });
+        }
+        seen.add(id);
+    });
+});
+
+const statementImportTransactionSchema = z.object({
+    date: z.string().refine(isValidDateInput, 'Invalid transaction date'),
+    description: z.string().trim().min(1, 'Description is required').max(500, 'Description must be 500 characters or less'),
+    reference: optionalTrimmedString(120),
+    amount: z.coerce.number().finite('Amount must be a valid number').refine((value) => value !== 0, 'Amount must be non-zero'),
+});
+
+const statementImportSchema = z.object({
+    bankAccountId: objectIdSchema,
+    fileName: optionalTrimmedString(255),
+    transactions: z.array(statementImportTransactionSchema)
+        .min(1, 'At least one transaction is required')
+        .max(5000, 'A maximum of 5000 transactions can be imported at once'),
+});
 
 export const bankRoutes = Router();
 bankRoutes.use(authenticate);
@@ -19,6 +267,37 @@ function applyUserBranchScope(req: any, where: Record<string, any>): Record<stri
         where.branchId = { in: req.user!.branchIds };
     }
     return where;
+}
+
+async function assertBranchAccessible(req: any, branchId: string): Promise<void> {
+    if (!isBranchAdmin(req) && !req.user!.branchIds.includes(branchId)) {
+        throw AppError.forbidden('You do not have access to this branch');
+    }
+
+    const branch = await prisma.branch.findFirst({
+        where: { id: branchId, companyId: req.user!.companyId },
+        select: { id: true },
+    });
+    if (!branch) {
+        throw AppError.badRequest('Invalid branch');
+    }
+}
+
+async function getAccessibleBankAccount(req: any, bankAccountId: string, include?: Record<string, any>, select?: Record<string, any>) {
+    const account = await prisma.bankAccount.findFirst({
+        where: applyUserBranchScope(req, {
+            id: bankAccountId,
+            companyId: req.user!.companyId,
+        }),
+        ...(include ? { include } : {}),
+        ...(select ? { select } : {}),
+    });
+
+    if (!account) {
+        throw AppError.notFound('Bank account not found');
+    }
+
+    return account;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -63,35 +342,25 @@ bankRoutes.get('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any
 });
 
 // GET /bank/accounts/:id - Get single account with details
-bankRoutes.get('/accounts/:id', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+bankRoutes.get('/accounts/:id', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         const id = req.params.id as string;
-        const account = await prisma.bankAccount.findFirst({
-            where: {
-                id,
-                companyId: req.user!.companyId
-            },
-            include: {
-                branch: { select: { name: true, code: true } },
-                glAccount: { select: { code: true, name: true } },
-                _count: {
-                    select: {
-                        transactions: true
-                    }
+        const account = await getAccessibleBankAccount(req, id, {
+            branch: { select: { name: true, code: true } },
+            glAccount: { select: { code: true, name: true } },
+            _count: {
+                select: {
+                    transactions: true
                 }
             }
         });
-
-        if (!account) {
-            throw AppError.notFound('Bank account not found');
-        }
 
         sendSuccess(res, account);
     } catch (error) { next(error); }
 });
 
 // POST /bank/accounts - Create new bank account
-bankRoutes.post('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+bankRoutes.post('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ body: bankAccountCreateSchema }), async (req, res, next) => {
     try {
         const {
             accountName,
@@ -111,12 +380,20 @@ bankRoutes.post('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_POST as an
 
         const companyId = req.user!.companyId;
 
-        // Validate branch access
-        if (branchId && !isBranchAdmin(req) && !req.user!.branchIds.includes(branchId)) {
-            throw AppError.forbidden('You do not have access to this branch');
+        if (branchId) {
+            await assertBranchAccessible(req, branchId);
         }
 
-        // Check for duplicate account number
+        if (glAccountId) {
+            const glAccount = await prisma.account.findFirst({
+                where: { id: glAccountId, companyId },
+                select: { id: true },
+            });
+            if (!glAccount) {
+                throw AppError.badRequest('Invalid GL account');
+            }
+        }
+
         const existing = await prisma.bankAccount.findFirst({
             where: { companyId, accountNumber }
         });
@@ -125,7 +402,6 @@ bankRoutes.post('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_POST as an
             throw AppError.badRequest('Bank account with this number already exists');
         }
 
-        // If setting as default, unset other defaults
         if (isDefault) {
             await prisma.bankAccount.updateMany({
                 where: { companyId },
@@ -152,8 +428,8 @@ bankRoutes.post('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_POST as an
                 isDefault: isDefault || false
             },
             include: {
-                branch: { select: { name: true } },
-                glAccount: { select: { code: true, name: true } }
+                branch: { select: { name: true, code: true } },
+                glAccount: { select: { code: true, name: true } },
             }
         });
 
@@ -162,18 +438,26 @@ bankRoutes.post('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_POST as an
 });
 
 // PUT /bank/accounts/:id - Update bank account
-bankRoutes.put('/accounts/:id', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+bankRoutes.put('/accounts/:id', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ params: idParamsSchema, body: bankAccountUpdateSchema }), async (req, res, next) => {
     try {
         const id = req.params.id as string;
         const companyId = req.user!.companyId;
         const updateData = req.body;
 
-        const existing = await prisma.bankAccount.findFirst({
-            where: { id, companyId }
-        });
+        const existing = await getAccessibleBankAccount(req, id);
 
-        if (!existing) {
-            throw AppError.notFound('Bank account not found');
+        if (updateData.branchId) {
+            await assertBranchAccessible(req, updateData.branchId);
+        }
+
+        if (updateData.glAccountId) {
+            const glAccount = await prisma.account.findFirst({
+                where: { id: updateData.glAccountId, companyId },
+                select: { id: true },
+            });
+            if (!glAccount) {
+                throw AppError.badRequest('Invalid GL account');
+            }
         }
 
         // Check account number uniqueness if changing
@@ -208,21 +492,12 @@ bankRoutes.put('/accounts/:id', requirePermission(PERMISSIONS.ACCOUNTING_POST as
 });
 
 // DELETE /bank/accounts/:id - Soft delete bank account
-bankRoutes.delete('/accounts/:id', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+bankRoutes.delete('/accounts/:id', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         const id = req.params.id as string;
-        const companyId = req.user!.companyId;
-
-        const account = await prisma.bankAccount.findFirst({
-            where: { id, companyId },
-            include: {
-                _count: { select: { transactions: true } }
-            }
+        const account = await getAccessibleBankAccount(req, id, {
+            _count: { select: { transactions: true } }
         });
-
-        if (!account) {
-            throw AppError.notFound('Bank account not found');
-        }
 
         if ((account as any)._count.transactions > 0) {
             throw AppError.badRequest('Cannot delete account with transactions. Deactivate it instead.');
@@ -235,24 +510,17 @@ bankRoutes.delete('/accounts/:id', requirePermission(PERMISSIONS.ACCOUNTING_POST
 });
 
 // GET /bank/accounts/:id/balance - Get account balance info
-bankRoutes.get('/accounts/:id/balance', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+bankRoutes.get('/accounts/:id/balance', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         const id = req.params.id as string;
         const companyId = req.user!.companyId;
 
-        const account = await prisma.bankAccount.findFirst({
-            where: { id: id as string, companyId },
-            select: {
-                id: true,
-                accountName: true,
-                currentBalance: true,
-                openingBalance: true
-            }
+        const account = await getAccessibleBankAccount(req, id, undefined, {
+            id: true,
+            accountName: true,
+            currentBalance: true,
+            openingBalance: true
         });
-
-        if (!account) {
-            throw AppError.notFound('Bank account not found');
-        }
 
         // Calculate additional stats
         const stats = await prisma.bankTransaction.aggregate({
@@ -280,7 +548,7 @@ bankRoutes.get('/accounts/:id/balance', requirePermission(PERMISSIONS.ACCOUNTING
 // ═══════════════════════════════════════════════════════════════
 
 // GET /bank/transactions - List transactions with filters
-bankRoutes.get('/transactions', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+bankRoutes.get('/transactions', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: bankTransactionListQuerySchema }), async (req, res, next) => {
     try {
         const {
             bankAccountId,
@@ -298,6 +566,7 @@ bankRoutes.get('/transactions', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as
         const where: any = { companyId };
 
         if (bankAccountId) {
+            await getAccessibleBankAccount(req, bankAccountId);
             where.bankAccountId = bankAccountId;
         } else {
             // Filter by accessible bank accounts if no specific account
@@ -361,7 +630,7 @@ bankRoutes.get('/transactions', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as
 });
 
 // POST /bank/transactions - Create manual transaction
-bankRoutes.post('/transactions', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+bankRoutes.post('/transactions', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ body: bankTransactionCreateSchema }), async (req, res, next) => {
     try {
         const {
             bankAccountId,
@@ -375,14 +644,7 @@ bankRoutes.post('/transactions', requirePermission(PERMISSIONS.ACCOUNTING_POST a
 
         const companyId = req.user!.companyId;
 
-        // Verify bank account access
-        const bankAccount = await prisma.bankAccount.findFirst({
-            where: { id: bankAccountId, companyId }
-        });
-
-        if (!bankAccount) {
-            throw AppError.notFound('Bank account not found');
-        }
+        await getAccessibleBankAccount(req, bankAccountId);
 
         const transaction = await prisma.$transaction(async (tx) => {
             // Create transaction
@@ -418,7 +680,7 @@ bankRoutes.post('/transactions', requirePermission(PERMISSIONS.ACCOUNTING_POST a
 });
 
 // POST /bank/transactions/:id/reconcile - Mark transaction as reconciled
-bankRoutes.post('/transactions/:id/reconcile', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+bankRoutes.post('/transactions/:id/reconcile', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ params: idParamsSchema, body: transactionReconcileSchema }), async (req, res, next) => {
     try {
         const id = req.params.id as string;
         const { reconciliationId } = req.body;
@@ -446,13 +708,22 @@ bankRoutes.post('/transactions/:id/reconcile', requirePermission(PERMISSIONS.ACC
 // ═══════════════════════════════════════════════════════════════
 
 // GET /bank/reconciliations - List reconciliations
-bankRoutes.get('/reconciliations', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+bankRoutes.get('/reconciliations', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: reconciliationListQuerySchema }), async (req, res, next) => {
     try {
         const { bankAccountId, status } = req.query as any;
         const companyId = req.user!.companyId;
 
         const where: any = { companyId };
-        if (bankAccountId) where.bankAccountId = bankAccountId;
+        if (bankAccountId) {
+            await getAccessibleBankAccount(req, bankAccountId);
+            where.bankAccountId = bankAccountId;
+        } else if (!isBranchAdmin(req)) {
+            const accessibleAccounts = await prisma.bankAccount.findMany({
+                where: applyUserBranchScope(req, { companyId }),
+                select: { id: true },
+            });
+            where.bankAccountId = { in: accessibleAccounts.map((account) => account.id) };
+        }
         if (status) where.status = status;
 
         const reconciliations = await prisma.bankReconciliation.findMany({
@@ -471,7 +742,7 @@ bankRoutes.get('/reconciliations', requirePermission(PERMISSIONS.ACCOUNTING_VIEW
 });
 
 // GET /bank/reconciliations/:id - Get reconciliation with transactions
-bankRoutes.get('/reconciliations/:id', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+bankRoutes.get('/reconciliations/:id', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         const id = req.params.id as string;
         const companyId = req.user!.companyId;
@@ -492,12 +763,14 @@ bankRoutes.get('/reconciliations/:id', requirePermission(PERMISSIONS.ACCOUNTING_
             throw AppError.notFound('Reconciliation not found');
         }
 
+        await getAccessibleBankAccount(req, reconciliation.bankAccountId);
+
         sendSuccess(res, reconciliation);
     } catch (error) { next(error); }
 });
 
 // POST /bank/reconciliations - Create new reconciliation
-bankRoutes.post('/reconciliations', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+bankRoutes.post('/reconciliations', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ body: reconciliationCreateSchema }), async (req, res, next) => {
     try {
         const {
             bankAccountId,
@@ -509,14 +782,7 @@ bankRoutes.post('/reconciliations', requirePermission(PERMISSIONS.ACCOUNTING_POS
 
         const companyId = req.user!.companyId;
 
-        // Verify bank account
-        const bankAccount = await prisma.bankAccount.findFirst({
-            where: { id: bankAccountId, companyId }
-        });
-
-        if (!bankAccount) {
-            throw AppError.notFound('Bank account not found');
-        }
+        const bankAccount = await getAccessibleBankAccount(req, bankAccountId);
 
         // Check for existing reconciliation for this period
         const existing = await prisma.bankReconciliation.findFirst({
@@ -571,7 +837,7 @@ bankRoutes.post('/reconciliations', requirePermission(PERMISSIONS.ACCOUNTING_POS
 });
 
 // POST /bank/reconciliations/:id/match - Match transactions
-bankRoutes.post('/reconciliations/:id/match', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+bankRoutes.post('/reconciliations/:id/match', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ params: idParamsSchema, body: reconciliationMatchSchema }), async (req, res, next) => {
     try {
         const id = req.params.id as string;
         const { transactionIds } = req.body;
@@ -584,6 +850,8 @@ bankRoutes.post('/reconciliations/:id/match', requirePermission(PERMISSIONS.ACCO
         if (!reconciliation) {
             throw AppError.notFound('Reconciliation not found');
         }
+
+        await getAccessibleBankAccount(req, reconciliation.bankAccountId);
 
         if (reconciliation.status === 'RECONCILED') {
             throw AppError.badRequest('Cannot modify reconciled statement');
@@ -631,7 +899,7 @@ bankRoutes.post('/reconciliations/:id/match', requirePermission(PERMISSIONS.ACCO
 });
 
 // POST /bank/reconciliations/:id/complete - Complete reconciliation
-bankRoutes.post('/reconciliations/:id/complete', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+bankRoutes.post('/reconciliations/:id/complete', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         const id = req.params.id as string;
         const companyId = req.user!.companyId;
@@ -646,6 +914,8 @@ bankRoutes.post('/reconciliations/:id/complete', requirePermission(PERMISSIONS.A
         if (!reconciliation) {
             throw AppError.notFound('Reconciliation not found');
         }
+
+        await getAccessibleBankAccount(req, reconciliation.bankAccountId);
 
         // Allow completion even with small differences (tolerance)
         const tolerance = 0.01;
@@ -673,19 +943,12 @@ bankRoutes.post('/reconciliations/:id/complete', requirePermission(PERMISSIONS.A
 // ═══════════════════════════════════════════════════════════════
 
 // POST /bank/statement-import - Import statement (CSV format)
-bankRoutes.post('/statement-import', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), async (req, res, next) => {
+bankRoutes.post('/statement-import', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ body: statementImportSchema }), async (req, res, next) => {
     try {
         const { bankAccountId, transactions, fileName } = req.body;
         const companyId = req.user!.companyId;
 
-        // Verify bank account
-        const bankAccount = await prisma.bankAccount.findFirst({
-            where: { id: bankAccountId, companyId }
-        });
-
-        if (!bankAccount) {
-            throw AppError.notFound('Bank account not found');
-        }
+        await getAccessibleBankAccount(req, bankAccountId);
 
         const results = {
             imported: 0,
