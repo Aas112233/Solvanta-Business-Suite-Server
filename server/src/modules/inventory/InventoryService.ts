@@ -60,11 +60,54 @@ export class InventoryService {
      * Atomically mutates inventory stock and creates a movement log.
      * Normalizes all quantities to the product's Base Unit (multiplier/fraction).
      * Accepts optional pre-fetched product to avoid duplicate lookups.
+     * 
+     * Includes retry logic for MongoDB write conflicts in concurrent scenarios.
      */
     static async mutateStock(
         tx: any,
         params: MutateStockParams,
         /** Optional pre-fetched product to avoid redundant DB lookup */
+        prefetchedProduct?: ProductWithUnits | null
+    ) {
+        const MAX_RETRIES = 3;
+        const BASE_DELAY_MS = 50;
+        let lastError: any;
+
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                return await this.mutateStockInternal(tx, params, prefetchedProduct);
+            } catch (error: any) {
+                lastError = error;
+
+                // Check if it's a transient write conflict or deadlock error
+                const isTransientError =
+                    error?.message?.includes('write conflict') ||
+                    error?.message?.includes('deadlock') ||
+                    error?.code === 112 || // WriteConflict
+                    error?.code === 262;   // LockTimeout
+
+                if (isTransientError && attempt < MAX_RETRIES) {
+                    // Exponential backoff with jitter
+                    const delay = BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 50;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+
+                    // Refresh prefetchedProduct on retry
+                    prefetchedProduct = undefined;
+                    continue;
+                }
+
+                // Not a transient error or max retries exceeded
+                throw error;
+            }
+        }
+
+        // Should not reach here, but just in case
+        throw lastError;
+    }
+
+    private static async mutateStockInternal(
+        tx: any,
+        params: MutateStockParams,
         prefetchedProduct?: ProductWithUnits | null
     ) {
         // 0. Fetch Product Units to determine conversion factors

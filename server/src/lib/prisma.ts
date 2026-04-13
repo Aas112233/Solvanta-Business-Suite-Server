@@ -17,8 +17,8 @@ export const basePrisma =
             ]
             : [{ emit: 'stdout', level: 'error' }],
         transactionOptions: {
-            maxWait: 5000,   // Max time to acquire a connection (5s)
-            timeout: 30000,  // Max transaction execution time (30s)
+            maxWait: 10000,  // Max time to acquire a connection (10s)
+            timeout: 60000,  // Max transaction execution time (60s)
         },
     });
 
