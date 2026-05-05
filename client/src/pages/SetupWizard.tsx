@@ -121,12 +121,14 @@ export default function SetupWizard() {
     const { data: company, isLoading } = useQuery({
         queryKey: ['company-settings'],
         queryFn: () => api.get('/companies/me').then((r) => r.data.data as CompanyResponse),
+        retry: 1,
     });
 
     // ── Fetch existing accounts to check initial state ──
     const { data: existingAccounts } = useQuery({
         queryKey: ['accounts'],
         queryFn: () => api.get('/accounting/accounts').then((r) => r.data.data as any[]),
+        retry: false,
     });
 
     // Initialize form from fetched company data

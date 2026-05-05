@@ -133,4 +133,3 @@ export const ARAging = lazy(() => import('./aging/ARAging'));
 export const APAging = lazy(() => import('./aging/APAging'));
 
 // Setup Wizard
-export const SetupWizard = lazy(() => import('./SetupWizard'));

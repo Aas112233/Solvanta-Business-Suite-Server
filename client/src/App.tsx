@@ -130,8 +130,8 @@ import {
     BankReconciliation,
     ARAging,
     APAging,
-    SetupWizard,
 } from './pages/lazy';
+import SetupWizard from './pages/SetupWizard';
 import ModulePlaceholder from './pages/placeholders/ModulePlaceholder';
 import AppLoader from './components/ui/AppLoader';
 import { ToastContainer } from './components/ui';
