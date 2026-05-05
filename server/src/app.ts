@@ -124,6 +124,16 @@ const morganStream = { write: (msg: string) => logger.http(msg.trim()) };
 app.use(morgan('short', { stream: morganStream }));
 
 // ── Health check ────────────────────────────────────────────
+app.get('/', (_req, res) => {
+    res.json({
+        success: true,
+        service: 'SOLVANTA Business Suite API',
+        version: 'v1',
+        health: '/health',
+        api: '/api/v1',
+    });
+});
+
 app.get('/health', async (_req, res) => {
     const startTime = Date.now();
     const healthStatus: {
