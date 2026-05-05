@@ -14,6 +14,10 @@ function isBranchAdmin(req: any): boolean {
     return req.user?.permissions?.includes(ADMIN_BRANCH_PERMISSION);
 }
 
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 async function assertBranchAccessible(req: any, branchId: string): Promise<void> {
     const companyId = req.user!.companyId;
     if (!isBranchAdmin(req) && !req.user!.branchIds.includes(branchId)) {
@@ -2022,7 +2026,7 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
         ]);
 
         // 2. Fetch trend data separately to avoid connection overload
-        let salesRaw = [];
+        let salesRaw: any[] = [];
         try {
             salesRaw = await prisma.pOSInvoice.findMany({
                 where: { ...baseWhere, isPosted: true, status: { not: 'VOID' }, createdAt: dateFilter },
@@ -2034,16 +2038,16 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
                 },
             });
         } catch (err) {
-            console.error('[Reports] Error fetching sales trend:', err.message);
+            console.error('[Reports] Error fetching sales trend:', getErrorMessage(err));
             salesRaw = [];
         }
         // 3. Fetch remaining data sequentially to avoid connection overload
-        let purchasesRaw = [];
-        let inventoryAnalytics = [];
-        let branches = [];
-        let posSessionsRaw = [];
-        let allInvoicesForInsights = [];
-        let expensesRaw = [];
+        let purchasesRaw: Awaited<ReturnType<typeof fetchDashboardPurchasesRaw>> = [];
+        let inventoryAnalytics: any[] = [];
+        let branches: any[] = [];
+        let posSessionsRaw: any[] = [];
+        let allInvoicesForInsights: any[] = [];
+        let expensesRaw: any[] = [];
 
         try {
             purchasesRaw = await fetchDashboardPurchasesRaw({
@@ -2053,8 +2057,8 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
                 to: filterEnd,
             });
         } catch (err) {
-            console.error('[Reports] Error fetching purchases:', err.message);
-            purchasesRaw = { invoices: [], suppliers: [] };
+            console.error('[Reports] Error fetching purchases:', getErrorMessage(err));
+            purchasesRaw = [];
         }
 
         try {
@@ -2100,7 +2104,7 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
                 }),
             ]);
         } catch (err) {
-            console.error('[Reports] Error in batch fetching:', err.message);
+            console.error('[Reports] Error in batch fetching:', getErrorMessage(err));
         }
 
         // 2. Post-process trend data
