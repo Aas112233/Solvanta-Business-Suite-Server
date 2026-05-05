@@ -69,22 +69,22 @@ export default function SuperAdminSupportSessions() {
 
     return (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h2 className="text-lg font-semibold text-slate-900">Support Sessions</h2>
-                <p className="text-xs text-slate-500">Review historical impersonation sessions, filter by actor or tenant, and open any transcript.</p>
+            <section className="rounded-2xl border border-border bg-background-card p-5">
+                <h2 className="text-lg font-semibold text-text-primary">Support Sessions</h2>
+                <p className="text-xs text-text-tertiary">Review historical impersonation sessions, filter by actor or tenant, and open any transcript.</p>
 
                 <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
                     <input
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder="Search actor, tenant, reason..."
-                        className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                        className="rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                     />
                     <input
                         value={actor}
                         onChange={(e) => setActor(e.target.value)}
                         placeholder="Filter by actor email"
-                        className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                        className="rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                     />
                     <AppDropdown
                         value={companyId}
@@ -106,8 +106,8 @@ export default function SuperAdminSupportSessions() {
                 </div>
 
                 <div className="mt-4 space-y-3">
-                    {isLoading && <p className="text-sm text-slate-500">Loading sessions...</p>}
-                    {!isLoading && sessions.length === 0 && <p className="text-sm text-slate-500">No support sessions matched your filters.</p>}
+                    {isLoading && <p className="text-sm text-text-tertiary">Loading sessions...</p>}
+                    {!isLoading && sessions.length === 0 && <p className="text-sm text-text-tertiary">No support sessions matched your filters.</p>}
                     {!isLoading && sessions.map((session) => (
                         <button
                             key={session.sessionId}
@@ -115,25 +115,25 @@ export default function SuperAdminSupportSessions() {
                             onClick={() => setSelectedSessionId(session.sessionId)}
                             className={`w-full rounded-2xl border p-4 text-left transition ${
                                 selectedSessionId === session.sessionId
-                                    ? 'border-slate-900 bg-slate-50'
-                                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                                    ? 'border-brand bg-background-subtle'
+                                    : 'border-border hover:border-border-strong hover:bg-background-subtle'
                             }`}
                         >
                             <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div>
-                                    <p className="text-sm font-semibold text-slate-900">{session.actor}</p>
-                                    <p className="mt-1 text-xs text-slate-500">{session.company} • {session.targetUserEmail || 'Target user not captured'}</p>
+                                    <p className="text-sm font-semibold text-text-primary">{session.actor}</p>
+                                    <p className="mt-1 text-xs text-text-tertiary">{session.company} • {session.targetUserEmail || 'Target user not captured'}</p>
                                 </div>
                                 <span className={`rounded-full px-2 py-1 text-xs font-semibold ${
                                     session.status === 'Active'
                                         ? 'bg-emerald-50 text-emerald-700'
-                                        : 'bg-slate-100 text-slate-700'
+                                        : 'bg-background-subtle text-text-secondary'
                                 }`}>
                                     {session.status}
                                 </span>
                             </div>
-                            <p className="mt-3 text-sm text-slate-700">{session.reason || 'No reason recorded'}</p>
-                            <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
+                            <p className="mt-3 text-sm text-text-secondary">{session.reason || 'No reason recorded'}</p>
+                            <div className="mt-3 flex flex-wrap gap-4 text-xs text-text-tertiary">
                                 <span>Session: {session.sessionId}</span>
                                 <span>Started: {new Date(session.startedAt).toLocaleString()}</span>
                                 <span>Last activity: {new Date(session.lastActivityAt).toLocaleString()}</span>
@@ -145,32 +145,32 @@ export default function SuperAdminSupportSessions() {
                 </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h3 className="text-lg font-semibold text-slate-900">Transcript</h3>
-                <p className="text-xs text-slate-500">Open a session to inspect its full support trail.</p>
+            <section className="rounded-2xl border border-border bg-background-card p-5">
+                <h3 className="text-lg font-semibold text-text-primary">Transcript</h3>
+                <p className="text-xs text-text-tertiary">Open a session to inspect its full support trail.</p>
 
                 {!selectedSessionId && (
-                    <p className="mt-4 text-sm text-slate-500">Select a support session from the left to inspect its transcript.</p>
+                    <p className="mt-4 text-sm text-text-tertiary">Select a support session from the left to inspect its transcript.</p>
                 )}
 
                 {selectedSessionId && transcriptLoading && (
-                    <p className="mt-4 text-sm text-slate-500">Loading transcript...</p>
+                    <p className="mt-4 text-sm text-text-tertiary">Loading transcript...</p>
                 )}
 
                 {selectedSessionId && !transcriptLoading && transcriptData && (
                     <div className="mt-4 space-y-3">
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="rounded-xl border border-border bg-background-subtle p-3">
                             <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div>
-                                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Session</p>
-                                    <p className="mt-2 text-sm text-slate-900">{transcriptData.sessionId}</p>
-                                    <p className="mt-1 text-xs text-slate-500">{transcriptData.company}</p>
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">Session</p>
+                                    <p className="mt-2 text-sm text-text-primary">{transcriptData.sessionId}</p>
+                                    <p className="mt-1 text-xs text-text-tertiary">{transcriptData.company}</p>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">
                                     {transcriptData.companyId && (
                                         <Link
                                             to={`/super-admin/companies/${transcriptData.companyId}`}
-                                            className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-white"
+                                            className="inline-flex items-center gap-1 rounded-lg border border-border-strong px-3 py-2 text-xs font-medium text-text-secondary hover:bg-background-card"
                                         >
                                             <ExternalLink size={14} />
                                             Open Tenant
@@ -189,7 +189,7 @@ export default function SuperAdminSupportSessions() {
                                         type="button"
                                         onClick={() => exportMutation.mutate()}
                                         disabled={exportMutation.isPending}
-                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-white disabled:opacity-50"
+                                        className="inline-flex items-center gap-1 rounded-lg border border-border-strong px-3 py-2 text-xs font-medium text-text-secondary hover:bg-background-card disabled:opacity-50"
                                     >
                                         <Download size={14} />
                                         {exportMutation.isPending ? 'Exporting...' : 'Export CSV'}
@@ -206,7 +206,7 @@ export default function SuperAdminSupportSessions() {
                                 />
                             </div>
                             {transcriptData.reason && (
-                                <p className="mt-3 rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
+                                <p className="mt-3 rounded-lg bg-background-card px-3 py-2 text-sm text-text-secondary">
                                     {transcriptData.reason}
                                 </p>
                             )}
@@ -245,11 +245,11 @@ function TranscriptCard({
             : '';
 
     return (
-        <div className="rounded-xl border border-slate-200 p-3">
+        <div className="rounded-xl border border-border p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                    <p className="text-sm font-semibold text-slate-900">{formatAction(item.action)}</p>
-                    <p className="mt-1 text-xs text-slate-500">{item.actor} • {new Date(item.createdAt).toLocaleString()}</p>
+                    <p className="text-sm font-semibold text-text-primary">{formatAction(item.action)}</p>
+                    <p className="mt-1 text-xs text-text-tertiary">{item.actor} • {new Date(item.createdAt).toLocaleString()}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                     {userLink && (
@@ -264,7 +264,7 @@ function TranscriptCard({
                     {!userLink && tenantLink && (
                         <Link
                             to={tenantLink}
-                            className="inline-flex items-center gap-1 rounded-full border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-1 text-xs font-semibold text-text-secondary hover:bg-background-subtle"
                         >
                             <ExternalLink size={12} />
                             Open Tenant
@@ -275,21 +275,21 @@ function TranscriptCard({
                             ? 'bg-sky-50 text-sky-700'
                             : item.kind === 'session'
                                 ? 'bg-amber-50 text-amber-700'
-                                : 'bg-slate-100 text-slate-700'
+                                : 'bg-background-subtle text-text-secondary'
                     }`}>
                         {item.kind}
                     </span>
                 </div>
             </div>
-            <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
-                <span className="rounded-full bg-slate-100 px-2 py-1">{item.entity}</span>
-                {item.entityId && <span className="rounded-full bg-slate-100 px-2 py-1">{item.entityId}</span>}
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-text-tertiary">
+                <span className="rounded-full bg-background-subtle px-2 py-1">{item.entity}</span>
+                {item.entityId && <span className="rounded-full bg-background-subtle px-2 py-1">{item.entityId}</span>}
             </div>
             {typeof item.after?.note === 'string' && item.after.note && (
-                <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{item.after.note}</p>
+                <p className="mt-3 rounded-lg bg-background-subtle px-3 py-2 text-sm text-text-secondary">{item.after.note}</p>
             )}
             {item.kind !== 'note' && (
-                <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-background-subtle px-3 py-2 text-xs text-text-secondary">
                     {JSON.stringify(item.after, null, 2)}
                 </pre>
             )}
@@ -306,9 +306,9 @@ function formatAction(action: string) {
 
 function MetaChip({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-lg bg-white px-3 py-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-            <p className="mt-1 text-sm text-slate-800">{value}</p>
+        <div className="rounded-lg bg-background-card px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">{label}</p>
+            <p className="mt-1 text-sm text-text-primary">{value}</p>
         </div>
     );
 }

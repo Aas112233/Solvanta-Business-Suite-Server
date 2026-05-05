@@ -54,21 +54,21 @@ async function loadSupportSessionTranscript(sessionId: string, companyId: string
         .map((row) => {
             const supportSession = extractSupportSessionMeta(row.after);
             return ({
-            id: row.id,
-            action: row.action,
-            entity: row.entity,
-            entityId: row.entityId || '',
-            actor: supportSession?.actorEmail || row.user?.email || row.user?.name || 'unknown',
-            createdAt: row.createdAt,
-            before: row.before,
-            after: row.after,
-            kind:
-                row.action === 'TENANT_USER_IMPERSONATION_NOTE'
-                    ? 'note'
-                    : row.action === 'TENANT_USER_IMPERSONATION_STARTED' || row.action === 'TENANT_USER_IMPERSONATION_ENDED'
-                        ? 'session'
-                        : 'activity',
-        });
+                id: row.id,
+                action: row.action,
+                entity: row.entity,
+                entityId: row.entityId || '',
+                actor: supportSession?.actorEmail || row.user?.email || row.user?.name || 'unknown',
+                createdAt: row.createdAt,
+                before: row.before,
+                after: row.after,
+                kind:
+                    row.action === 'TENANT_USER_IMPERSONATION_NOTE'
+                        ? 'note'
+                        : row.action === 'TENANT_USER_IMPERSONATION_STARTED' || row.action === 'TENANT_USER_IMPERSONATION_ENDED'
+                            ? 'session'
+                            : 'activity',
+            });
         });
 }
 
@@ -212,6 +212,37 @@ export class AuthController {
     static async me(req: Request, res: Response, next: NextFunction) {
         try {
             sendSuccess(res, req.user);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    static async forgotPassword(req: Request, res: Response, next: NextFunction) {
+        try {
+            const { email } = req.body;
+            const result = await AuthService.forgotPassword(email);
+            sendSuccess(res, result);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    static async resetPassword(req: Request, res: Response, next: NextFunction) {
+        try {
+            const { token, password } = req.body;
+            const result = await AuthService.resetPassword(token, password);
+            sendSuccess(res, result);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    static async changePassword(req: Request, res: Response, next: NextFunction) {
+        try {
+            const { currentPassword, newPassword } = req.body;
+            const userId = req.user!.id;
+            const result = await AuthService.changePassword(userId, currentPassword, newPassword);
+            sendSuccess(res, result);
         } catch (error) {
             next(error);
         }

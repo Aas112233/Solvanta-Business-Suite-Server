@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { AuthController } from './auth.controller.js';
 import { validate } from '../../middleware/validate.js';
 import { authenticate } from '../../middleware/auth.js';
-import { loginSchema, refreshSchema } from './auth.schema.js';
+import { loginSchema, refreshSchema, forgotPasswordSchema, resetPasswordSchema } from './auth.schema.js';
 
 export const authRoutes = Router();
 
@@ -13,3 +13,6 @@ authRoutes.post('/impersonation/stop', authenticate, AuthController.stopImperson
 authRoutes.get('/impersonation/session', authenticate, AuthController.getCurrentImpersonationTranscript);
 authRoutes.post('/impersonation/session/notes', authenticate, AuthController.addCurrentImpersonationNote);
 authRoutes.get('/me', authenticate, AuthController.me);
+authRoutes.post('/forgot-password', validate({ body: forgotPasswordSchema }), AuthController.forgotPassword);
+authRoutes.post('/reset-password', validate({ body: resetPasswordSchema }), AuthController.resetPassword);
+authRoutes.post('/change-password', authenticate, AuthController.changePassword);

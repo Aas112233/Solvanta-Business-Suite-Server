@@ -21,9 +21,15 @@ export async function ensureDatabaseIndexes() {
 
         // Create a MongoDB connection for index management
         // Prisma doesn't expose the native MongoDB client, so we need a direct connection
-        mongoClient = new MongoClient(env.DATABASE_URL);
+        mongoClient = new MongoClient(env.DATABASE_URL, {
+            serverSelectionTimeoutMS: 10000, // 10 second timeout
+            connectTimeoutMS: 10000,
+        });
+
         await mongoClient.connect();
         db = mongoClient.db();
+
+        logger.info('MongoDB connected for index management');
 
         // Extract collection names from Prisma models
         const collections = db.listCollections();
@@ -69,6 +75,36 @@ export async function ensureDatabaseIndexes() {
         // 9. BankTransaction - Reconciliation queries
         await safeCreateIndex(db, 'bankTransactions', 'idx_banktransaction_company_account_reconciled_date',
             { companyId: 1, bankAccountId: 1, isReconciled: 1, transactionDate: 1 });
+
+        // ═══════════════════════════════════════════════════════════
+        // DASHBOARD & ANALYTICS INDEXES (Time series and aggregations)
+        // ═══════════════════════════════════════════════════════════
+
+        logger.info('Creating DASHBOARD indexes...');
+
+        // Purchase Invoices - Dashboard time range aggregations
+        await safeCreateIndex(db, 'purchaseInvoices', 'idx_purchaseinvoice_company_createdat',
+            { companyId: 1, createdAt: -1 });
+
+        // POS Invoices - Dashboard time range aggregations and sort
+        await safeCreateIndex(db, 'posInvoices', 'idx_pos_invoice_company_createdat_status',
+            { companyId: 1, createdAt: -1, status: 1 });
+
+        // POS Shifts - Dashboard time range aggregations
+        await safeCreateIndex(db, 'pOSShifts', 'idx_posshift_company_createdat',
+            { companyId: 1, createdAt: -1 });
+
+        // Inventory Stocks - Dashboard low stock alerts
+        await safeCreateIndex(db, 'inventoryStocks', 'idx_inventorystock_company_qtyonhand',
+            { companyId: 1, qtyOnHand: 1 });
+
+        // Products - Dashboard active count
+        await safeCreateIndex(db, 'products', 'idx_product_company_status_deleted',
+            { companyId: 1, status: 1, deletedAt: 1 });
+
+        // Customers - Dashboard count
+        await safeCreateIndex(db, 'customers', 'idx_customer_company_deleted',
+            { companyId: 1, deletedAt: 1 });
 
         // ═══════════════════════════════════════════════════════════
         // IMPORTANT INDEXES (Moderate usage, should add soon)

@@ -17,13 +17,34 @@ export interface EnabledModules {
     hr: boolean;
 }
 
-interface User {
+export interface UserProfileSummary {
+    companyStartDate: string;
+    companyEndDate: string;
+    companyEndDateLabel: string;
+    storageStatus: 'ok' | 'warning' | 'breached';
+    usage: {
+        users: number;
+        branches: number;
+        products: number;
+    };
+    limits: {
+        maxUsers: number | null;
+        maxBranches: number | null;
+        maxProducts: number | null;
+    };
+}
+
+export interface User {
     id: string;
     name: string;
     email: string;
+    phone?: string | null;
+    createdAt?: string;
+    lastLoginAt?: string | null;
     isSuperAdmin?: boolean;
     superAdminPermissions?: SuperAdminPermission[];
     enabledModules?: EnabledModules;
+    profileSummary?: UserProfileSummary;
     impersonation?: {
         isActive: boolean;
         actorUserId: string;
@@ -171,9 +192,35 @@ export const useAuthStore = create<AuthState>()(
                 const user = get().user;
                 // Super admins always have all modules
                 if (user?.isSuperAdmin) return true;
-                // If no enabledModules data, default to all enabled
-                if (!user?.enabledModules) return true;
-                return user.enabledModules[moduleKey] !== false;
+
+                // If backend explicitly sent enabledModules, use it
+                if (user?.enabledModules) {
+                    return user.enabledModules[moduleKey] !== false;
+                }
+
+                // Fallback: if no enabledModules from backend, check if user has ANY permission 
+                // related to this module. This ensures users without module permissions don't see it.
+                const perms = user?.role?.permissions || [];
+                if (perms.includes('*')) return true;
+
+                // Map module keys to common permission prefixes
+                const permissionMap: Record<string, string[]> = {
+                    crm: ['crm'],
+                    inventory: ['inventory'],
+                    purchases: ['purchase'],
+                    accounting: ['accounting'],
+                    pos: ['pos'],
+                    reports: ['reports'],
+                    bom: ['bom'],
+                    production: ['production'],
+                    sales: ['sales'],
+                    items: ['product'],
+                    suppliers: ['supplier'],
+                    hr: ['hr'],
+                };
+
+                const modulePerms = permissionMap[moduleKey as string] || [];
+                return modulePerms.some(prefix => perms.some(p => p.startsWith(prefix)));
             },
 
             logout: () => set({

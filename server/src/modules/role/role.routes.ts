@@ -15,7 +15,15 @@ const roleSchema = z.object({
     permissions: z.array(z.string()).min(1),
 });
 
+// Track companies that have had default roles initialized
+const initializedCompanies = new Set<string>();
+
 async function ensureDefaultRoles(companyId: string) {
+    // Skip if already initialized in this server instance
+    if (initializedCompanies.has(companyId)) {
+        return;
+    }
+
     const existing = await prisma.role.findMany({
         where: { companyId },
         select: { id: true, name: true },
@@ -23,7 +31,10 @@ async function ensureDefaultRoles(companyId: string) {
     const existingNames = new Set(existing.map((role) => role.name.trim().toLowerCase()));
     const missingDefaults = DEFAULT_SYSTEM_ROLES.filter((role) => !existingNames.has(role.name.toLowerCase()));
 
-    if (missingDefaults.length === 0) return;
+    if (missingDefaults.length === 0) {
+        initializedCompanies.add(companyId);
+        return;
+    }
 
     await prisma.role.createMany({
         data: missingDefaults.map((role) => ({
@@ -32,6 +43,8 @@ async function ensureDefaultRoles(companyId: string) {
             permissions: role.permissions as string[],
         })),
     });
+
+    initializedCompanies.add(companyId);
 }
 
 // GET /roles

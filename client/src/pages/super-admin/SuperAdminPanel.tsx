@@ -281,15 +281,15 @@ export default function SuperAdminPanel() {
 
     return (
         <div className="space-y-6 max-w-7xl mx-auto">
-            <section className="rounded-2xl border border-slate-200 bg-white p-6">
+            <section className="rounded-2xl border border-border bg-background-card p-6">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-slate-900">Super Admin Control Tower</h1>
-                        <p className="text-sm text-slate-600 mt-1">
+                        <h1 className="text-2xl font-bold text-text-primary">Super Admin Control Tower</h1>
+                        <p className="text-sm text-text-secondary mt-1">
                             Tenant operations, feature governance, platform health, and cross-tenant controls.
                         </p>
                     </div>
-                    <div className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
+                    <div className="inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white">
                         <Shield size={14} />
                         Platform Owner Mode
                     </div>
@@ -304,19 +304,19 @@ export default function SuperAdminPanel() {
             </section>
 
             <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="xl:col-span-2 rounded-2xl border border-border bg-background-card p-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                            <h2 className="text-lg font-semibold text-slate-900">Tenant Operations</h2>
-                            <p className="text-xs text-slate-500">Suspend/reactivate tenants, inspect usage, and control modules.</p>
+                            <h2 className="text-lg font-semibold text-text-primary">Tenant Operations</h2>
+                            <p className="text-xs text-text-tertiary">Suspend/reactivate tenants, inspect usage, and control modules.</p>
                         </div>
                         <div className="relative">
-                            <Search size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
+                            <Search size={14} className="absolute left-2.5 top-2.5 text-text-tertiary" />
                             <input
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Search tenant..."
-                                className="rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-sm outline-none focus:border-slate-400"
+                                className="rounded-lg border border-border bg-background-card py-2 pl-8 pr-3 text-sm outline-none focus:border-border-strong"
                             />
                         </div>
                     </div>
@@ -326,7 +326,7 @@ export default function SuperAdminPanel() {
                                 key={filter}
                                 type="button"
                                 onClick={() => setTenantFilter(filter)}
-                                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${tenantFilter === filter ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${tenantFilter === filter ? 'bg-brand text-white' : 'bg-background-subtle text-text-secondary hover:bg-slate-200'
                                     }`}
                             >
                                 {filter}
@@ -337,7 +337,7 @@ export default function SuperAdminPanel() {
                     <div className="mt-4 overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
-                                <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500">
+                                <tr className="border-b border-border-subtle text-left text-xs uppercase tracking-wide text-text-tertiary">
                                     <th className="py-2 pr-3">Tenant</th>
                                     <th className="py-2 pr-3">Plan</th>
                                     <th className="py-2 pr-3">Status</th>
@@ -349,32 +349,32 @@ export default function SuperAdminPanel() {
                             <tbody>
                                 {isTenantsLoading && (
                                     <tr>
-                                        <td className="py-5 text-slate-500" colSpan={6}>
+                                        <td className="py-5 text-text-tertiary" colSpan={6}>
                                             Loading tenants...
                                         </td>
                                     </tr>
                                 )}
                                 {!isTenantsLoading && filteredTenants.length === 0 && (
                                     <tr>
-                                        <td className="py-5 text-slate-500" colSpan={6}>
+                                        <td className="py-5 text-text-tertiary" colSpan={6}>
                                             No tenants match this filter.
                                         </td>
                                     </tr>
                                 )}
                                 {!isTenantsLoading && filteredTenants.map((tenant) => (
-                                    <tr key={tenant.id} className="border-b border-slate-100 last:border-none">
+                                    <tr key={tenant.id} className="border-b border-border-subtle last:border-none">
                                         <td className="py-3 pr-3">
-                                            <p className="font-medium text-slate-900">{tenant.name}</p>
-                                            <p className="text-xs text-slate-500">{tenant.id}</p>
+                                            <p className="font-medium text-text-primary">{tenant.name}</p>
+                                            <p className="text-xs text-text-tertiary">{tenant.id}</p>
                                         </td>
-                                        <td className="py-3 pr-3 text-slate-700">{tenant.plan}</td>
+                                        <td className="py-3 pr-3 text-text-secondary">{tenant.plan}</td>
                                         <td className="py-3 pr-3">
                                             <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${tenantStatusClassMap[tenant.status]}`}>
                                                 {tenant.status}
                                             </span>
                                         </td>
-                                        <td className="py-3 pr-3 text-slate-700">{tenant.activeUsers} / {tenant.totalUsers}</td>
-                                        <td className="py-3 pr-3 text-xs text-slate-500">{new Date(tenant.updatedAt).toLocaleString()}</td>
+                                        <td className="py-3 pr-3 text-text-secondary">{tenant.activeUsers} / {tenant.totalUsers}</td>
+                                        <td className="py-3 pr-3 text-xs text-text-tertiary">{new Date(tenant.updatedAt).toLocaleString()}</td>
                                         <td className="py-3">
                                             <div className="flex items-center gap-2">
                                                 <button
@@ -383,7 +383,7 @@ export default function SuperAdminPanel() {
                                                         setSelectedTenantId(tenant.id);
                                                         setModuleDraft(tenant.featureFlags);
                                                     }}
-                                                    className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                                                    className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-background-subtle"
                                                 >
                                                     Manage
                                                 </button>
@@ -414,40 +414,40 @@ export default function SuperAdminPanel() {
                 </div>
 
                 <div className="space-y-6">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                        <h2 className="text-lg font-semibold text-slate-900">System Health</h2>
-                        <p className="text-xs text-slate-500">Critical services and risk signals.</p>
+                    <div className="rounded-2xl border border-border bg-background-card p-5">
+                        <h2 className="text-lg font-semibold text-text-primary">System Health</h2>
+                        <p className="text-xs text-text-tertiary">Critical services and risk signals.</p>
                         <div className="mt-4 space-y-3">
                             {health.map((item) => (
-                                <div key={item.id} className="rounded-xl border border-slate-100 p-3">
+                                <div key={item.id} className="rounded-xl border border-border-subtle p-3">
                                     <div className="flex items-center justify-between gap-2">
-                                        <p className="text-sm font-medium text-slate-800">{item.label}</p>
+                                        <p className="text-sm font-medium text-text-primary">{item.label}</p>
                                         <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusClassMap[item.status]}`}>
                                             {item.status}
                                         </span>
                                     </div>
-                                    <p className="mt-1 text-xs text-slate-500">{item.value}</p>
+                                    <p className="mt-1 text-xs text-text-tertiary">{item.value}</p>
                                 </div>
                             ))}
                         </div>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                        <h2 className="text-lg font-semibold text-slate-900">Broadcast Center</h2>
-                        <p className="text-xs text-slate-500">Send global platform announcements to all tenants.</p>
+                    <div className="rounded-2xl border border-border bg-background-card p-5">
+                        <h2 className="text-lg font-semibold text-text-primary">Broadcast Center</h2>
+                        <p className="text-xs text-text-tertiary">Send global platform announcements to all tenants.</p>
                         <div className="mt-3 space-y-2">
                             <input
                                 value={broadcastTitle}
                                 onChange={(e) => setBroadcastTitle(e.target.value)}
                                 placeholder="Announcement title"
-                                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                className="w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                             />
                             <textarea
                                 value={broadcastMessage}
                                 onChange={(e) => setBroadcastMessage(e.target.value)}
                                 rows={3}
                                 placeholder="Announcement message"
-                                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                className="w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                             />
                             <AppDropdown
                                 value={broadcastLevel}
@@ -459,7 +459,7 @@ export default function SuperAdminPanel() {
                                 type="button"
                                 onClick={() => broadcastMutation.mutate()}
                                 disabled={broadcastMutation.isPending || !broadcastTitle.trim() || !broadcastMessage.trim()}
-                                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
                             >
                                 <Megaphone size={15} />
                                 Broadcast Announcement
@@ -467,9 +467,9 @@ export default function SuperAdminPanel() {
                         </div>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                        <h2 className="text-lg font-semibold text-slate-900">Quick Actions</h2>
-                        <p className="text-xs text-slate-500">Operational functions for platform incidents.</p>
+                    <div className="rounded-2xl border border-border bg-background-card p-5">
+                        <h2 className="text-lg font-semibold text-text-primary">Quick Actions</h2>
+                        <p className="text-xs text-text-tertiary">Operational functions for platform incidents.</p>
                         <div className="mt-3 grid grid-cols-1 gap-2">
                             <ActionButton icon={Server} label="Retry Failed Jobs" />
                             <ActionButton icon={Activity} label="Run Health Snapshot" />
@@ -480,26 +480,26 @@ export default function SuperAdminPanel() {
             </section>
 
             <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 className="text-lg font-semibold text-slate-900">Tenant Detail</h2>
-                    {!selectedTenant && <p className="mt-3 text-sm text-slate-500">Select a tenant and click `Manage` to inspect details.</p>}
+                <div className="rounded-2xl border border-border bg-background-card p-5">
+                    <h2 className="text-lg font-semibold text-text-primary">Tenant Detail</h2>
+                    {!selectedTenant && <p className="mt-3 text-sm text-text-tertiary">Select a tenant and click `Manage` to inspect details.</p>}
                     {selectedTenant && (
                         <div className="mt-3 space-y-4">
-                            <div className="rounded-xl bg-slate-50 p-3">
-                                <p className="text-sm font-semibold text-slate-900">{selectedTenant.name}</p>
-                                <p className="text-xs text-slate-500">{selectedTenant.id}</p>
-                                <p className="text-xs text-slate-500 mt-1">Status: {selectedTenant.status}</p>
+                            <div className="rounded-xl bg-background-subtle p-3">
+                                <p className="text-sm font-semibold text-text-primary">{selectedTenant.name}</p>
+                                <p className="text-xs text-text-tertiary">{selectedTenant.id}</p>
+                                <p className="text-xs text-text-tertiary mt-1">Status: {selectedTenant.status}</p>
                             </div>
 
                             <div>
-                                <p className="text-xs uppercase tracking-wide text-slate-500">Usage Snapshot</p>
-                                {isUsageLoading && <p className="text-sm text-slate-500 mt-2">Loading usage...</p>}
+                                <p className="text-xs uppercase tracking-wide text-text-tertiary">Usage Snapshot</p>
+                                {isUsageLoading && <p className="text-sm text-text-tertiary mt-2">Loading usage...</p>}
                                 {!isUsageLoading && selectedUsage && (
                                     <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
                                         {Object.entries(selectedUsage.counts).map(([key, value]) => (
-                                            <div key={key} className="rounded-lg border border-slate-200 p-2">
-                                                <p className="text-xs text-slate-500">{key}</p>
-                                                <p className="font-semibold text-slate-900">{value}</p>
+                                            <div key={key} className="rounded-lg border border-border p-2">
+                                                <p className="text-xs text-text-tertiary">{key}</p>
+                                                <p className="font-semibold text-text-primary">{value}</p>
                                             </div>
                                         ))}
                                     </div>
@@ -509,14 +509,14 @@ export default function SuperAdminPanel() {
                     )}
                 </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 className="text-lg font-semibold text-slate-900">Module Controls</h2>
-                    {!selectedTenant && <p className="mt-3 text-sm text-slate-500">Select a tenant to update feature access.</p>}
+                <div className="rounded-2xl border border-border bg-background-card p-5">
+                    <h2 className="text-lg font-semibold text-text-primary">Module Controls</h2>
+                    {!selectedTenant && <p className="mt-3 text-sm text-text-tertiary">Select a tenant to update feature access.</p>}
                     {selectedTenant && moduleDraft && (
                         <div className="mt-3 space-y-3">
                             {(Object.keys(moduleDraft) as (keyof FeatureFlags)[]).map((key) => (
-                                <label key={key} className="flex items-center justify-between rounded-lg border border-slate-200 p-3">
-                                    <span className="text-sm font-medium text-slate-800">{featureLabelMap[key]}</span>
+                                <label key={key} className="flex items-center justify-between rounded-lg border border-border p-3">
+                                    <span className="text-sm font-medium text-text-primary">{featureLabelMap[key]}</span>
                                     <input
                                         type="checkbox"
                                         checked={moduleDraft[key]}
@@ -529,7 +529,7 @@ export default function SuperAdminPanel() {
                                 type="button"
                                 onClick={() => featureMutation.mutate({ tenantId: selectedTenant.id, featureFlags: moduleDraft })}
                                 disabled={featureMutation.isPending}
-                                className="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                                className="w-full rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
                             >
                                 Save Module Settings
                             </button>
@@ -538,22 +538,22 @@ export default function SuperAdminPanel() {
                 </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h2 className="text-lg font-semibold text-slate-900">Recent Audit Activity</h2>
-                <p className="text-xs text-slate-500">Every high-impact action is tracked here.</p>
+            <section className="rounded-2xl border border-border bg-background-card p-5">
+                <h2 className="text-lg font-semibold text-text-primary">Recent Audit Activity</h2>
+                <p className="text-xs text-text-tertiary">Every high-impact action is tracked here.</p>
                 <div className="mt-4 divide-y divide-slate-100">
-                    {isAuditLoading && <div className="py-4 text-sm text-slate-500">Loading audit activity...</div>}
-                    {!isAuditLoading && auditItems.length === 0 && <div className="py-4 text-sm text-slate-500">No audit data found.</div>}
+                    {isAuditLoading && <div className="py-4 text-sm text-text-tertiary">Loading audit activity...</div>}
+                    {!isAuditLoading && auditItems.length === 0 && <div className="py-4 text-sm text-text-tertiary">No audit data found.</div>}
                     {!isAuditLoading &&
                         auditItems.map((item) => (
                             <div key={item.id} className="py-3 flex flex-wrap items-center justify-between gap-3">
                                 <div>
-                                    <p className="text-sm text-slate-800">
+                                    <p className="text-sm text-text-primary">
                                         <span className="font-semibold">{item.actor}</span> {item.action} on <span className="font-semibold">{item.target}</span>
                                     </p>
-                                    <p className="text-xs text-slate-500">{item.company}</p>
+                                    <p className="text-xs text-text-tertiary">{item.company}</p>
                                 </div>
-                                <div className="inline-flex items-center gap-1 text-xs text-slate-500">
+                                <div className="inline-flex items-center gap-1 text-xs text-text-tertiary">
                                     <CheckCircle2 size={14} />
                                     {item.createdAt}
                                 </div>
@@ -567,12 +567,12 @@ export default function SuperAdminPanel() {
 
 function MetricCard({ icon: Icon, label, value }: { icon: typeof Building2; label: string; value: string }) {
     return (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <div className="inline-flex rounded-lg bg-white p-2 text-slate-700">
+        <div className="rounded-xl border border-border bg-background-subtle p-3">
+            <div className="inline-flex rounded-lg bg-background-card p-2 text-text-secondary">
                 <Icon size={16} />
             </div>
-            <p className="mt-2 text-xs uppercase tracking-wide text-slate-500">{label}</p>
-            <p className="text-lg font-bold text-slate-900">{value}</p>
+            <p className="mt-2 text-xs uppercase tracking-wide text-text-tertiary">{label}</p>
+            <p className="text-lg font-bold text-text-primary">{value}</p>
         </div>
     );
 }
@@ -581,7 +581,7 @@ function ActionButton({ icon: Icon, label }: { icon: typeof Building2; label: st
     return (
         <button
             type="button"
-            className="inline-flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="inline-flex items-center justify-between rounded-lg border border-border bg-background-card px-3 py-2 text-sm font-medium text-text-secondary hover:bg-background-subtle"
         >
             <span>{label}</span>
             <Icon size={16} />

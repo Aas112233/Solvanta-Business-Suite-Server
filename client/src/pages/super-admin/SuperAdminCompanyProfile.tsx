@@ -269,7 +269,7 @@ export default function SuperAdminCompanyProfile() {
             queryClient.invalidateQueries({ queryKey: ['super-admin', 'tenant-control', id] });
             queryClient.invalidateQueries({ queryKey: ['super-admin', 'audit'] });
         },
-        onError: () => toast.error('Failed to update user status'),
+        onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Failed to update user status'),
     });
 
     const passwordMutation = useMutation({
@@ -281,7 +281,7 @@ export default function SuperAdminCompanyProfile() {
             setNewPassword('');
             queryClient.invalidateQueries({ queryKey: ['super-admin', 'audit'] });
         },
-        onError: () => toast.error('Failed to update user password'),
+        onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Failed to update user password'),
     });
 
     const createUserMutation = useMutation({
@@ -380,7 +380,7 @@ export default function SuperAdminCompanyProfile() {
 
     if (!tenant) {
         return (
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
+            <div className="rounded-2xl border border-border bg-background-card p-5 text-sm text-text-secondary">
                 Company not found. <Link to="/super-admin/companies" className="text-blue-600">Back to company list</Link>
             </div>
         );
@@ -388,14 +388,14 @@ export default function SuperAdminCompanyProfile() {
 
     return (
         <div className="space-y-6">
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+            <section className="rounded-2xl border border-border bg-background-card p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Company Profile</p>
-                        <h2 className="text-xl font-bold text-slate-900">{tenant.name}</h2>
-                        <p className="text-xs text-slate-500 mt-1">{tenant.id}</p>
+                        <p className="text-xs uppercase tracking-wide text-text-tertiary">Company Profile</p>
+                        <h2 className="text-xl font-bold text-text-primary">{tenant.name}</h2>
+                        <p className="text-xs text-text-tertiary mt-1">{tenant.id}</p>
                     </div>
-                    <Link to="/super-admin/companies" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                    <Link to="/super-admin/companies" className="rounded-lg border border-border px-3 py-2 text-sm text-text-secondary hover:bg-background-subtle">
                         Back To Companies
                     </Link>
                 </div>
@@ -445,7 +445,7 @@ export default function SuperAdminCompanyProfile() {
                     </p>
                 )}
                 {tenant.statusChangedAt && (
-                    <p className="mt-2 text-xs text-slate-500">
+                    <p className="mt-2 text-xs text-text-tertiary">
                         Last status change: {new Date(tenant.statusChangedAt).toLocaleString()}
                         {tenant.statusChangedBy ? ` by ${tenant.statusChangedBy}` : ''}
                     </p>
@@ -457,30 +457,30 @@ export default function SuperAdminCompanyProfile() {
                     </p>
                 )}
                 {tenant.healthDrivers.length > 0 && (
-                    <p className="mt-2 text-xs text-slate-500">
+                    <p className="mt-2 text-xs text-text-tertiary">
                         Health drivers: {tenant.healthDrivers.join(' • ')}
                     </p>
                 )}
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h3 className="text-lg font-semibold text-slate-900">Usage Insights</h3>
-                {loadingUsage && <p className="mt-3 text-sm text-slate-500">Loading usage snapshot...</p>}
+            <section className="rounded-2xl border border-border bg-background-card p-5">
+                <h3 className="text-lg font-semibold text-text-primary">Usage Insights</h3>
+                {loadingUsage && <p className="mt-3 text-sm text-text-tertiary">Loading usage snapshot...</p>}
                 {!loadingUsage && usage && (
                     <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3">
                         {Object.entries(usage.counts).map(([key, value]) => (
-                            <div key={key} className="rounded-lg border border-slate-200 p-3">
-                                <p className="text-xs text-slate-500">{key}</p>
-                                <p className="text-lg font-semibold text-slate-900">{value}</p>
+                            <div key={key} className="rounded-lg border border-border p-3">
+                                <p className="text-xs text-text-tertiary">{key}</p>
+                                <p className="text-lg font-semibold text-text-primary">{value}</p>
                             </div>
                         ))}
                     </div>
                 )}
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h3 className="text-lg font-semibold text-slate-900">Tenant Health & Module Adoption</h3>
-                <p className="text-xs text-slate-500">Activity-based module analytics and tenant health factors from the last 30 days.</p>
+            <section className="rounded-2xl border border-border bg-background-card p-5">
+                <h3 className="text-lg font-semibold text-text-primary">Tenant Health & Module Adoption</h3>
+                <p className="text-xs text-text-tertiary">Activity-based module analytics and tenant health factors from the last 30 days.</p>
                 <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
                     <InfoCard label="Health Trend" value={tenant.healthTrend} />
                     <InfoCard label="Last Activity" value={new Date(tenant.lastActivityAt).toLocaleString()} />
@@ -491,11 +491,11 @@ export default function SuperAdminCompanyProfile() {
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
                     {(Object.values(tenant.moduleUsage) as Tenant['moduleUsage'][keyof Tenant['moduleUsage']][]).map((module) => (
-                        <div key={module.key} className="rounded-xl border border-slate-200 p-3">
+                        <div key={module.key} className="rounded-xl border border-border p-3">
                             <div className="flex items-center justify-between gap-3">
                                 <div>
-                                    <p className="text-sm font-semibold uppercase tracking-wide text-slate-900">{module.key}</p>
-                                    <p className="text-xs text-slate-500">
+                                    <p className="text-sm font-semibold uppercase tracking-wide text-text-primary">{module.key}</p>
+                                    <p className="text-xs text-text-tertiary">
                                         {module.monthlyActiveUsers} MAU • {module.eventCount30d} events in 30 days
                                     </p>
                                 </div>
@@ -503,18 +503,18 @@ export default function SuperAdminCompanyProfile() {
                                     ? 'bg-emerald-50 text-emerald-700'
                                     : module.status === 'unused'
                                         ? 'bg-amber-50 text-amber-700'
-                                        : 'bg-slate-100 text-slate-700'
+                                        : 'bg-background-subtle text-text-secondary'
                                     }`}>
                                     {module.status}
                                 </span>
                             </div>
-                            <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-600">
-                                <div className="rounded-lg bg-slate-50 px-2 py-2">DAU: {module.dailyActiveUsers}</div>
-                                <div className="rounded-lg bg-slate-50 px-2 py-2">WAU: {module.weeklyActiveUsers}</div>
-                                <div className="rounded-lg bg-slate-50 px-2 py-2">Adoption: {module.adoptionRate}%</div>
+                            <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-text-secondary">
+                                <div className="rounded-lg bg-background-subtle px-2 py-2">DAU: {module.dailyActiveUsers}</div>
+                                <div className="rounded-lg bg-background-subtle px-2 py-2">WAU: {module.weeklyActiveUsers}</div>
+                                <div className="rounded-lg bg-background-subtle px-2 py-2">Adoption: {module.adoptionRate}%</div>
                             </div>
                             {module.lastUsedAt && (
-                                <p className="mt-2 text-xs text-slate-500">Last activity: {new Date(module.lastUsedAt).toLocaleString()}</p>
+                                <p className="mt-2 text-xs text-text-tertiary">Last activity: {new Date(module.lastUsedAt).toLocaleString()}</p>
                             )}
                         </div>
                     ))}
@@ -522,12 +522,12 @@ export default function SuperAdminCompanyProfile() {
             </section>
 
             {canManageBilling && (
-                <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h3 className="text-lg font-semibold text-slate-900">Plan & Billing Controls</h3>
-                    <p className="text-xs text-slate-500">Override commercial plan and billing metrics used in super-admin reporting.</p>
+                <section className="rounded-2xl border border-border bg-background-card p-5">
+                    <h3 className="text-lg font-semibold text-text-primary">Plan & Billing Controls</h3>
+                    <p className="text-xs text-text-tertiary">Override commercial plan and billing metrics used in super-admin reporting.</p>
                     <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
                         <div>
-                            <label className="text-xs text-slate-600">Plan</label>
+                            <label className="text-xs text-text-secondary">Plan</label>
                             <AppDropdown
                                 value={planDraft.plan}
                                 onChange={(v) => setPlanDraft(prev => ({ ...prev, plan: v as TenantPlan }))}
@@ -536,32 +536,32 @@ export default function SuperAdminCompanyProfile() {
                             />
                         </div>
                         <div>
-                            <label className="text-xs text-slate-600">Monthly Revenue</label>
+                            <label className="text-xs text-text-secondary">Monthly Revenue</label>
                             <input
                                 type="number"
                                 min={0}
                                 value={planDraft.monthlyRevenue}
                                 onChange={(e) => setPlanDraft((prev) => ({ ...prev, monthlyRevenue: e.target.value }))}
-                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                             />
                         </div>
                         <div>
-                            <label className="text-xs text-slate-600">Failed Payments</label>
+                            <label className="text-xs text-text-secondary">Failed Payments</label>
                             <input
                                 type="number"
                                 min={0}
                                 value={planDraft.failedPayments}
                                 onChange={(e) => setPlanDraft((prev) => ({ ...prev, failedPayments: e.target.value }))}
-                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                             />
                         </div>
                         <div>
-                            <label className="text-xs text-slate-600">Next Billing Date</label>
+                            <label className="text-xs text-text-secondary">Next Billing Date</label>
                             <input
                                 type="date"
                                 value={planDraft.nextBillingDate}
                                 onChange={(e) => setPlanDraft((prev) => ({ ...prev, nextBillingDate: e.target.value }))}
-                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                             />
                         </div>
                     </div>
@@ -569,7 +569,7 @@ export default function SuperAdminCompanyProfile() {
                         type="button"
                         onClick={() => planMutation.mutate()}
                         disabled={planMutation.isPending}
-                        className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                     >
                         Save Plan Controls
                     </button>
@@ -577,45 +577,45 @@ export default function SuperAdminCompanyProfile() {
             )}
 
             {canManageLimits && (
-                <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h3 className="text-lg font-semibold text-slate-900">Resource Limits</h3>
-                    <p className="text-xs text-slate-500">Set enforced limits. Warnings start at 80% and 90%, new resources are blocked at the limit, and unresolved breaches auto-suspend after 7 days.</p>
+                <section className="rounded-2xl border border-border bg-background-card p-5">
+                    <h3 className="text-lg font-semibold text-text-primary">Resource Limits</h3>
+                    <p className="text-xs text-text-tertiary">Set enforced limits. Warnings start at 80% and 90%, new resources are blocked at the limit, and unresolved breaches auto-suspend after 7 days.</p>
                     <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div>
-                            <label className="text-xs text-slate-600">Max Users</label>
+                            <label className="text-xs text-text-secondary">Max Users</label>
                             <input
                                 type="number"
                                 min={1}
                                 value={limitsDraft.maxUsers}
                                 onChange={(e) => setLimitsDraft((prev) => ({ ...prev, maxUsers: e.target.value }))}
-                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                                 placeholder="Unlimited"
                             />
                         </div>
                         <div>
-                            <label className="text-xs text-slate-600">Max Branches</label>
+                            <label className="text-xs text-text-secondary">Max Branches</label>
                             <input
                                 type="number"
                                 min={1}
                                 value={limitsDraft.maxBranches}
                                 onChange={(e) => setLimitsDraft((prev) => ({ ...prev, maxBranches: e.target.value }))}
-                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                                 placeholder="Unlimited"
                             />
                         </div>
                         <div>
-                            <label className="text-xs text-slate-600">Max Products</label>
+                            <label className="text-xs text-text-secondary">Max Products</label>
                             <input
                                 type="number"
                                 min={1}
                                 value={limitsDraft.maxProducts}
                                 onChange={(e) => setLimitsDraft((prev) => ({ ...prev, maxProducts: e.target.value }))}
-                                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                                 placeholder="Unlimited"
                             />
                         </div>
                     </div>
-                    <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                    <div className="mt-3 rounded-lg bg-background-subtle px-3 py-2 text-xs text-text-secondary">
                         Current usage: {controlCenter?.usage.users ?? tenant.totalUsers} users, {controlCenter?.usage.branches ?? tenant.totalBranches} branches, {controlCenter?.usage.products ?? tenant.totalProducts} products
                     </div>
                     {tenant.limitWarnings.length > 0 && (
@@ -627,7 +627,7 @@ export default function SuperAdminCompanyProfile() {
                         type="button"
                         onClick={() => limitsMutation.mutate()}
                         disabled={limitsMutation.isPending}
-                        className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                     >
                         Save Limits
                     </button>
@@ -635,13 +635,13 @@ export default function SuperAdminCompanyProfile() {
             )}
 
             {canManageMaintenance && (
-                <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h3 className="text-lg font-semibold text-slate-900">Maintenance Lock</h3>
-                    <p className="text-xs text-slate-500">When enabled, this tenant cannot access APIs except super-admin users.</p>
-                    <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 p-3">
+                <section className="rounded-2xl border border-border bg-background-card p-5">
+                    <h3 className="text-lg font-semibold text-text-primary">Maintenance Lock</h3>
+                    <p className="text-xs text-text-tertiary">When enabled, this tenant cannot access APIs except super-admin users.</p>
+                    <div className="mt-4 flex items-center justify-between rounded-lg border border-border p-3">
                         <div>
-                            <p className="text-sm font-medium text-slate-900">Enable maintenance mode</p>
-                            <p className="text-xs text-slate-500">Block tenant access with a platform message.</p>
+                            <p className="text-sm font-medium text-text-primary">Enable maintenance mode</p>
+                            <p className="text-xs text-text-tertiary">Block tenant access with a platform message.</p>
                         </div>
                         <input
                             type="checkbox"
@@ -655,13 +655,13 @@ export default function SuperAdminCompanyProfile() {
                         value={maintenanceDraft.message}
                         onChange={(e) => setMaintenanceDraft((prev) => ({ ...prev, message: e.target.value }))}
                         placeholder="Maintenance message shown to blocked users"
-                        className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                        className="mt-3 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                     />
                     <button
                         type="button"
                         onClick={() => maintenanceMutation.mutate()}
                         disabled={maintenanceMutation.isPending}
-                        className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        className="mt-3 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                     >
                         Save Maintenance Controls
                     </button>
@@ -669,18 +669,18 @@ export default function SuperAdminCompanyProfile() {
             )}
 
             {canManageUsers && (
-                <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <section className="rounded-2xl border border-border bg-background-card p-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                            <h3 className="text-lg font-semibold text-slate-900">Tenant User Control</h3>
-                            <p className="text-xs text-slate-500">Activate or suspend individual users inside this tenant.</p>
+                            <h3 className="text-lg font-semibold text-text-primary">Tenant User Control</h3>
+                            <p className="text-xs text-text-tertiary">Activate or suspend individual users inside this tenant.</p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                             <input
                                 value={userSearch}
                                 onChange={(e) => setUserSearch(e.target.value)}
                                 placeholder="Search user..."
-                                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-slate-400"
+                                className="rounded-lg border border-border px-3 py-1.5 text-sm outline-none focus:border-border-strong"
                             />
                             <AppDropdown
                                 value={userFilter}
@@ -700,42 +700,42 @@ export default function SuperAdminCompanyProfile() {
 
                     {showNewUserForm && (
                         <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-                            <h4 className="mb-3 text-sm font-semibold text-slate-900">Add New User</h4>
+                            <h4 className="mb-3 text-sm font-semibold text-text-primary">Add New User</h4>
                             <div className="grid gap-3 sm:grid-cols-2">
                                 <div>
-                                    <label className="mb-1 block text-xs font-medium text-slate-700">Name *</label>
+                                    <label className="mb-1 block text-xs font-medium text-text-secondary">Name *</label>
                                     <input
                                         value={newUserForm.name}
                                         onChange={(e) => setNewUserForm(prev => ({ ...prev, name: e.target.value }))}
                                         placeholder="Full name"
-                                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-slate-400 ${newUserErrors.name ? 'border-red-500' : 'border-slate-200'}`}
+                                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-border-strong ${newUserErrors.name ? 'border-red-500' : 'border-border'}`}
                                     />
                                     {newUserErrors.name && <p className="mt-1 text-xs text-red-600">{newUserErrors.name}</p>}
                                 </div>
                                 <div>
-                                    <label className="mb-1 block text-xs font-medium text-slate-700">Email *</label>
+                                    <label className="mb-1 block text-xs font-medium text-text-secondary">Email *</label>
                                     <input
                                         value={newUserForm.email}
                                         onChange={(e) => setNewUserForm(prev => ({ ...prev, email: e.target.value }))}
                                         placeholder="Email address"
                                         type="email"
-                                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-slate-400 ${newUserErrors.email ? 'border-red-500' : 'border-slate-200'}`}
+                                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-border-strong ${newUserErrors.email ? 'border-red-500' : 'border-border'}`}
                                     />
                                     {newUserErrors.email && <p className="mt-1 text-xs text-red-600">{newUserErrors.email}</p>}
                                 </div>
                                 <div>
-                                    <label className="mb-1 block text-xs font-medium text-slate-700">Password *</label>
+                                    <label className="mb-1 block text-xs font-medium text-text-secondary">Password *</label>
                                     <input
                                         value={newUserForm.password}
                                         onChange={(e) => setNewUserForm(prev => ({ ...prev, password: e.target.value }))}
                                         placeholder="Password"
                                         type="password"
-                                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-slate-400 ${newUserErrors.password ? 'border-red-500' : 'border-slate-200'}`}
+                                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-border-strong ${newUserErrors.password ? 'border-red-500' : 'border-border'}`}
                                     />
                                     {newUserErrors.password && <p className="mt-1 text-xs text-red-600">{newUserErrors.password}</p>}
                                 </div>
                                 <div>
-                                    <label className="mb-1 block text-xs font-medium text-slate-700">Role</label>
+                                    <label className="mb-1 block text-xs font-medium text-text-secondary">Role</label>
                                     <AppDropdown
                                         value={newUserForm.role}
                                         onChange={(v) => setNewUserForm(prev => ({ ...prev, role: v }))}
@@ -744,12 +744,12 @@ export default function SuperAdminCompanyProfile() {
                                     />
                                 </div>
                                 <div className="sm:col-span-2">
-                                    <label className="mb-1 block text-xs font-medium text-slate-700">Phone</label>
+                                    <label className="mb-1 block text-xs font-medium text-text-secondary">Phone</label>
                                     <input
                                         value={newUserForm.phone}
                                         onChange={(e) => setNewUserForm(prev => ({ ...prev, phone: e.target.value }))}
                                         placeholder="Phone number"
-                                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                        className="w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                                     />
                                 </div>
                             </div>
@@ -761,7 +761,7 @@ export default function SuperAdminCompanyProfile() {
                                         setNewUserForm({ name: '', email: '', password: '', role: '', phone: '' });
                                         setNewUserErrors({});
                                     }}
-                                    className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200"
+                                    className="rounded-lg bg-background-subtle px-4 py-2 text-sm font-medium text-text-secondary hover:bg-slate-200"
                                 >
                                     Cancel
                                 </button>
@@ -797,7 +797,7 @@ export default function SuperAdminCompanyProfile() {
                         </div>
                     )}
 
-                    {loadingControlCenter && <p className="mt-4 text-sm text-slate-500">Loading tenant users...</p>}
+                    {loadingControlCenter && <p className="mt-4 text-sm text-text-tertiary">Loading tenant users...</p>}
 
                     {!loadingControlCenter && (
                         <div className="mt-4 overflow-x-auto">
@@ -808,7 +808,7 @@ export default function SuperAdminCompanyProfile() {
                             )}
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500">
+                                    <tr className="border-b border-border-subtle text-left text-xs uppercase tracking-wide text-text-tertiary">
                                         <th className="py-2 pr-3">Name</th>
                                         <th className="py-2 pr-3">Role</th>
                                         <th className="py-2 pr-3">Last Login</th>
@@ -821,14 +821,21 @@ export default function SuperAdminCompanyProfile() {
                                         <tr
                                             key={user.id}
                                             id={`tenant-user-row-${user.id}`}
-                                            className={`border-b border-slate-100 last:border-none ${focusedUserId === user.id ? 'bg-amber-50/70' : ''}`}
+                                            className={`border-b border-border-subtle last:border-none ${focusedUserId === user.id ? 'bg-amber-50/70' : ''}`}
                                         >
                                             <td className="py-3 pr-3">
-                                                <p className="font-medium text-slate-900">{user.name}</p>
-                                                <p className="text-xs text-slate-500">{user.email}</p>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <p className="font-medium text-text-primary">{user.name}</p>
+                                                    {user.isSuperAdmin && (
+                                                        <span className="inline-flex rounded-full bg-background-subtle px-2 py-0.5 text-[11px] font-semibold text-text-secondary">
+                                                            Protected
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="text-xs text-text-tertiary">{user.email}</p>
                                             </td>
-                                            <td className="py-3 pr-3 text-slate-700">{user.role}</td>
-                                            <td className="py-3 pr-3 text-xs text-slate-500">
+                                            <td className="py-3 pr-3 text-text-secondary">{user.role}</td>
+                                            <td className="py-3 pr-3 text-xs text-text-tertiary">
                                                 {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'Never'}
                                             </td>
                                             <td className="py-3 pr-3">
@@ -837,66 +844,70 @@ export default function SuperAdminCompanyProfile() {
                                                 </span>
                                             </td>
                                             <td className="py-3">
-                                                <div className="flex flex-wrap items-center gap-2">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => userStatusMutation.mutate({ userId: user.id, isActive: !user.isActive })}
-                                                        className={`rounded-md px-2 py-1 text-xs font-medium text-white ${user.isActive ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
-                                                    >
-                                                        {user.isActive ? 'Suspend' : 'Activate'}
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            setPasswordResetUser({ id: user.id, name: user.name });
-                                                            setNewPassword('');
-                                                        }}
-                                                        className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
-                                                    >
-                                                        Password
-                                                    </button>
-                                                    {canImpersonateUsers && user.canImpersonate !== false && (
+                                                {user.isSuperAdmin ? (
+                                                    <span className="text-xs font-medium text-text-tertiary">Protected account</span>
+                                                ) : (
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => userStatusMutation.mutate({ userId: user.id, isActive: !user.isActive })}
+                                                            className={`rounded-md px-2 py-1 text-xs font-medium text-white ${user.isActive ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                                                        >
+                                                            {user.isActive ? 'Suspend' : 'Activate'}
+                                                        </button>
                                                         <button
                                                             type="button"
                                                             onClick={() => {
-                                                                setImpersonationUser({ id: user.id, name: user.name, email: user.email });
-                                                                setImpersonationReason('');
-                                                                setImpersonationTicket('');
+                                                                setPasswordResetUser({ id: user.id, name: user.name });
+                                                                setNewPassword('');
                                                             }}
-                                                            className="rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                                                            className="rounded-md bg-background-subtle px-2 py-1 text-xs font-medium text-text-secondary hover:bg-slate-200"
                                                         >
-                                                            Impersonate
+                                                            Password
                                                         </button>
-                                                    )}
-                                                </div>
+                                                        {canImpersonateUsers && user.canImpersonate !== false && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setImpersonationUser({ id: user.id, name: user.name, email: user.email });
+                                                                    setImpersonationReason('');
+                                                                    setImpersonationTicket('');
+                                                                }}
+                                                                className="rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                                                            >
+                                                                Impersonate
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
-                            {filteredUsers.length === 0 && <p className="py-4 text-sm text-slate-500">No users matched this filter.</p>}
+                            {filteredUsers.length === 0 && <p className="py-4 text-sm text-text-tertiary">No users matched this filter.</p>}
                         </div>
                     )}
                 </section>
             )}
 
             {canManageAnnouncements && (
-                <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h3 className="text-lg font-semibold text-slate-900">Tenant Announcement</h3>
-                    <p className="text-xs text-slate-500">Send a control message only to this tenant.</p>
+                <section className="rounded-2xl border border-border bg-background-card p-5">
+                    <h3 className="text-lg font-semibold text-text-primary">Tenant Announcement</h3>
+                    <p className="text-xs text-text-tertiary">Send a control message only to this tenant.</p>
                     <div className="mt-4 space-y-3">
                         <input
                             value={announcement.title}
                             onChange={(e) => setAnnouncement((prev) => ({ ...prev, title: e.target.value }))}
                             placeholder="Announcement title"
-                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                            className="w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                         />
                         <textarea
                             rows={4}
                             value={announcement.message}
                             onChange={(e) => setAnnouncement((prev) => ({ ...prev, message: e.target.value }))}
                             placeholder="Announcement message"
-                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                            className="w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                         />
                         <AppDropdown
                             value={announcement.level}
@@ -908,7 +919,7 @@ export default function SuperAdminCompanyProfile() {
                             type="button"
                             onClick={() => announcementMutation.mutate()}
                             disabled={announcementMutation.isPending || !announcement.title.trim() || !announcement.message.trim()}
-                            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                         >
                             Send Tenant Announcement
                         </button>
@@ -919,17 +930,18 @@ export default function SuperAdminCompanyProfile() {
             {/* Password Reset Modal */}
             {canManageUsers && passwordResetUser && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-                    <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
-                        <h3 className="text-lg font-bold text-slate-900">Reset Password</h3>
-                        <p className="mt-1 text-sm text-slate-500">
+                    <div className="w-full max-w-sm rounded-2xl bg-background-card p-5 shadow-xl">
+                        <h3 className="text-lg font-bold text-text-primary">Reset Password</h3>
+                        <p className="mt-1 text-sm text-text-tertiary">
                             Enter a new password for <strong>{passwordResetUser.name}</strong>.
                         </p>
                         <input
-                            type="text"
+                            type="password"
+                            autoComplete="new-password"
                             value={newPassword}
                             onChange={(e) => setNewPassword(e.target.value)}
                             placeholder="New password (min 6 chars)"
-                            className="mt-4 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                            className="mt-4 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                         />
                         <div className="mt-5 flex justify-end gap-2">
                             <button
@@ -938,7 +950,7 @@ export default function SuperAdminCompanyProfile() {
                                     setPasswordResetUser(null);
                                     setNewPassword('');
                                 }}
-                                className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                                className="rounded-lg px-4 py-2 text-sm font-medium text-text-secondary hover:bg-background-subtle"
                             >
                                 Cancel
                             </button>
@@ -946,7 +958,7 @@ export default function SuperAdminCompanyProfile() {
                                 type="button"
                                 disabled={newPassword.length < 6 || passwordMutation.isPending}
                                 onClick={() => passwordMutation.mutate({ userId: passwordResetUser.id, password: newPassword })}
-                                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                             >
                                 {passwordMutation.isPending ? 'Saving...' : 'Update Password'}
                             </button>
@@ -1001,9 +1013,9 @@ export default function SuperAdminCompanyProfile() {
 
 function InfoCard({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-lg border border-slate-200 p-3">
-            <p className="text-xs text-slate-500">{label}</p>
-            <p className="text-sm font-semibold text-slate-900 mt-1">{value}</p>
+        <div className="rounded-lg border border-border p-3">
+            <p className="text-xs text-text-tertiary">{label}</p>
+            <p className="text-sm font-semibold text-text-primary mt-1">{value}</p>
         </div>
     );
 }

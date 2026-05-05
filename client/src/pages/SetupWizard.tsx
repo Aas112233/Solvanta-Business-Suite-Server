@@ -7,10 +7,9 @@ import { useAuthStore } from '../stores/authStore';
 import toast from 'react-hot-toast';
 import AppDropdown from '../components/ui/AppDropdown';
 import {
-
     Building2, Globe, Receipt, Landmark, CreditCard, CheckCircle2,
     ChevronRight, ChevronLeft, Loader2, Sparkles, ArrowRight, Check,
-    Wallet, BookOpen,
+    Wallet, BookOpen, Zap, ShieldCheck, Settings2, ChevronDown, ChevronUp,
 } from 'lucide-react';
 
 // ──────────────────────────────────────────────────────────────
@@ -28,44 +27,31 @@ type CompanyResponse = {
 
 type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE';
 
-interface AccountSeed {
-    code: string;
-    name: string;
-    type: AccountType;
+interface SeedResult {
+    accountsCreated: number;
+    accountsExisted: number;
+    totalAccounts: number;
+    mappingsCreated: number;
+    accounts: Array<{ id: string; code: string; name: string; type: AccountType }>;
+    mappings: Array<{ mappingType: string; code: string; name: string }>;
 }
 
-const DEFAULT_ACCOUNTS: AccountSeed[] = [
-    { code: '1000', name: 'Cash', type: 'ASSET' },
-    { code: '1010', name: 'Bank', type: 'ASSET' },
-    { code: '1200', name: 'Accounts Receivable', type: 'ASSET' },
-    { code: '1300', name: 'Inventory Asset', type: 'ASSET' },
-    { code: '2000', name: 'Accounts Payable', type: 'LIABILITY' },
-    { code: '2100', name: 'Output Tax (VAT)', type: 'LIABILITY' },
-    { code: '2200', name: 'Input Tax (VAT)', type: 'LIABILITY' },
-    { code: '3000', name: 'Owner Equity', type: 'EQUITY' },
-    { code: '3100', name: 'Retained Earnings', type: 'EQUITY' },
-    { code: '4000', name: 'Sales Revenue', type: 'REVENUE' },
-    { code: '4100', name: 'Sales Returns', type: 'REVENUE' },
-    { code: '4200', name: 'Discount Given', type: 'REVENUE' },
-    { code: '5000', name: 'Cost of Goods Sold (COGS)', type: 'EXPENSE' },
-    { code: '5100', name: 'Purchase Returns', type: 'EXPENSE' },
-    { code: '5200', name: 'Discount Received', type: 'EXPENSE' },
-    { code: '5300', name: 'Damaged Goods', type: 'EXPENSE' },
-    { code: '5400', name: 'Shrinkage', type: 'EXPENSE' },
-    { code: '6000', name: 'General Expenses', type: 'EXPENSE' },
-];
-
-const MAPPING_TYPES = [
-    { key: 'CASH', label: 'Cash Account', icon: Wallet },
-    { key: 'BANK', label: 'Bank Account', icon: Landmark },
-    { key: 'ACCOUNT_RECEIVABLE', label: 'Accounts Receivable', icon: ArrowRight },
-    { key: 'ACCOUNT_PAYABLE', label: 'Accounts Payable', icon: CreditCard },
-    { key: 'INVENTORY_ASSET', label: 'Inventory Asset', icon: BookOpen },
-    { key: 'COGS_EXPENSE', label: 'Cost of Goods Sold', icon: Receipt },
-    { key: 'SALES_REVENUE', label: 'Sales Revenue', icon: Sparkles },
-    { key: 'OUTPUT_TAX', label: 'Output Tax (VAT)', icon: Receipt },
-    { key: 'INPUT_TAX', label: 'Input Tax (VAT)', icon: Receipt },
-];
+const MAPPING_TYPE_LABELS: Record<string, { label: string; icon: typeof Wallet }> = {
+    CASH: { label: 'Cash', icon: Wallet },
+    BANK: { label: 'Bank', icon: Landmark },
+    ACCOUNT_RECEIVABLE: { label: 'Accounts Receivable', icon: ArrowRight },
+    ACCOUNT_PAYABLE: { label: 'Accounts Payable', icon: CreditCard },
+    INVENTORY_ASSET: { label: 'Inventory Asset', icon: BookOpen },
+    COGS_EXPENSE: { label: 'Cost of Goods Sold', icon: Receipt },
+    SALES_REVENUE: { label: 'Sales Revenue', icon: Sparkles },
+    SALES_RETURN: { label: 'Sales Return', icon: Receipt },
+    OUTPUT_TAX: { label: 'Output Tax (VAT)', icon: Receipt },
+    INPUT_TAX: { label: 'Input Tax (VAT)', icon: Receipt },
+    DISCOUNT_GIVEN: { label: 'Discount Given', icon: Receipt },
+    DISCOUNT_RECEIVED: { label: 'Discount Received', icon: Receipt },
+    DAMAGED_GOODS_EXPENSE: { label: 'Damaged Goods', icon: Receipt },
+    SHRINKAGE_EXPENSE: { label: 'Shrinkage', icon: Receipt },
+};
 
 const currencyOptions = ['SAR', 'USD', 'EUR', 'GBP', 'AED', 'PKR', 'INR', 'KWD', 'QAR'];
 const dateFormats = ['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD'];
@@ -75,17 +61,27 @@ const timezoneOptions = [
 ];
 
 // ──────────────────────────────────────────────────────────────
-// Wizard Steps Definition
+// Wizard Steps Definition (5 steps — merged accounts+mappings)
 // ──────────────────────────────────────────────────────────────
 
 const STEPS = [
     { id: 'welcome', label: 'Welcome', icon: Sparkles },
     { id: 'profile', label: 'Company Profile', icon: Building2 },
     { id: 'regional', label: 'Regional & Tax', icon: Globe },
-    { id: 'accounts', label: 'Chart of Accounts', icon: Landmark },
-    { id: 'mappings', label: 'Payment Mapping', icon: CreditCard },
+    { id: 'accounts', label: 'Accounts & Mappings', icon: Landmark },
     { id: 'review', label: 'Review & Finish', icon: CheckCircle2 },
 ];
+
+// ──────────────────────────────────────────────────────────────
+// Account type badge colors
+// ──────────────────────────────────────────────────────────────
+const TYPE_COLORS: Record<AccountType, { bg: string; text: string }> = {
+    ASSET: { bg: 'rgba(59,130,246,0.12)', text: '#3b82f6' },
+    LIABILITY: { bg: 'rgba(239,68,68,0.12)', text: '#ef4444' },
+    EQUITY: { bg: 'rgba(168,85,247,0.12)', text: '#a855f7' },
+    REVENUE: { bg: 'rgba(34,197,94,0.12)', text: '#22c55e' },
+    EXPENSE: { bg: 'rgba(245,158,11,0.12)', text: '#f59e0b' },
+};
 
 // ──────────────────────────────────────────────────────────────
 // Main Wizard Component
@@ -99,9 +95,9 @@ export default function SetupWizard() {
     const companyName = authUser?.company?.name || 'Your Company';
 
     const [step, setStep] = useState(0);
-    const [seedingAccounts, setSeedingAccounts] = useState(false);
-    const [seededAccounts, setSeededAccounts] = useState(false);
-    const [mappings, setMappings] = useState<Record<string, string>>({});
+    const [seedResult, setSeedResult] = useState<SeedResult | null>(null);
+    const [showMappingDetails, setShowMappingDetails] = useState(false);
+    const [showAccountDetails, setShowAccountDetails] = useState(false);
 
     // Company profile form state
     const [profile, setProfile] = useState({
@@ -127,7 +123,7 @@ export default function SetupWizard() {
         queryFn: () => api.get('/companies/me').then((r) => r.data.data as CompanyResponse),
     });
 
-    // ── Fetch existing accounts ──
+    // ── Fetch existing accounts to check initial state ──
     const { data: existingAccounts } = useQuery({
         queryKey: ['accounts'],
         queryFn: () => api.get('/accounting/accounts').then((r) => r.data.data as any[]),
@@ -171,10 +167,17 @@ export default function SetupWizard() {
 
     // Check if accounts have been seeded previously
     useEffect(() => {
-        if (existingAccounts && existingAccounts.length > 5) {
-            setSeededAccounts(true);
+        if (existingAccounts && existingAccounts.length > 5 && !seedResult) {
+            setSeedResult({
+                accountsCreated: 0,
+                accountsExisted: existingAccounts.length,
+                totalAccounts: existingAccounts.length,
+                mappingsCreated: 0,
+                accounts: existingAccounts,
+                mappings: [],
+            });
         }
-    }, [existingAccounts]);
+    }, [existingAccounts, seedResult]);
 
     // ── Save profile + regional/tax + operational via PATCH /companies/me ──
     const saveMut = useMutation({
@@ -215,47 +218,32 @@ export default function SetupWizard() {
         },
     });
 
-    // ── Seed default Chart of Accounts ──
-    const seedAccounts = async () => {
-        setSeedingAccounts(true);
-        try {
-            for (const acc of DEFAULT_ACCOUNTS) {
-                await api.post('/accounting/accounts', { code: acc.code, name: acc.name, type: acc.type });
-            }
-            setSeededAccounts(true);
+    // ── One-click Smart Setup: Seed accounts + Auto-map ──
+    const seedMut = useMutation({
+        mutationFn: async () => {
+            const res = await api.post('/companies/me/seed-accounts');
+            return res.data.data as SeedResult;
+        },
+        onSuccess: (data) => {
+            setSeedResult(data);
             qc.invalidateQueries({ queryKey: ['accounts'] });
-            toast.success(`${DEFAULT_ACCOUNTS.length} accounts created successfully`);
-        } catch (err: any) {
-            // Some may already exist — that's okay
-            const msg = err.response?.data?.error?.message || 'Some accounts could not be created';
-            if (msg.includes('already exists') || msg.includes('DUPLICATE_CODE')) {
-                setSeededAccounts(true);
-                toast.success('Accounts are already set up');
+            const total = data.accountsCreated + data.mappingsCreated;
+            if (total > 0) {
+                toast.success(`✨ Created ${data.accountsCreated} accounts & ${data.mappingsCreated} mappings automatically!`);
             } else {
-                toast.error(msg);
+                toast.success('Accounts & mappings are already set up!');
             }
-        } finally {
-            setSeedingAccounts(false);
-        }
-    };
-
-    // ── Save account mappings ──
-    const saveMappings = async () => {
-        const entries = Object.entries(mappings).filter(([, v]) => v);
-        for (const [mappingType, accountId] of entries) {
-            try {
-                await api.post('/accounting/mappings', { mappingType, entityType: 'GLOBAL', accountId });
-            } catch { /* skip errors for duplicates */ }
-        }
-    };
+        },
+        onError: (err: any) => {
+            toast.error(err.response?.data?.error?.message || 'Failed to set up accounts');
+        },
+    });
 
     // ── Complete Setup ──
     const completeMut = useMutation({
         mutationFn: async () => {
             // Save settings first
             await saveMut.mutateAsync();
-            // Save mappings if any
-            await saveMappings();
             // Mark as completed
             await api.patch('/companies/me/setup-complete');
         },
@@ -301,20 +289,21 @@ export default function SetupWizard() {
 
     const StepWelcome = (
         <div className="text-center py-8 space-y-6">
-            <div className="w-20 h-20 mx-auto rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg">
+            <div className="w-20 h-20 mx-auto rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg"
+                style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)' }}>
                 <Sparkles size={36} className="text-white" />
             </div>
             <h2 className="text-3xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
                 Welcome, {authUser?.name || 'Admin'}! 🎉
             </h2>
             <p className="text-lg max-w-lg mx-auto" style={{ color: 'var(--color-text-secondary)' }}>
-                Let's set up <strong>{companyName}</strong> for operations. This wizard will guide you through configuring your company profile, regional settings, chart of accounts, and payment mappings.
+                Let's set up <strong>{companyName}</strong> for operations. This wizard will guide you through configuring your company profile, regional settings, and accounting system.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl mx-auto mt-8">
                 {[
                     { icon: Building2, title: 'Company Profile', desc: 'Name, contact, currency' },
                     { icon: Globe, title: 'Regional Setup', desc: 'Timezone, tax defaults' },
-                    { icon: CreditCard, title: 'Account Mapping', desc: 'Payment methods, accounts' },
+                    { icon: Zap, title: 'Smart Accounts', desc: 'One-click account setup' },
                 ].map((item) => (
                     <div key={item.title} className="rounded-xl p-4 space-y-2" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
                         <item.icon size={24} style={{ color: 'var(--color-accent)' }} />
@@ -354,9 +343,9 @@ export default function SetupWizard() {
                 ))}
                 <div>
                     <label className="text-xs font-medium mb-1.5 block" style={{ color: 'var(--color-text-secondary)' }}>Currency</label>
-                                        <AppDropdown
+                    <AppDropdown
                         value={profile.currency}
-    onChange={(v) => setProfile(prev => ({ ...prev, currency: v }))}
+                        onChange={(v) => setProfile(prev => ({ ...prev, currency: v }))}
                         options={[...currencyOptions.map((c: any) => ({ value: c, label: c }))]}
                         placeholder='Select'
                         searchable
@@ -385,9 +374,9 @@ export default function SetupWizard() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                     <label className="text-xs font-medium mb-1.5 block" style={{ color: 'var(--color-text-secondary)' }}>Timezone</label>
-                                        <AppDropdown
+                    <AppDropdown
                         value={regional.timezone}
-    onChange={(v) => setRegional(prev => ({ ...prev, timezone: v }))}
+                        onChange={(v) => setRegional(prev => ({ ...prev, timezone: v }))}
                         options={[...timezoneOptions.map((z: any) => ({ value: z, label: z }))]}
                         placeholder='Select'
                         searchable
@@ -395,9 +384,9 @@ export default function SetupWizard() {
                 </div>
                 <div>
                     <label className="text-xs font-medium mb-1.5 block" style={{ color: 'var(--color-text-secondary)' }}>Date Format</label>
-                                        <AppDropdown
+                    <AppDropdown
                         value={regional.dateFormat}
-    onChange={(v) => setRegional(prev => ({ ...prev, dateFormat: v }))}
+                        onChange={(v) => setRegional(prev => ({ ...prev, dateFormat: v }))}
                         options={[...dateFormats.map((f: any) => ({ value: f, label: f }))]}
                         placeholder='Select'
                         searchable
@@ -405,9 +394,9 @@ export default function SetupWizard() {
                 </div>
                 <div>
                     <label className="text-xs font-medium mb-1.5 block" style={{ color: 'var(--color-text-secondary)' }}>Time Format</label>
-                                        <AppDropdown
+                    <AppDropdown
                         value={regional.timeFormat}
-    onChange={(v) => setRegional(prev => ({ ...prev, timeFormat: v as '12H' | '24H' }))}
+                        onChange={(v) => setRegional(prev => ({ ...prev, timeFormat: v as '12H' | '24H' }))}
                         options={[{ value: '24H', label: '24 Hours' }, { value: '12H', label: '12 Hours' }]}
                         placeholder='24 Hours'
                     />
@@ -445,94 +434,248 @@ export default function SetupWizard() {
         </div>
     );
 
+    // ──────────────────────────────────────────────────────────────
+    // UNIFIED Accounts & Mappings Step (replaces old Steps 4 + 5)
+    // ──────────────────────────────────────────────────────────────
+
     const StepAccounts = (
-        <div className="space-y-5">
+        <div className="space-y-6">
             <div>
-                <h3 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>Chart of Accounts</h3>
+                <h3 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>Accounts & Mappings</h3>
                 <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                    Seed your default chart of accounts to enable the accounting module. You can always add more accounts later.
+                    Set up your chart of accounts and payment mappings with one click. The system will create 18 essential accounts and automatically map them for sales, purchases, inventory, and tax processing.
                 </p>
             </div>
-            {seededAccounts ? (
-                <div className="rounded-xl p-6 text-center space-y-3" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
-                    <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mx-auto">
-                        <Check size={28} className="text-green-600" />
+
+            {seedResult ? (
+                /* ── SUCCESS STATE ── */
+                <div className="space-y-4">
+                    {/* Summary Banner */}
+                    <div className="rounded-xl p-6 space-y-4" style={{
+                        background: 'linear-gradient(135deg, rgba(34,197,94,0.08), rgba(59,130,246,0.08))',
+                        border: '1px solid rgba(34,197,94,0.25)',
+                    }}>
+                        <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{
+                                background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                            }}>
+                                <ShieldCheck size={24} className="text-white" />
+                            </div>
+                            <div>
+                                <p className="font-bold text-base" style={{ color: 'var(--color-text-primary)' }}>
+                                    Accounting System Ready!
+                                </p>
+                                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                                    {seedResult.totalAccounts} accounts configured · {seedResult.mappingsCreated > 0
+                                        ? `${seedResult.mappingsCreated} mappings auto-configured`
+                                        : 'All mappings in place'}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Stats Grid */}
+                        <div className="grid grid-cols-3 gap-3">
+                            {[
+                                { label: 'Total Accounts', value: seedResult.totalAccounts, color: '#3b82f6' },
+                                { label: 'Auto-Mapped', value: seedResult.mappingsCreated > 0 ? seedResult.mappingsCreated : '14', color: '#22c55e' },
+                                { label: 'Account Types', value: '5', color: '#a855f7' },
+                            ].map((stat) => (
+                                <div key={stat.label} className="rounded-lg p-3 text-center" style={{
+                                    background: 'var(--color-bg-card)',
+                                    border: '1px solid var(--color-border)',
+                                }}>
+                                    <p className="text-2xl font-bold" style={{ color: stat.color }}>{stat.value}</p>
+                                    <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{stat.label}</p>
+                                </div>
+                            ))}
+                        </div>
                     </div>
-                    <p className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>Chart of Accounts is ready!</p>
-                    <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                        {existingAccounts?.length || DEFAULT_ACCOUNTS.length} accounts are configured. You can manage them from the Accounting module.
-                    </p>
+
+                    {/* Auto-Mapped Accounts — Collapsible */}
+                    <div className="rounded-xl overflow-hidden" style={{
+                        background: 'var(--color-bg-card)',
+                        border: '1px solid var(--color-border)',
+                    }}>
+                        <button
+                            onClick={() => setShowMappingDetails(!showMappingDetails)}
+                            className="w-full flex items-center justify-between px-5 py-3.5 text-left"
+                            style={{ borderBottom: showMappingDetails ? '1px solid var(--color-border)' : 'none' }}
+                        >
+                            <div className="flex items-center gap-2">
+                                <CreditCard size={16} style={{ color: 'var(--color-accent)' }} />
+                                <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                                    Auto-Mapped Payment Accounts
+                                </span>
+                                <span className="text-xs px-2 py-0.5 rounded-full" style={{
+                                    background: 'rgba(34,197,94,0.12)',
+                                    color: '#22c55e',
+                                }}>
+                                    14 mapped
+                                </span>
+                            </div>
+                            {showMappingDetails ? <ChevronUp size={16} style={{ color: 'var(--color-text-muted)' }} /> : <ChevronDown size={16} style={{ color: 'var(--color-text-muted)' }} />}
+                        </button>
+                        {showMappingDetails && (
+                            <div className="px-5 py-4 space-y-2">
+                                {Object.entries(MAPPING_TYPE_LABELS).map(([key, meta]) => {
+                                    const mapped = seedResult.mappings.find((m) => m.mappingType === key);
+                                    const account = seedResult.accounts.find((a) => {
+                                        // Match by the auto-mapping rules
+                                        const codeMap: Record<string, string> = {
+                                            CASH: '1000', BANK: '1010', ACCOUNT_RECEIVABLE: '1200',
+                                            ACCOUNT_PAYABLE: '2000', INVENTORY_ASSET: '1300', COGS_EXPENSE: '5000',
+                                            SALES_REVENUE: '4000', SALES_RETURN: '4100', OUTPUT_TAX: '2100', INPUT_TAX: '1400',
+                                            DISCOUNT_GIVEN: '4200', DISCOUNT_RECEIVED: '5200',
+                                            DAMAGED_GOODS_EXPENSE: '5300', SHRINKAGE_EXPENSE: '5400',
+                                        };
+                                        return a.code === codeMap[key];
+                                    });
+                                    const IconComponent = meta.icon;
+                                    return (
+                                        <div key={key} className="flex items-center gap-3 py-1.5">
+                                            <IconComponent size={14} style={{ color: 'var(--color-accent)' }} />
+                                            <span className="text-xs font-medium w-44" style={{ color: 'var(--color-text-secondary)' }}>
+                                                {meta.label}
+                                            </span>
+                                            <ArrowRight size={12} style={{ color: 'var(--color-text-muted)' }} />
+                                            <span className="text-xs font-mono" style={{ color: 'var(--color-accent)' }}>
+                                                {account?.code || mapped?.code || '—'}
+                                            </span>
+                                            <span className="text-xs" style={{ color: 'var(--color-text-primary)' }}>
+                                                {account?.name || mapped?.name || 'Not mapped'}
+                                            </span>
+                                            <Check size={12} className="ml-auto" style={{ color: '#22c55e' }} />
+                                        </div>
+                                    );
+                                })}
+                                <p className="text-xs pt-2" style={{ color: 'var(--color-text-muted)' }}>
+                                    You can customize mappings anytime from Settings → Accounting.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Chart of Accounts — Collapsible */}
+                    <div className="rounded-xl overflow-hidden" style={{
+                        background: 'var(--color-bg-card)',
+                        border: '1px solid var(--color-border)',
+                    }}>
+                        <button
+                            onClick={() => setShowAccountDetails(!showAccountDetails)}
+                            className="w-full flex items-center justify-between px-5 py-3.5 text-left"
+                            style={{ borderBottom: showAccountDetails ? '1px solid var(--color-border)' : 'none' }}
+                        >
+                            <div className="flex items-center gap-2">
+                                <Landmark size={16} style={{ color: 'var(--color-accent)' }} />
+                                <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                                    Chart of Accounts
+                                </span>
+                                <span className="text-xs px-2 py-0.5 rounded-full" style={{
+                                    background: 'rgba(59,130,246,0.12)',
+                                    color: '#3b82f6',
+                                }}>
+                                    {seedResult.totalAccounts} accounts
+                                </span>
+                            </div>
+                            {showAccountDetails ? <ChevronUp size={16} style={{ color: 'var(--color-text-muted)' }} /> : <ChevronDown size={16} style={{ color: 'var(--color-text-muted)' }} />}
+                        </button>
+                        {showAccountDetails && (
+                            <div className="px-5 py-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {seedResult.accounts
+                                        .sort((a, b) => a.code.localeCompare(b.code))
+                                        .map((acc) => {
+                                            const typeColor = TYPE_COLORS[acc.type] || { bg: 'var(--color-bg-primary)', text: 'var(--color-text-muted)' };
+                                            return (
+                                                <div key={acc.id || acc.code} className="flex items-center gap-2 text-xs rounded-lg px-3 py-2" style={{
+                                                    background: 'var(--color-bg-primary)',
+                                                    border: '1px solid var(--color-border)',
+                                                }}>
+                                                    <span className="font-mono font-bold" style={{ color: 'var(--color-accent)' }}>{acc.code}</span>
+                                                    <span className="flex-1" style={{ color: 'var(--color-text-primary)' }}>{acc.name}</span>
+                                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{
+                                                        background: typeColor.bg,
+                                                        color: typeColor.text,
+                                                    }}>
+                                                        {acc.type}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                </div>
+                                <p className="text-xs pt-3" style={{ color: 'var(--color-text-muted)' }}>
+                                    You can add, edit, or rearrange accounts anytime from the Accounting module.
+                                </p>
+                            </div>
+                        )}
+                    </div>
                 </div>
             ) : (
-                <div className="rounded-xl p-6 space-y-4" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
-                    <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                        We'll create <strong>{DEFAULT_ACCOUNTS.length}</strong> essential accounts covering assets, liabilities, equity, revenue, and expenses.
-                    </p>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {DEFAULT_ACCOUNTS.map((acc) => (
-                            <div key={acc.code} className="flex items-center gap-2 text-xs rounded-lg px-3 py-2" style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)' }}>
-                                <span className="font-mono font-semibold" style={{ color: 'var(--color-accent)' }}>{acc.code}</span>
-                                <span style={{ color: 'var(--color-text-secondary)' }}>{acc.name}</span>
-                            </div>
-                        ))}
+                /* ── INITIAL STATE — One-click setup ── */
+                <div className="rounded-xl p-8 space-y-6 text-center" style={{
+                    background: 'var(--color-bg-card)',
+                    border: '1px solid var(--color-border)',
+                }}>
+                    <div className="w-16 h-16 mx-auto rounded-2xl flex items-center justify-center" style={{
+                        background: 'linear-gradient(135deg, #3b82f6, #6366f1)',
+                    }}>
+                        <Zap size={32} className="text-white" />
                     </div>
-                    <div className="flex items-center gap-3 pt-2">
-                        <button
-                            onClick={seedAccounts}
-                            disabled={seedingAccounts}
-                            className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-                        >
-                            {seedingAccounts ? <Loader2 size={16} className="animate-spin" /> : <Landmark size={16} />}
-                            {seedingAccounts ? 'Creating...' : 'Create Default Accounts'}
-                        </button>
-                        <button
-                            onClick={() => setStep((s) => s + 1)}
-                            className="px-4 py-2.5 rounded-lg text-sm font-medium"
-                            style={{ color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}
-                        >
-                            Skip for now
-                        </button>
-                    </div>
-                </div>
-            )}
-        </div>
-    );
 
-    const StepMappings = (
-        <div className="space-y-5">
-            <div>
-                <h3 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>Payment & Account Mapping</h3>
-                <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                    Map core accounts so the system knows which accounts to use for sales, purchases, and payments. You can skip this and configure later.
-                </p>
-            </div>
-            <div className="rounded-xl p-6 space-y-4" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
-                {existingAccounts && existingAccounts.length > 0 ? (
-                    <div className="space-y-3">
-                        {MAPPING_TYPES.map((mt) => (
-                            <div key={mt.key} className="flex items-center gap-4">
-                                <div className="flex items-center gap-2 w-48 shrink-0">
-                                    <mt.icon size={16} style={{ color: 'var(--color-accent)' }} />
-                                    <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{mt.label}</span>
-                                </div>
-                                                                <AppDropdown
-                                    value={mappings[mt.key] || ''}
-                                    onChange={(v) => setMappings(prev => ({ ...prev, [mt.key]: v }))}
-                                    options={[{ value: '', label: '— Select account —' }, ...(existingAccounts || []).map((acc: any) => ({ value: acc.id, label: `${acc.code} – ${acc.name}` }))]}
-                                    placeholder='— Select account —'
-                                    searchable
-                                />
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="text-center py-6 space-y-2">
-                        <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                            No accounts found. Please go back and seed the Chart of Accounts first, or skip this step.
+                    <div className="space-y-2">
+                        <h4 className="text-lg font-bold" style={{ color: 'var(--color-text-primary)' }}>
+                            Smart Account Setup
+                        </h4>
+                        <p className="text-sm max-w-md mx-auto" style={{ color: 'var(--color-text-secondary)' }}>
+                            One click creates <strong>18 essential accounts</strong> covering assets, liabilities, equity, revenue, and expenses — then <strong>automatically maps 14 payment types</strong> so your accounting system is ready to use instantly.
                         </p>
                     </div>
-                )}
-            </div>
+
+                    {/* Preview what will be created */}
+                    <div className="grid grid-cols-5 gap-2 max-w-md mx-auto">
+                        {([
+                            { type: 'ASSET' as AccountType, count: 5 },
+                            { type: 'LIABILITY' as AccountType, count: 2 },
+                            { type: 'EQUITY' as AccountType, count: 2 },
+                            { type: 'REVENUE' as AccountType, count: 3 },
+                            { type: 'EXPENSE' as AccountType, count: 6 },
+                        ]).map((item) => {
+                            const typeColor = TYPE_COLORS[item.type];
+                            return (
+                                <div key={item.type} className="rounded-lg p-2 text-center" style={{
+                                    background: typeColor.bg,
+                                    border: `1px solid ${typeColor.text}25`,
+                                }}>
+                                    <p className="text-lg font-bold" style={{ color: typeColor.text }}>{item.count}</p>
+                                    <p className="text-[10px] font-medium" style={{ color: typeColor.text }}>{item.type}</p>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div className="flex items-center justify-center gap-3 pt-2">
+                        <button
+                            onClick={() => seedMut.mutate()}
+                            disabled={seedMut.isPending}
+                            className="flex items-center gap-2.5 px-8 py-3 rounded-xl text-sm font-semibold text-white shadow-lg transition-all hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:hover:scale-100"
+                            style={{
+                                background: 'linear-gradient(135deg, #3b82f6, #6366f1)',
+                            }}
+                        >
+                            {seedMut.isPending ? (
+                                <><Loader2 size={18} className="animate-spin" /> Setting up...</>
+                            ) : (
+                                <><Zap size={18} /> Set Up Everything</>
+                            )}
+                        </button>
+                    </div>
+
+                    <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        <Settings2 size={11} className="inline mr-1" />
+                        You can customize everything later from the Accounting module
+                    </p>
+                </div>
+            )}
         </div>
     );
 
@@ -583,7 +726,12 @@ export default function SetupWizard() {
                         <h4 className="font-semibold text-sm" style={{ color: 'var(--color-text-primary)' }}>Chart of Accounts</h4>
                     </div>
                     <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                        {seededAccounts ? `${existingAccounts?.length || DEFAULT_ACCOUNTS.length} accounts configured` : 'Skipped (can configure later)'}
+                        {seedResult ? (
+                            <span className="flex items-center gap-1.5">
+                                <Check size={12} style={{ color: '#22c55e' }} />
+                                {seedResult.totalAccounts} accounts configured
+                            </span>
+                        ) : 'Not configured (can set up later)'}
                     </p>
                 </div>
                 <div className="rounded-xl p-5 space-y-3" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
@@ -592,14 +740,19 @@ export default function SetupWizard() {
                         <h4 className="font-semibold text-sm" style={{ color: 'var(--color-text-primary)' }}>Account Mappings</h4>
                     </div>
                     <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                        {Object.values(mappings).filter(Boolean).length} of {MAPPING_TYPES.length} mappings configured
+                        {seedResult ? (
+                            <span className="flex items-center gap-1.5">
+                                <Check size={12} style={{ color: '#22c55e' }} />
+                                14 payment mappings auto-configured
+                            </span>
+                        ) : 'Not configured (can set up later)'}
                     </p>
                 </div>
             </div>
         </div>
     );
 
-    const stepContent = [StepWelcome, StepProfile, StepRegional, StepAccounts, StepMappings, StepReview];
+    const stepContent = [StepWelcome, StepProfile, StepRegional, StepAccounts, StepReview];
 
     // ──────────────────────────────────────────────────────────────
     // Render

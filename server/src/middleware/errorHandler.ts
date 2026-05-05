@@ -29,6 +29,34 @@ function formatValidationErrors(err: ZodError): ErrorDetails[] {
     }));
 }
 
+function formatFieldLabel(field: string): string {
+    return field
+        .replace(/Ids$/, '')
+        .replace(/Id$/, '')
+        .replace(/([A-Z])/g, ' $1')
+        .trim()
+        .toLowerCase();
+}
+
+function getPrismaErrorDetails(code: string, meta: any): ErrorDetails[] | undefined {
+    if (code !== 'P2002') return undefined;
+
+    const rawTargets = Array.isArray(meta?.target)
+        ? (meta.target as string[])
+        : typeof meta?.target === 'string'
+            ? [meta.target]
+            : [];
+
+    const targets = rawTargets.filter((target) => target && target !== 'companyId');
+    if (targets.length === 0) return undefined;
+
+    return targets.map((field) => ({
+        code,
+        field,
+        message: `This ${formatFieldLabel(field)} is already in use.`,
+    }));
+}
+
 /**
  * Get user-friendly error message for Prisma errors
  */
@@ -214,6 +242,7 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
     // Prisma errors
     if (err instanceof Prisma.PrismaClientKnownRequestError) {
         const { message, userMessage } = getPrismaErrorMessage(err.code, err.meta);
+        const details = getPrismaErrorDetails(err.code, err.meta);
 
         // Log full error internally
         logger.debug(`Prisma error ${err.code}:`, {
@@ -226,7 +255,7 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
             res,
             'DATABASE_ERROR',
             isProduction ? userMessage : message,
-            undefined,
+            details,
             400
         );
         return;

@@ -237,6 +237,7 @@ export interface TenantUser {
     email: string;
     role: string;
     isActive: boolean;
+    isSuperAdmin?: boolean;
     canImpersonate?: boolean;
     lastLoginAt: string | null;
     createdAt: string;

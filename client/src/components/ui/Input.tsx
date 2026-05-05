@@ -23,6 +23,14 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         },
         ref
     ) => {
+        // Ensure critical autofill attributes are passed through
+        const inputProps = {
+            ...props,
+            type,
+            ref,
+            disabled,
+        };
+
         return (
             <div className={clsx('relative', fullWidth && 'w-full')}>
                 {icon && iconPosition === 'left' && (
@@ -31,8 +39,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
                     </div>
                 )}
                 <input
-                    type={type}
-                    ref={ref}
+                    {...inputProps}
                     className={clsx(
                         // Base styles
                         'rounded-lg',
@@ -53,8 +60,6 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
                         // Custom className
                         className
                     )}
-                    disabled={disabled}
-                    {...props}
                 />
                 {icon && iconPosition === 'right' && (
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary">

@@ -16,6 +16,7 @@ import {
     CustomerLedger,
     Customers,
     Dashboard,
+    ForgotPassword,
     GeneralLedger,
     GlobalStrings,
     GoodsReceiptNotes,
@@ -48,6 +49,7 @@ import {
     PurchasePaymentForm,
     PurchasePayments,
     PurchaseReports,
+    ResetPassword,
     PurchaseRequisitions,
     ExpensePurchaseList,
     ExpensePurchaseForm,
@@ -128,6 +130,7 @@ import {
     BankReconciliation,
     ARAging,
     APAging,
+    SetupWizard,
 } from './pages/lazy';
 import ModulePlaceholder from './pages/placeholders/ModulePlaceholder';
 import AppLoader from './components/ui/AppLoader';
@@ -190,29 +193,36 @@ function PermissionRoute({
 
 function LandingRoute() {
     const hasPermission = useAuthStore((s) => s.hasPermission);
+    const isModuleEnabled = useAuthStore((s) => s.isModuleEnabled);
 
-    if (hasPermission('dashboard.view')) {
+    // Check dashboard with module enablement
+    if (hasPermission('dashboard.view') && isModuleEnabled('reports')) {
         return <Dashboard />;
     }
 
+    // Fallback routes with module enablement checks
     const fallbackPath =
         ([
-            ['sales.view', '/sales/dashboard'],
-            ['sales.cashView', '/sales/cash'],
-            ['pos.terminalOnly', '/pos'],
-            ['pos.access', '/pos'],
-            ['inventory.view', '/inventory/stock'],
-            ['product.view', '/items'],
-            ['production.view', '/production/orders'],
-            ['bom.view', '/production/bom'],
-            ['crm.view', '/customers'],
-            ['purchase.view', '/purchases'],
-            ['accounting.view', '/accounting'],
-            ['reports.view', '/reports'],
-            ['admin.manageUsers', '/users'],
-            ['admin.manageRoles', '/roles'],
-            ['admin.manageSettings', '/settings'],
-        ] as const).find(([perm]) => hasPermission(perm))?.[1] || null;
+            ['sales.view', '/sales/dashboard', 'sales'],
+            ['sales.cashView', '/sales/cash', 'sales'],
+            ['pos.terminalOnly', '/pos', 'pos'],
+            ['pos.access', '/pos', 'pos'],
+            ['inventory.view', '/inventory/stock', 'inventory'],
+            ['product.view', '/items', 'items'],
+            ['production.view', '/production/orders', 'production'],
+            ['bom.view', '/production/bom', 'production'],
+            ['crm.view', '/customers', 'crm'],
+            ['purchase.view', '/purchases', 'purchases'],
+            ['accounting.view', '/accounting', 'accounting'],
+            ['reports.view', '/reports', 'reports'],
+            ['admin.manageUsers', '/users', null],
+            ['admin.manageRoles', '/roles', null],
+            ['admin.manageSettings', '/settings', null],
+        ] as const).find(([perm, _, mod]) => {
+            if (!hasPermission(perm)) return false;
+            if (mod && !isModuleEnabled(mod as any)) return false;
+            return true;
+        })?.[1] || null;
 
     if (fallbackPath) {
         return <Navigate to={fallbackPath} replace />;
@@ -221,7 +231,7 @@ function LandingRoute() {
     return (
         <ModulePlaceholder
             title="No accessible module"
-            description="Your role has no module access. Contact administrator."
+            description="Your role has no module access or modules are not enabled. Contact administrator."
         />
     );
 }
@@ -479,6 +489,9 @@ export default function App() {
             <Suspense fallback={<AppLoader />}>
                 <Routes>
                     <Route path="/login" element={<Login />} />
+                    <Route path="/forgot-password" element={<ForgotPassword />} />
+                    <Route path="/reset-password" element={<ResetPassword />} />
+                    <Route path="/setup-wizard" element={<ProtectedRoute><SetupWizard /></ProtectedRoute>} />
                     <Route
                         path="/*"
                         element={

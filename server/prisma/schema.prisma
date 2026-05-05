@@ -381,6 +381,13 @@ model User {
   isActive     Boolean   @default(true)
   refreshToken String?
   lastLoginAt  DateTime?
+  // Security fields
+  failedLoginAttempts Int      @default(0)
+  lockedUntil         DateTime?
+  forcePasswordChange Boolean   @default(false)
+  passwordResetToken  String?
+  passwordResetExpiresAt DateTime?
+  deletedAt           DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

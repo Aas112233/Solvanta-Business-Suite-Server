@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
-import { X, Save, Loader2, Building2 } from 'lucide-react';
+import { X, Save, Loader2, Building2, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface WarehouseFormModalProps {
@@ -20,6 +20,7 @@ export default function WarehouseFormModal({ warehouse, isOpen, onClose, onSucce
         phone: '',
         isActive: true
     });
+    const [errors, setErrors] = useState<Record<string, string>>({});
 
     useEffect(() => {
         if (warehouse) {
@@ -30,8 +31,18 @@ export default function WarehouseFormModal({ warehouse, isOpen, onClose, onSucce
                 phone: warehouse.phone || '',
                 isActive: warehouse.isActive ?? true
             });
+        } else {
+            // Auto-generate code for new warehouse
+            const generatedCode = `WH-${Date.now().toString().slice(-6)}`;
+            setFormData({
+                name: '',
+                code: generatedCode,
+                address: '',
+                phone: '',
+                isActive: true
+            });
         }
-    }, [warehouse]);
+    }, [warehouse, isOpen]);
 
     const mutation = useMutation({
         mutationFn: (data: any) => {
@@ -46,12 +57,28 @@ export default function WarehouseFormModal({ warehouse, isOpen, onClose, onSucce
             onSuccess();
         },
         onError: (err: any) => {
-            toast.error(err.response?.data?.error?.message || 'Something went wrong');
+            const errorMessage = err.response?.data?.error?.message || 'Something went wrong';
+
+            // Check if it's a validation error with field details
+            if (err.response?.data?.error?.details) {
+                const validationErrors: Record<string, string> = {};
+                err.response.data.error.details.forEach((detail: any) => {
+                    const field = detail.path?.[0] || detail.field;
+                    if (field) {
+                        validationErrors[field] = detail.message;
+                    }
+                });
+                setErrors(validationErrors);
+                toast.error('Please fix the errors below');
+            } else {
+                toast.error(errorMessage);
+            }
         }
     });
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        setErrors({}); // Clear previous errors
         mutation.mutate(formData);
     };
 
@@ -82,10 +109,22 @@ export default function WarehouseFormModal({ warehouse, isOpen, onClose, onSucce
                                 required
                                 type="text"
                                 value={formData.name}
-                                onChange={e => setFormData({ ...formData, name: e.target.value })}
-                                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none text-sm bg-gray-50/50"
+                                onChange={e => {
+                                    setFormData({ ...formData, name: e.target.value });
+                                    if (errors.name) setErrors({ ...errors, name: '' });
+                                }}
+                                className={`w-full px-4 py-2.5 rounded-xl border transition-all outline-none text-sm bg-gray-50/50 ${errors.name
+                                    ? 'border-red-500 focus:ring-2 focus:ring-red-500/20 focus:border-red-500'
+                                    : 'border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
+                                    }`}
                                 placeholder="e.g. Main Warehouse"
                             />
+                            {errors.name && (
+                                <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                                    <AlertCircle size={12} />
+                                    {errors.name}
+                                </p>
+                            )}
                         </div>
                         <div className="col-span-2 sm:col-span-1 space-y-1.5">
                             <label className="text-sm font-semibold text-gray-700">Warehouse Code</label>
@@ -93,10 +132,17 @@ export default function WarehouseFormModal({ warehouse, isOpen, onClose, onSucce
                                 required
                                 type="text"
                                 value={formData.code}
-                                onChange={e => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
-                                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none text-sm bg-gray-50/50"
-                                placeholder="e.g. WH-001"
+                                readOnly
+                                className={`w-full px-4 py-2.5 rounded-xl border bg-gray-100 text-gray-600 cursor-not-allowed text-sm ${errors.code ? 'border-red-500' : 'border-gray-200'
+                                    }`}
+                                title="Warehouse code is auto-generated and cannot be edited"
                             />
+                            {errors.code && (
+                                <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                                    <AlertCircle size={12} />
+                                    {errors.code}
+                                </p>
+                            )}
                         </div>
                     </div>
 
@@ -105,10 +151,22 @@ export default function WarehouseFormModal({ warehouse, isOpen, onClose, onSucce
                         <input
                             type="text"
                             value={formData.phone}
-                            onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                            className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none text-sm bg-gray-50/50"
+                            onChange={e => {
+                                setFormData({ ...formData, phone: e.target.value });
+                                if (errors.phone) setErrors({ ...errors, phone: '' });
+                            }}
+                            className={`w-full px-4 py-2.5 rounded-xl border transition-all outline-none text-sm bg-gray-50/50 ${errors.phone
+                                    ? 'border-red-500 focus:ring-2 focus:ring-red-500/20 focus:border-red-500'
+                                    : 'border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
+                                }`}
                             placeholder="e.g. +1 234 567 890"
                         />
+                        {errors.phone && (
+                            <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                                <AlertCircle size={12} />
+                                {errors.phone}
+                            </p>
+                        )}
                     </div>
 
                     <div className="space-y-1.5">
@@ -116,10 +174,22 @@ export default function WarehouseFormModal({ warehouse, isOpen, onClose, onSucce
                         <textarea
                             rows={3}
                             value={formData.address}
-                            onChange={e => setFormData({ ...formData, address: e.target.value })}
-                            className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none text-sm bg-gray-50/50 resize-none"
+                            onChange={e => {
+                                setFormData({ ...formData, address: e.target.value });
+                                if (errors.address) setErrors({ ...errors, address: '' });
+                            }}
+                            className={`w-full px-4 py-2.5 rounded-xl border transition-all outline-none text-sm bg-gray-50/50 resize-none ${errors.address
+                                    ? 'border-red-500 focus:ring-2 focus:ring-red-500/20 focus:border-red-500'
+                                    : 'border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
+                                }`}
                             placeholder="Full address of the warehouse"
                         />
+                        {errors.address && (
+                            <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                                <AlertCircle size={12} />
+                                {errors.address}
+                            </p>
+                        )}
                     </div>
 
                     <div className="flex items-center gap-3 p-4 bg-blue-50/50 rounded-xl border border-blue-100">

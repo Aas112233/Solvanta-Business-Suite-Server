@@ -49,13 +49,13 @@ export default function SuperAdminDashboard() {
 
     return (
         <div className="space-y-6">
-            <section className="rounded-2xl border border-slate-200 bg-white p-6">
+            <section className="rounded-2xl border border-border bg-background-card p-6">
                 <div className="flex items-center justify-between gap-4">
                     <div>
-                        <h2 className="text-xl font-bold text-slate-900">Control Tower Dashboard</h2>
-                        <p className="mt-1 text-sm text-slate-600">Platform health, tenant risk, adoption, and revenue signals in one view.</p>
+                        <h2 className="text-xl font-bold text-text-primary">Control Tower Dashboard</h2>
+                        <p className="mt-1 text-sm text-text-secondary">Platform health, tenant risk, adoption, and revenue signals in one view.</p>
                     </div>
-                    <div className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
+                    <div className="inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white">
                         <Shield size={14} />
                         Owner Mode
                     </div>
@@ -117,11 +117,11 @@ export default function SuperAdminDashboard() {
                             <Link
                                 key={tenant.id}
                                 to={`/super-admin/companies/${tenant.id}`}
-                                className="flex items-center justify-between rounded-xl border border-slate-200 p-3 transition hover:border-slate-300 hover:bg-slate-50"
+                                className="flex items-center justify-between rounded-xl border border-border p-3 transition hover:border-border-strong hover:bg-background-subtle"
                             >
                                 <div>
-                                    <p className="text-sm font-semibold text-slate-900">{tenant.name}</p>
-                                    <p className="mt-1 text-xs text-slate-500">
+                                    <p className="text-sm font-semibold text-text-primary">{tenant.name}</p>
+                                    <p className="mt-1 text-xs text-text-tertiary">
                                         Health {tenant.healthScore}/100 • {tenant.limitState} limits • {tenant.failedPayments} failed payments
                                     </p>
                                 </div>
@@ -131,25 +131,25 @@ export default function SuperAdminDashboard() {
                             </Link>
                         ))}
                         {!isLoading && (data?.attentionTenants ?? []).length === 0 && (
-                            <p className="text-sm text-slate-500">No urgent tenant follow-up items right now.</p>
+                            <p className="text-sm text-text-tertiary">No urgent tenant follow-up items right now.</p>
                         )}
                     </div>
                 </ChartCard>
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h3 className="text-lg font-semibold text-slate-900">System Health</h3>
-                <p className="text-xs text-slate-500">Current platform service indicators and governance checks.</p>
+            <section className="rounded-2xl border border-border bg-background-card p-5">
+                <h3 className="text-lg font-semibold text-text-primary">System Health</h3>
+                <p className="text-xs text-text-tertiary">Current platform service indicators and governance checks.</p>
                 <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                     {(data?.health ?? []).map((item) => (
-                        <div key={item.id} className="rounded-xl border border-slate-100 p-3">
+                        <div key={item.id} className="rounded-xl border border-border-subtle p-3">
                             <div className="flex items-center justify-between">
-                                <p className="text-sm font-medium text-slate-900">{item.label}</p>
+                                <p className="text-sm font-medium text-text-primary">{item.label}</p>
                                 <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusClassMap[item.status]}`}>
                                     {item.status}
                                 </span>
                             </div>
-                            <p className="mt-1 text-xs text-slate-600">{item.value}</p>
+                            <p className="mt-1 text-xs text-text-secondary">{item.value}</p>
                         </div>
                     ))}
                 </div>
@@ -160,12 +160,12 @@ export default function SuperAdminDashboard() {
 
 function MetricCard({ icon: Icon, label, value }: { icon: typeof Building2; label: string; value: string }) {
     return (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <div className="inline-flex rounded-lg bg-white p-2 text-slate-700">
+        <div className="rounded-xl border border-border bg-background-subtle p-3">
+            <div className="inline-flex rounded-lg bg-background-card p-2 text-text-secondary">
                 <Icon size={16} />
             </div>
-            <p className="mt-2 text-xs uppercase tracking-wide text-slate-500">{label}</p>
-            <p className="text-lg font-bold text-slate-900">{value}</p>
+            <p className="mt-2 text-xs uppercase tracking-wide text-text-tertiary">{label}</p>
+            <p className="text-lg font-bold text-text-primary">{value}</p>
         </div>
     );
 }
@@ -182,9 +182,9 @@ function ChartCard({
     children: ReactNode;
 }) {
     return (
-        <section className={`rounded-2xl border border-slate-200 bg-white p-5 ${className}`}>
-            <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
-            <p className="text-xs text-slate-500">{subtitle}</p>
+        <section className={`rounded-2xl border border-border bg-background-card p-5 ${className}`}>
+            <h3 className="text-lg font-semibold text-text-primary">{title}</h3>
+            <p className="text-xs text-text-tertiary">{subtitle}</p>
             <div className="mt-4">{children}</div>
         </section>
     );

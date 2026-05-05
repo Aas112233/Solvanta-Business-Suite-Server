@@ -1958,6 +1958,7 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
         }
 
         // 1. Fetch data in parallel for speed
+        // Split into batches to avoid overwhelming MongoDB connection
         const [
             todaySales,
             totalProducts,
@@ -1965,23 +1966,30 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
             lowStockCount,
             recentInvoices,
             financeAgg,
-            salesRaw,
-            purchasesRaw,
-            inventoryAnalytics,
-            branches,
-            posSessionsRaw,
-            allInvoicesForInsights,
-            expensesRaw,
         ] = await Promise.all([
             // Summary Cards
             prisma.pOSInvoice.aggregate({
                 where: { ...baseWhere, createdAt: { gte: today }, status: { not: 'VOID' } },
                 _sum: { grandTotal: true },
                 _count: true,
+            }).catch((err) => {
+                console.error('[Reports] Error fetching today sales:', err.message);
+                return { _sum: { grandTotal: 0 }, _count: 0 };
             }),
-            countActiveProductsRaw(companyId),
-            countActiveCustomersRaw(companyId),
-            prisma.inventoryStock.count({ where: { ...baseWhere, qtyOnHand: { lte: 10, gt: 0 } } }),
+            countActiveProductsRaw(companyId).catch((err) => {
+                console.error('[Reports] Error counting products:', err.message);
+                return { count: 0 };
+            }),
+            countActiveCustomersRaw(companyId).catch((err) => {
+                console.error('[Reports] Error counting customers:', err.message);
+                return { count: 0 };
+            }),
+            prisma.inventoryStock.count({
+                where: { ...baseWhere, qtyOnHand: { lte: 10, gt: 0 } }
+            }).catch((err) => {
+                console.error('[Reports] Error counting low stock:', err.message);
+                return 0;
+            }),
             prisma.pOSInvoice.findMany({
                 where: { ...baseWhere },
                 include: {
@@ -1990,14 +1998,33 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
                 },
                 orderBy: { createdAt: 'desc' },
                 take: 5,
+            }).catch((err) => {
+                console.error('[Reports] Error fetching recent invoices:', err.message);
+                return [];
             }),
             // Consolidated Totals (Sales & Purchases)
             Promise.all([
-                prisma.pOSInvoice.aggregate({ where: { ...baseWhere, createdAt: dateFilter, isPosted: true, status: { not: 'VOID' } }, _sum: { grandTotal: true, taxTotal: true } }),
-                prisma.purchaseInvoice.aggregate({ where: { ...baseWhere, createdAt: dateFilter }, _sum: { grandTotal: true, taxTotal: true } })
+                prisma.pOSInvoice.aggregate({
+                    where: { ...baseWhere, createdAt: dateFilter, isPosted: true, status: { not: 'VOID' } },
+                    _sum: { grandTotal: true, taxTotal: true }
+                }).catch((err) => {
+                    console.error('[Reports] Error aggregating sales:', err.message);
+                    return { _sum: { grandTotal: 0, taxTotal: 0 } };
+                }),
+                prisma.purchaseInvoice.aggregate({
+                    where: { ...baseWhere, createdAt: dateFilter },
+                    _sum: { grandTotal: true, taxTotal: true }
+                }).catch((err) => {
+                    console.error('[Reports] Error aggregating purchases:', err.message);
+                    return { _sum: { grandTotal: 0, taxTotal: 0 } };
+                })
             ]),
-            // Sales Trend Data — include items count & tax for insights calculations
-            prisma.pOSInvoice.findMany({
+        ]);
+
+        // 2. Fetch trend data separately to avoid connection overload
+        let salesRaw = [];
+        try {
+            salesRaw = await prisma.pOSInvoice.findMany({
                 where: { ...baseWhere, isPosted: true, status: { not: 'VOID' }, createdAt: dateFilter },
                 select: {
                     createdAt: true, grandTotal: true, taxTotal: true,
@@ -2005,36 +2032,76 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
                     customer: { select: { name: true } },
                     items: { select: { qty: true } },
                 },
-            }),
-            // Purchases raw for trend + top suppliers
-            fetchDashboardPurchasesRaw({
+            });
+        } catch (err) {
+            console.error('[Reports] Error fetching sales trend:', err.message);
+            salesRaw = [];
+        }
+        // 3. Fetch remaining data sequentially to avoid connection overload
+        let purchasesRaw = [];
+        let inventoryAnalytics = [];
+        let branches = [];
+        let posSessionsRaw = [];
+        let allInvoicesForInsights = [];
+        let expensesRaw = [];
+
+        try {
+            purchasesRaw = await fetchDashboardPurchasesRaw({
                 companyId,
                 branchFilter: baseWhere.branchId,
                 from: filterStart,
                 to: filterEnd,
-            }),
-            // Inventory Valuation
-            prisma.inventoryStock.findMany({
-                where: { ...baseWhere, qtyOnHand: { gt: 0 } },
-                include: { product: { include: { category: { select: { name: true } } } } }
-            }),
-            prisma.branch.findMany({ where: { companyId }, select: { id: true, name: true, code: true } }),
-            // POS Shifts for variance
-            prisma.pOSShift.findMany({
-                where: { companyId, createdAt: dateFilter },
-                select: { variance: true },
-            }),
-            // ALL non-void invoices for AOV / Items-per-order / returning customers
-            prisma.pOSInvoice.findMany({
-                where: { ...baseWhere, createdAt: dateFilter, isPosted: true, status: { not: 'VOID' } },
-                select: { grandTotal: true, customerId: true, items: { select: { qty: true } } },
-            }),
-            // Expenses
-            prisma.expense.findMany({
-                where: { companyId, createdAt: dateFilter },
-                select: { amount: true, category: true, createdAt: true },
-            }),
-        ]);
+            });
+        } catch (err) {
+            console.error('[Reports] Error fetching purchases:', err.message);
+            purchasesRaw = { invoices: [], suppliers: [] };
+        }
+
+        try {
+            [inventoryAnalytics, branches, posSessionsRaw, allInvoicesForInsights, expensesRaw] = await Promise.all([
+                // Inventory Valuation
+                prisma.inventoryStock.findMany({
+                    where: { ...baseWhere, qtyOnHand: { gt: 0 } },
+                    include: { product: { include: { category: { select: { name: true } } } } }
+                }).catch((err) => {
+                    console.error('[Reports] Error fetching inventory:', err.message);
+                    return [];
+                }),
+                prisma.branch.findMany({
+                    where: { companyId },
+                    select: { id: true, name: true, code: true }
+                }).catch((err) => {
+                    console.error('[Reports] Error fetching branches:', err.message);
+                    return [];
+                }),
+                // POS Shifts for variance
+                prisma.pOSShift.findMany({
+                    where: { companyId, createdAt: dateFilter },
+                    select: { variance: true },
+                }).catch((err) => {
+                    console.error('[Reports] Error fetching POS shifts:', err.message);
+                    return [];
+                }),
+                // ALL non-void invoices for AOV / Items-per-order / returning customers
+                prisma.pOSInvoice.findMany({
+                    where: { ...baseWhere, createdAt: dateFilter, isPosted: true, status: { not: 'VOID' } },
+                    select: { grandTotal: true, customerId: true, items: { select: { qty: true } } },
+                }).catch((err) => {
+                    console.error('[Reports] Error fetching all invoices:', err.message);
+                    return [];
+                }),
+                // Expenses
+                prisma.expense.findMany({
+                    where: { companyId, createdAt: dateFilter },
+                    select: { amount: true, category: true, createdAt: true },
+                }).catch((err) => {
+                    console.error('[Reports] Error fetching expenses:', err.message);
+                    return [];
+                }),
+            ]);
+        } catch (err) {
+            console.error('[Reports] Error in batch fetching:', err.message);
+        }
 
         // 2. Post-process trend data
         const trendKeys: { key: string, label: string }[] = [];

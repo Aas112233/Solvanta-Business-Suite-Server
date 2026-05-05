@@ -23,11 +23,11 @@ export default function TenantStatusDialog({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
-                <h3 className="text-lg font-bold text-slate-900">
+            <div className="w-full max-w-lg rounded-2xl bg-background-card p-5 shadow-xl">
+                <h3 className="text-lg font-bold text-text-primary">
                     {isSuspending ? 'Suspend Tenant' : 'Reactivate Tenant'}
                 </h3>
-                <p className="mt-2 text-sm text-slate-600">
+                <p className="mt-2 text-sm text-text-secondary">
                     <span className="font-semibold">{tenantName}</span>{' '}
                     {isSuspending
                         ? 'will be blocked from logging in and using the platform.'
@@ -45,7 +45,7 @@ export default function TenantStatusDialog({
 
                 {isSuspending && (
                     <div className="mt-4">
-                        <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                        <label className="text-xs font-medium uppercase tracking-wide text-text-tertiary">
                             Suspension Reason
                         </label>
                         <textarea
@@ -53,7 +53,7 @@ export default function TenantStatusDialog({
                             value={reason}
                             onChange={(e) => onReasonChange(e.target.value)}
                             placeholder="Explain why this tenant is being suspended"
-                            className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
+                            className="mt-2 w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-border-strong"
                         />
                     </div>
                 )}
@@ -62,7 +62,7 @@ export default function TenantStatusDialog({
                     <button
                         type="button"
                         onClick={onClose}
-                        className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                        className="rounded-lg px-4 py-2 text-sm font-medium text-text-secondary hover:bg-background-subtle"
                     >
                         Cancel
                     </button>

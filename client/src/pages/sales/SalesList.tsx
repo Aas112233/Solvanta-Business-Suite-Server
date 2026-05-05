@@ -71,8 +71,8 @@ export default function SalesList() {
 
     // Filter inputs (not applied yet)
     const [dateRangeInput, setDateRangeInput] = useState({
-        startDate: new Date().toLocaleDateString('en-CA'),
-        endDate: new Date().toLocaleDateString('en-CA')
+        startDate: '',
+        endDate: ''
     });
     const [searchInput, setSearchInput] = useState('');
     const [statusInput, setStatusInput] = useState('');
@@ -80,8 +80,8 @@ export default function SalesList() {
     // Applied queries
     const [queryParams, setQueryParams] = useState({
         search: '',
-        startDate: new Date().toLocaleDateString('en-CA'),
-        endDate: new Date().toLocaleDateString('en-CA'),
+        startDate: '',
+        endDate: '',
         status: ''
     });
 

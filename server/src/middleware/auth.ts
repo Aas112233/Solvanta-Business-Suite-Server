@@ -242,9 +242,8 @@ export function requirePermission(...permissions: Permission[]) {
         const hasAll = permissions.every((p) => userPerms.includes(p));
 
         if (!hasAll) {
-            console.error(`[Auth Debug] 403 Forbidden. User: ${req.user.email}, Role: ${req.user.roleId}`);
-            console.error(`[Auth Debug] Required Permissions: ${permissions.join(', ')}`);
-            console.error(`[Auth Debug] User Permissions: ${userPerms.slice(0, 10).join(', ')}... (Total: ${userPerms.length})`);
+            // Log only minimal info in production - avoid leaking sensitive permissions
+            console.error(`[Auth] 403 Forbidden for user ${req.user.email}`);
             next(AppError.forbidden(`Missing permissions: ${permissions.join(', ')}`));
             return;
         }

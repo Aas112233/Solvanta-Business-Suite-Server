@@ -101,6 +101,118 @@ companyRoutes.get('/me/setup-status', async (req, res, next) => {
     } catch (error) { next(error); }
 });
 
+// ── Default Chart of Accounts + Auto-Mappings ────────────────────────
+const DEFAULT_SEED_ACCOUNTS = [
+    { code: '1000', name: 'Cash', type: 'ASSET' as const },
+    { code: '1010', name: 'Bank', type: 'ASSET' as const },
+    { code: '1200', name: 'Accounts Receivable', type: 'ASSET' as const },
+    { code: '1300', name: 'Inventory Asset', type: 'ASSET' as const },
+    { code: '1400', name: 'Input Tax (VAT)', type: 'ASSET' as const },
+    { code: '2000', name: 'Accounts Payable', type: 'LIABILITY' as const },
+    { code: '2100', name: 'Output Tax (VAT)', type: 'LIABILITY' as const },
+    { code: '3000', name: 'Owner Equity', type: 'EQUITY' as const },
+    { code: '3100', name: 'Retained Earnings', type: 'EQUITY' as const },
+    { code: '4000', name: 'Sales Revenue', type: 'REVENUE' as const },
+    { code: '4100', name: 'Sales Returns', type: 'REVENUE' as const },
+    { code: '4200', name: 'Discount Given', type: 'REVENUE' as const },
+    { code: '5000', name: 'Cost of Goods Sold (COGS)', type: 'EXPENSE' as const },
+    { code: '5100', name: 'Purchase Returns', type: 'EXPENSE' as const },
+    { code: '5200', name: 'Discount Received', type: 'EXPENSE' as const },
+    { code: '5300', name: 'Damaged Goods', type: 'EXPENSE' as const },
+    { code: '5400', name: 'Shrinkage', type: 'EXPENSE' as const },
+    { code: '6000', name: 'General Expenses', type: 'EXPENSE' as const },
+];
+
+// Maps code → mapping type for auto-mapping
+const AUTO_MAPPING_RULES = {
+    '1000': 'CASH',
+    '1010': 'BANK',
+    '1200': 'ACCOUNT_RECEIVABLE',
+    '1300': 'INVENTORY_ASSET',
+    '1400': 'INPUT_TAX',
+    '2000': 'ACCOUNT_PAYABLE',
+    '2100': 'OUTPUT_TAX',
+    '4000': 'SALES_REVENUE',
+    '4100': 'SALES_RETURN',
+    '5000': 'COGS_EXPENSE',
+    '5200': 'DISCOUNT_RECEIVED',
+    '4200': 'DISCOUNT_GIVEN',
+    '5300': 'DAMAGED_GOODS_EXPENSE',
+    '5400': 'SHRINKAGE_EXPENSE',
+} as const;
+
+// POST /companies/me/seed-accounts — create default accounts + auto-map in one transaction
+companyRoutes.post('/me/seed-accounts', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), async (req, res, next) => {
+    try {
+        const companyId = req.user!.companyId;
+
+        const result = await prisma.$transaction(async (tx) => {
+            // 1. Check which accounts already exist
+            const existingAccounts = await tx.account.findMany({
+                where: { companyId },
+                select: { id: true, code: true },
+            });
+            const existingCodes = new Set(existingAccounts.map((a) => a.code));
+
+            // 2. Create accounts that don't already exist
+            const toCreate = DEFAULT_SEED_ACCOUNTS.filter((a) => !existingCodes.has(a.code));
+            if (toCreate.length > 0) {
+                await tx.account.createMany({
+                    data: toCreate.map((a) => ({
+                        companyId,
+                        code: a.code,
+                        name: a.name,
+                        type: a.type,
+                        isSystem: true,
+                    })),
+                });
+            }
+
+            // 3. Re-fetch all accounts to get their IDs
+            const allAccounts = await tx.account.findMany({
+                where: { companyId },
+                select: { id: true, code: true, name: true, type: true },
+            });
+            const accountByCode = new Map(allAccounts.map((a) => [a.code, a]));
+
+            // 4. Build mappings from code → mapping type
+            const mappingsCreated: Array<{ mappingType: string; code: string; name: string }> = [];
+            for (const [code, mappingType] of Object.entries(AUTO_MAPPING_RULES)) {
+                const account = accountByCode.get(code);
+                if (!account) continue;
+
+                // Upsert: skip if mapping already exists
+                const existing = await tx.accountMapping.findFirst({
+                    where: { companyId, mappingType, entityType: 'GLOBAL', entityId: null },
+                });
+                if (existing) continue;
+
+                await tx.accountMapping.create({
+                    data: {
+                        companyId,
+                        mappingType,
+                        entityType: 'GLOBAL',
+                        entityId: null,
+                        accountId: account.id,
+                    },
+                });
+                mappingsCreated.push({ mappingType, code, name: account.name });
+            }
+
+            return {
+                accountsCreated: toCreate.length,
+                accountsExisted: existingCodes.size,
+                totalAccounts: allAccounts.length,
+                mappingsCreated: mappingsCreated.length,
+                accounts: allAccounts,
+                mappings: mappingsCreated,
+            };
+        });
+
+        sendSuccess(res, result, undefined, 201);
+    } catch (error) { next(error); }
+});
+
 // PATCH /companies/me/setup-complete — mark tenant setup wizard as completed
 companyRoutes.patch('/me/setup-complete', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), async (req, res, next) => {
     try {

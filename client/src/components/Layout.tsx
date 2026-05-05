@@ -15,6 +15,7 @@ import {
 import LanguageSwitcher from './ui/LanguageSwitcher';
 import toast from 'react-hot-toast';
 import SupportSessionPanel from './support/SupportSessionPanel';
+import SidebarProfileModal from './profile/SidebarProfileModal';
 
 interface NavItem {
     to?: string;
@@ -107,6 +108,7 @@ const navItems: NavItem[] = [
             { to: '/sales/control/credit-control', label: 'Sales Control', category: 'Control', permission: 'sales.creditControl' },
             { to: '/sales/control/overdue-invoices', label: 'Sales Overdue Invoices', category: 'Control', permission: 'sales.creditControl' },
             { to: '/sales/reports/summary', label: 'Sales Reports', category: 'Reporting', permission: 'reports.view' },
+            { to: '/services', label: 'Sales Services', category: 'Services', permission: 'sales.view' },
         ]
     },
     {
@@ -114,6 +116,7 @@ const navItems: NavItem[] = [
         label: 'POS',
         section: 'Commerce',
         moduleKey: 'pos',
+        anyPermissions: ['pos.sell', 'pos.access', 'pos.manageTerminals', 'pos.viewShifts', 'pos.viewOwnShifts', 'pos.closeShift'],
         children: [
             { to: '/pos', label: 'POS Terminal', category: 'Terminal', anyPermissions: ['pos.terminalOnly', 'pos.sell', 'pos.access'] },
             { to: '/pos/unposted', label: 'POS Unposted Invoices', category: 'Terminal', anyPermissions: ['pos.sell', 'pos.access'] },
@@ -161,6 +164,7 @@ const navItems: NavItem[] = [
         label: 'Manufacturing',
         section: 'Operations',
         moduleKey: 'production',
+        anyPermissions: ['production.view', 'bom.view'],
         children: [
             { to: '/production/orders', label: 'Production Orders', category: 'Execution', permission: 'production.view' },
             { to: '/production/bom', label: 'Production Recipes', category: 'Engineering', permission: 'bom.view' },
@@ -268,7 +272,6 @@ const navItems: NavItem[] = [
             { to: '/hr/positions', label: 'Positions', category: 'Organization', permission: 'hr.positionView' },
             { to: '/hr/attendance', label: 'Attendance', category: 'Time Management', permission: 'hr.attendanceView' },
             { to: '/hr/leaves', label: 'Leaves', category: 'Time Management', permission: 'hr.leaveView' },
-            { to: '/services', label: 'Sales Services', category: 'Sales Services', permission: 'sales.view' },
         ],
     },
     {
@@ -292,7 +295,7 @@ const navItems: NavItem[] = [
         children: [
             { to: '/super-admin/dashboard', label: 'Dashboard', category: 'Overview', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.DASHBOARD_READ },
             { to: '/super-admin/companies', label: 'Company Management', category: 'Tenant', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.TENANTS_READ },
-            { to: '/super-admin/modules', label: 'Module Controls', category: 'Tenant', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.TENANTS_MANAGE },
+            { to: '/super-admin/modules', label: 'Module Controls', category: 'Tenant', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.TENANTS_READ },
             { to: '/super-admin/broadcasts', label: 'Announcements', category: 'Governance', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.ANNOUNCEMENTS_READ },
             { to: '/super-admin/support-sessions', label: 'Support Sessions', category: 'Governance', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.AUDIT_READ },
             { to: '/super-admin/audit', label: 'Audit Logs', category: 'Governance', superAdminOnly: true, superAdminPermission: SUPER_ADMIN_PERMISSIONS.AUDIT_READ },
@@ -372,6 +375,7 @@ export default function Layout() {
     const [expandedChildGroups, setExpandedChildGroups] = useState<string[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [showSupportSessionPanel, setShowSupportSessionPanel] = useState(false);
+    const [showProfileModal, setShowProfileModal] = useState(false);
     const { user, hasPermission, isModuleEnabled, logout, restoreOriginalSession } = useAuthStore();
     const theme = useThemeStore((s) => s.theme);
     const toggleTheme = useThemeStore((s) => s.toggleTheme);
@@ -744,33 +748,28 @@ export default function Layout() {
 
                     {/* User section */}
                     <div className="p-4 border-t border-border-subtle bg-slate-50/50 shrink-0">
-                        <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-white border border-slate-200 p-0.5 flex items-center justify-center shadow-sm flex-shrink-0">
-                                <div className="w-full h-full rounded-full bg-slate-100 flex items-center justify-center text-slate-600 text-xs font-bold">
-                                    {user?.name?.charAt(0) || 'U'}
+                        <button
+                            type="button"
+                            onClick={() => setShowProfileModal(true)}
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left shadow-sm transition-colors hover:bg-slate-50"
+                            aria-label="Open profile overview"
+                        >
+                            <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-full bg-white border border-slate-200 p-0.5 flex items-center justify-center shadow-sm flex-shrink-0">
+                                    <div className="w-full h-full rounded-full bg-slate-100 flex items-center justify-center text-slate-600 text-xs font-bold">
+                                        {user?.name?.charAt(0) || 'U'}
+                                    </div>
+                                </div>
+                                <div className={`overflow-hidden flex-1 origin-left transition-all duration-300 ${sidebarOpen ? 'opacity-100 max-w-[200px]' : 'opacity-0 max-w-0'}`}>
+                                    <p className="text-sm font-semibold text-text-primary whitespace-nowrap">
+                                        {user?.name}
+                                    </p>
+                                    <p className="text-xs text-text-tertiary whitespace-nowrap">
+                                        {user?.email}
+                                    </p>
                                 </div>
                             </div>
-                            <div className={`overflow-hidden flex-1 origin-left transition-all duration-300 ${sidebarOpen ? 'opacity-100 max-w-[200px]' : 'opacity-0 max-w-0'}`}>
-                                <p className="text-sm font-semibold text-text-primary whitespace-nowrap">
-                                    {user?.name}
-                                </p>
-                                <p className="text-xs text-text-tertiary whitespace-nowrap">
-                                    {user?.email}
-                                </p>
-                            </div>
-                        </div>
-                        <div className="mt-3">
-                            <button
-                                type="button"
-                                onClick={toggleTheme}
-                                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition-colors"
-                                title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-                                aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-                            >
-                                {theme === 'dark' ? <Sun size={16} /> : <MoonStar size={16} />}
-                                <span className={`text-xs font-semibold uppercase tracking-wide transition-all duration-300 ${sidebarOpen ? 'opacity-100 w-auto' : 'opacity-0 w-0 overflow-hidden'}`}>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
-                            </button>
-                        </div>
+                        </button>
                     </div>
                 </aside>
             )}
@@ -845,6 +844,11 @@ export default function Layout() {
                         {isImpersonating && showSupportSessionPanel && (
                             <SupportSessionPanel onClose={() => setShowSupportSessionPanel(false)} />
                         )}
+                        <SidebarProfileModal
+                            isOpen={showProfileModal}
+                            onClose={() => setShowProfileModal(false)}
+                            user={user}
+                        />
                     </div>
                 </main>
             </div>

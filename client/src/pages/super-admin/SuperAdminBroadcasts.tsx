@@ -135,25 +135,25 @@ export default function SuperAdminBroadcasts() {
     }
 
     return (
-        <section className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="text-lg font-semibold text-slate-900">Announcements</h2>
-            <p className="text-xs text-slate-500">
+        <section className="rounded-2xl border border-border bg-background-card p-5">
+            <h2 className="text-lg font-semibold text-text-primary">Announcements</h2>
+            <p className="text-xs text-text-tertiary">
                 {canManageAnnouncements
                     ? 'Create, edit, delete and control validity period of tenant announcements.'
                     : 'Review active and historical tenant announcements.'}
             </p>
 
             {canManageAnnouncements && (
-                <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mt-4 space-y-3 rounded-xl border border-border bg-background-subtle p-4">
                 <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-slate-900">
+                    <p className="text-sm font-semibold text-text-primary">
                         {editingId ? 'Edit Announcement' : 'New Broadcast'}
                     </p>
                     {editingId && (
                         <button
                             type="button"
                             onClick={resetForm}
-                            className="text-xs font-medium text-slate-600 hover:text-slate-900"
+                            className="text-xs font-medium text-text-secondary hover:text-text-primary"
                         >
                             Cancel Edit
                         </button>
@@ -163,14 +163,14 @@ export default function SuperAdminBroadcasts() {
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="Title"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                    className="w-full rounded-lg border border-border bg-background-card px-3 py-2 text-sm outline-none focus:border-border-strong"
                 />
                 <textarea
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     rows={4}
                     placeholder="Message"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                    className="w-full rounded-lg border border-border bg-background-card px-3 py-2 text-sm outline-none focus:border-border-strong"
                 />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         <AppDropdown
@@ -183,15 +183,15 @@ export default function SuperAdminBroadcasts() {
                         type="datetime-local"
                         value={expiresAt}
                         onChange={(e) => setExpiresAt(e.target.value)}
-                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                        className="w-full rounded-lg border border-border bg-background-card px-3 py-2 text-sm outline-none focus:border-border-strong"
                     />
                 </div>
-                <p className="text-xs text-slate-500">Valid till: leave empty for no expiry.</p>
+                <p className="text-xs text-text-tertiary">Valid till: leave empty for no expiry.</p>
                 <button
                     type="button"
                     onClick={() => submitMutation.mutate()}
                     disabled={submitMutation.isPending || !title.trim() || !message.trim()}
-                    className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
                     <Megaphone size={16} />
                     {editingId ? 'Save Announcement' : 'Send Broadcast'}
@@ -200,33 +200,33 @@ export default function SuperAdminBroadcasts() {
             )}
 
             <div className="mt-5">
-                <h3 className="text-sm font-semibold text-slate-900">Current Announcements</h3>
+                <h3 className="text-sm font-semibold text-text-primary">Current Announcements</h3>
                 <div className="mt-3 space-y-3">
-                    {isLoading && <p className="text-sm text-slate-500">Loading announcements...</p>}
+                    {isLoading && <p className="text-sm text-text-tertiary">Loading announcements...</p>}
                     {!isLoading && sortedAnnouncements.length === 0 && (
-                        <p className="text-sm text-slate-500">No announcements found.</p>
+                        <p className="text-sm text-text-tertiary">No announcements found.</p>
                     )}
                     {sortedAnnouncements.map((item) => (
-                        <div key={item.id} className="rounded-xl border border-slate-200 p-4">
+                        <div key={item.id} className="rounded-xl border border-border p-4">
                             <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div className="min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">
-                                        <p className="text-sm font-semibold text-slate-900">{item.title}</p>
+                                        <p className="text-sm font-semibold text-text-primary">{item.title}</p>
                                         <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${levelClassMap[item.level]}`}>
                                             {item.level}
                                         </span>
-                                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${item.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>
+                                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${item.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-background-subtle text-text-secondary'}`}>
                                             {item.isActive ? 'Active' : 'Inactive'}
                                         </span>
                                         {item.isExpired && (
                                             <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">Expired</span>
                                         )}
                                     </div>
-                                    <p className="mt-1 text-sm text-slate-700">{item.message}</p>
-                                    <p className="mt-2 text-xs text-slate-500">
+                                    <p className="mt-1 text-sm text-text-secondary">{item.message}</p>
+                                    <p className="mt-2 text-xs text-text-tertiary">
                                         Audience: {item.audience === 'single-tenant' ? `Tenant (${item.targetCompanyName || item.targetCompanyId})` : 'All tenants'} | Tenants: {item.tenantCount}
                                     </p>
-                                    <p className="text-xs text-slate-500">
+                                    <p className="text-xs text-text-tertiary">
                                         Created: {new Date(item.createdAt).toLocaleString()} | Valid till: {item.expiresAt ? new Date(item.expiresAt).toLocaleString() : 'No expiry'}
                                     </p>
                                 </div>
@@ -241,7 +241,7 @@ export default function SuperAdminBroadcasts() {
                                                 setLevel(item.level);
                                                 setExpiresAt(toLocalInputValue(item.expiresAt));
                                             }}
-                                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                                            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-background-subtle"
                                         >
                                             <Pencil size={13} />
                                             Edit
@@ -249,7 +249,7 @@ export default function SuperAdminBroadcasts() {
                                         <button
                                             type="button"
                                             onClick={() => toggleActiveMutation.mutate({ announcementId: item.id, isActive: !item.isActive })}
-                                            className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                                            className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-background-subtle"
                                         >
                                             {item.isActive ? 'Deactivate' : 'Activate'}
                                         </button>

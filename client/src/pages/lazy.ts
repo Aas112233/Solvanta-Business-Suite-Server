@@ -1,6 +1,8 @@
 import { lazy } from 'react';
 
 export const Login = lazy(() => import('./Login'));
+export const ForgotPassword = lazy(() => import('./ForgotPassword'));
+export const ResetPassword = lazy(() => import('./ResetPassword'));
 export const Dashboard = lazy(() => import('./Dashboard'));
 export const Customers = lazy(() => import('./Customers'));
 export const CustomerForm = lazy(() => import('./customers/CustomerForm'));
@@ -48,7 +50,7 @@ export const PurchaseControl = lazy(() => import('./purchases/PurchaseControl'))
 export const ExpensePurchaseList = lazy(() => import('./purchases/ExpensePurchaseList'));
 export const ExpensePurchaseForm = lazy(() => import('./purchases/ExpensePurchaseForm'));
 export const ExpensePurchaseDetail = lazy(() => import('./purchases/ExpensePurchaseDetail'));
-export const SupplierLedger= lazy(() => import('./suppliers/SupplierLedger'));
+export const SupplierLedger = lazy(() => import('./suppliers/SupplierLedger'));
 export const Reports = lazy(() => import('./Reports'));
 export const Users = lazy(() => import('./Users'));
 export const Roles = lazy(() => import('./Roles'));
@@ -129,3 +131,6 @@ export const BankReconciliation = lazy(() => import('./bank/BankReconciliation')
 // Aging Module
 export const ARAging = lazy(() => import('./aging/ARAging'));
 export const APAging = lazy(() => import('./aging/APAging'));
+
+// Setup Wizard
+export const SetupWizard = lazy(() => import('./SetupWizard'));

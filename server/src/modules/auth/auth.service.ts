@@ -1,12 +1,13 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
 import { prisma } from '../../lib/prisma.js';
 import { env } from '../../config/env.js';
 import { AppError } from '../../utils/AppError.js';
 import { ALL_PERMISSIONS } from '../../config/permissions.js';
 import { resolveSuperAdminAccess } from '../../middleware/superAdmin.js';
 import { SUPER_ADMIN_PERMISSIONS } from '../super-admin/super-admin.permissions.js';
+import { loadUserAssignedBranches } from '../user/user-profile.utils.js';
 
 const jwtExpiry = env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'];
 const jwtRefreshExpiry = env.JWT_REFRESH_EXPIRES_IN as jwt.SignOptions['expiresIn'];
@@ -58,7 +59,7 @@ function buildImpersonationTokens(target: { id: string; companyId: string }, imp
 export class AuthService {
     static async login(email: string, password: string) {
         email = email.toLowerCase().trim();
-        // Optimize: First lookup user with minimal fields to avoid complex aggregation joins during check
+
         const user = await prisma.user.findUnique({
             where: { email },
             select: {
@@ -67,30 +68,103 @@ export class AuthService {
                 email: true,
                 passwordHash: true,
                 isActive: true,
-                name: true
+                name: true,
+                failedLoginAttempts: true,
+                lockedUntil: true,
             }
         });
 
         if (!user) throw AppError.unauthorized('Invalid email or password');
         if (!user.isActive) throw AppError.unauthorized('Account is deactivated');
 
+        // Check account lockout
+        if (user.lockedUntil && user.lockedUntil > new Date()) {
+            const lockoutMinutes = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
+            throw AppError.unauthorized(`Account locked. Try again in ${lockoutMinutes} minutes`);
+        }
+
         const validPassword = await bcrypt.compare(password, user.passwordHash);
-        if (!validPassword) throw AppError.unauthorized('Invalid email or password');
+        if (!validPassword) {
+            // Increment failed login attempts
+            const newFailedAttempts = (user.failedLoginAttempts || 0) + 1;
+            const lockUntil = newFailedAttempts >= 5
+                ? new Date(Date.now() + 15 * 60 * 1000) // 15 minutes lockout
+                : undefined;
+
+            await prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    failedLoginAttempts: newFailedAttempts,
+                    lockedUntil: lockUntil || null,
+                },
+            });
+
+            throw AppError.unauthorized('Invalid email or password');
+        }
+
+        // Reset failed login attempts on successful login
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                failedLoginAttempts: 0,
+                lockedUntil: null,
+            },
+        });
 
         // Now that user is authenticated, load the full profile with relations
-        // This query will be faster because it uses the _id index
         const fullUser = await prisma.user.findUnique({
             where: { id: user.id },
             include: {
                 role: { select: { id: true, name: true, permissions: true } },
-                branches: {
-                    select: { branch: { select: { id: true, name: true, code: true } } },
-                },
                 company: { select: { id: true, name: true, currency: true, logoUrl: true, settings: true } },
             },
         });
 
         if (!fullUser) throw AppError.unauthorized('User record disappeared');
+
+        const assignedBranches = await loadUserAssignedBranches(fullUser.id, fullUser.companyId);
+
+        // Check if force password change is required
+        if (fullUser.forcePasswordChange) {
+            const companySettings = (fullUser.company?.settings && typeof fullUser.company.settings === 'object' && !Array.isArray(fullUser.company.settings))
+                ? fullUser.company.settings as Record<string, any>
+                : {};
+            const superAdminAccess = resolveSuperAdminAccess({
+                email: fullUser.email,
+                rolePermissions: fullUser.role?.permissions || [],
+            });
+            const isSuperAdmin = superAdminAccess.isSuperAdmin;
+
+            const accessToken = signAccessToken({ userId: user.id, companyId: user.companyId });
+            const refreshToken = signRefreshToken({ userId: user.id, companyId: user.companyId, type: 'refresh' });
+
+            await prisma.user.update({
+                where: { id: user.id },
+                data: { refreshToken, lastLoginAt: new Date() },
+            });
+
+            return {
+                accessToken,
+                refreshToken,
+                user: {
+                    id: fullUser.id,
+                    name: fullUser.name,
+                    email: fullUser.email,
+                    role: fullUser.role,
+                    company: {
+                        id: fullUser.company.id,
+                        name: fullUser.company.name,
+                        currency: fullUser.company.currency,
+                        logoUrl: fullUser.company.logoUrl,
+                        setupCompleted: companySettings.setupCompleted !== false,
+                    },
+                    branches: assignedBranches,
+                    isSuperAdmin,
+                    superAdminPermissions: superAdminAccess.superAdminPermissions,
+                    forcePasswordChange: true,
+                },
+            };
+        }
 
         // Extract setupCompleted from company settings for wizard flow
         const companySettings = (fullUser.company?.settings && typeof fullUser.company.settings === 'object' && !Array.isArray(fullUser.company.settings))
@@ -107,23 +181,16 @@ export class AuthService {
                 select: { id: true, name: true, code: true },
                 orderBy: { name: 'asc' },
             })
-            : fullUser.branches.map((ub) => ub.branch);
+            : assignedBranches;
 
         const accessToken = signAccessToken({ userId: user.id, companyId: user.companyId });
         const refreshToken = signRefreshToken({ userId: user.id, companyId: user.companyId, type: 'refresh' });
 
-        // Store refresh token
-        try {
-            console.log('Attempting to update user refresh token/login time...', user.id);
-            await prisma.user.update({
-                where: { id: user.id },
-                data: { refreshToken, lastLoginAt: new Date() },
-            });
-            console.log('User update successful');
-        } catch (updateError) {
-            console.error('CRITICAL: Failed to update user login stats:', updateError);
-            // Don't crash the request, just log it
-        }
+        // Store refresh token and update last login
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { refreshToken, lastLoginAt: new Date() },
+        });
 
         return {
             accessToken,
@@ -301,5 +368,97 @@ export class AuthService {
             ),
             impersonation,
         };
+    }
+
+    static async forgotPassword(email: string) {
+        email = email.toLowerCase().trim();
+
+        const user = await prisma.user.findUnique({
+            where: { email },
+            select: { id: true, email: true, isActive: true, companyId: true },
+        });
+
+        // Always return success to prevent email enumeration
+        if (!user || !user.isActive) {
+            return { message: 'If the email exists, a reset link has been sent' };
+        }
+
+        // Generate reset token
+        const resetToken = randomBytes(32).toString('hex');
+        const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour
+
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                passwordResetToken: resetToken,
+                passwordResetExpiresAt: resetTokenExpiry,
+            },
+        });
+
+        // In production, send email with reset token
+        // For now, return the token for testing (REMOVE IN PRODUCTION)
+        // TODO: Implement email service integration
+        return {
+            message: 'Password reset token generated',
+            resetToken, // REMOVE THIS IN PRODUCTION - only for development
+            note: 'In production, this would be sent via email'
+        };
+    }
+
+    static async resetPassword(token: string, newPassword: string) {
+        const user = await prisma.user.findFirst({
+            where: {
+                passwordResetToken: token,
+                passwordResetExpiresAt: { gt: new Date() },
+            },
+        });
+
+        if (!user) {
+            throw AppError.badRequest('Invalid or expired reset token');
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                passwordHash,
+                passwordResetToken: null,
+                passwordResetExpiresAt: null,
+                forcePasswordChange: false,
+                failedLoginAttempts: 0,
+                lockedUntil: null,
+            },
+        });
+
+        return { message: 'Password reset successfully' };
+    }
+
+    static async changePassword(userId: string, currentPassword: string, newPassword: string) {
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, passwordHash: true },
+        });
+
+        if (!user) {
+            throw AppError.notFound('User');
+        }
+
+        const validPassword = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!validPassword) {
+            throw AppError.badRequest('Current password is incorrect');
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+
+        await prisma.user.update({
+            where: { id: userId },
+            data: {
+                passwordHash,
+                forcePasswordChange: false,
+            },
+        });
+
+        return { message: 'Password changed successfully' };
     }
 }

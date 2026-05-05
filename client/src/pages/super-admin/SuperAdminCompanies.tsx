@@ -191,11 +191,11 @@ export default function SuperAdminCompanies() {
     }
 
     return (
-        <section className="rounded-2xl border border-slate-200 bg-white p-5">
+        <section className="rounded-2xl border border-border bg-background-card p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                    <h2 className="text-lg font-semibold text-slate-900">Company Management</h2>
-                    <p className="text-xs text-slate-500">Tenant lifecycle control, health review, and bulk platform operations.</p>
+                    <h2 className="text-lg font-semibold text-text-primary">Company Management</h2>
+                    <p className="text-xs text-text-tertiary">Tenant lifecycle control, health review, and bulk platform operations.</p>
                 </div>
                 <div className="flex items-center gap-2">
                     {canManageTenants && (
@@ -205,18 +205,18 @@ export default function SuperAdminCompanies() {
                                 setShowCreateForm((prev) => !prev);
                                 setCreatedCredentials(null);
                             }}
-                            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
+                            className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
                         >
                             {showCreateForm ? 'Close Create Form' : 'Create Company'}
                         </button>
                     )}
                     <div className="relative">
-                        <Search size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
+                        <Search size={14} className="absolute left-2.5 top-2.5 text-text-tertiary" />
                         <input
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             placeholder="Search company, plan, status..."
-                            className="rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-sm outline-none focus:border-slate-400"
+                            className="rounded-lg border border-border bg-background-card py-2 pl-8 pr-3 text-sm outline-none focus:border-border-strong"
                         />
                     </div>
                 </div>
@@ -229,9 +229,9 @@ export default function SuperAdminCompanies() {
             )}
 
             {canManageTenants && showCreateForm && (
-                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <h3 className="text-sm font-semibold text-slate-900">Create New Company</h3>
-                    <p className="mt-1 text-xs text-slate-600">Provide required company information and the first admin account credentials.</p>
+                <div className="mt-4 rounded-xl border border-border bg-background-subtle p-4">
+                    <h3 className="text-sm font-semibold text-text-primary">Create New Company</h3>
+                    <p className="mt-1 text-xs text-text-secondary">Provide required company information and the first admin account credentials.</p>
                     <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                         {[
                             ['companyName', 'Company Name *'],
@@ -252,7 +252,7 @@ export default function SuperAdminCompanies() {
                                 value={form[key as keyof typeof form]}
                                 onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
                                 placeholder={placeholder}
-                                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                                className="rounded-lg border border-border bg-background-card px-3 py-2 text-sm outline-none focus:border-border-strong"
                             />
                         ))}
                     </div>
@@ -268,7 +268,7 @@ export default function SuperAdminCompanies() {
                         <button
                             type="button"
                             onClick={() => setShowCreateForm(false)}
-                            className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                            className="rounded-lg border border-border-strong px-4 py-2 text-xs font-medium text-text-secondary hover:bg-background-subtle"
                         >
                             Cancel
                         </button>
@@ -314,7 +314,7 @@ export default function SuperAdminCompanies() {
                     value={trialEndingWithinDays}
                     onChange={(e) => setTrialEndingWithinDays(e.target.value)}
                     placeholder="Trial ending in days"
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                    className="rounded-lg border border-border bg-background-card px-3 py-2 text-sm outline-none focus:border-border-strong"
                 />
                 <button
                     type="button"
@@ -326,7 +326,7 @@ export default function SuperAdminCompanies() {
                         setTrialEndingWithinDays('');
                         setTenantFilter('All');
                     }}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    className="rounded-lg border border-border-strong px-3 py-2 text-sm text-text-secondary hover:bg-background-subtle"
                 >
                     Reset Filters
                 </button>
@@ -339,7 +339,7 @@ export default function SuperAdminCompanies() {
                         type="button"
                         onClick={() => setTenantFilter(filter)}
                         className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                            tenantFilter === filter ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                            tenantFilter === filter ? 'bg-brand text-white' : 'bg-background-subtle text-text-secondary hover:bg-slate-200'
                         }`}
                     >
                         {filter}
@@ -348,8 +348,8 @@ export default function SuperAdminCompanies() {
             </div>
 
             {canManageTenants && selectedTenantIds.length > 0 && (
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <p className="text-sm text-slate-700">
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-background-subtle px-4 py-3">
+                    <p className="text-sm text-text-secondary">
                         <span className="font-semibold">{selectedTenantIds.length}</span> tenant{selectedTenantIds.length === 1 ? '' : 's'} selected
                     </p>
                     <div className="flex flex-wrap items-center gap-2">
@@ -376,7 +376,7 @@ export default function SuperAdminCompanies() {
                         <button
                             type="button"
                             onClick={() => setSelectedTenantIds([])}
-                            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-white"
+                            className="rounded-lg border border-border-strong px-3 py-2 text-xs font-medium text-text-secondary hover:bg-background-card"
                         >
                             Clear Selection
                         </button>
@@ -387,14 +387,14 @@ export default function SuperAdminCompanies() {
             <div className="mt-4 overflow-x-auto">
                 <table className="w-full text-sm">
                     <thead>
-                        <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500">
+                        <tr className="border-b border-border-subtle text-left text-xs uppercase tracking-wide text-text-tertiary">
                             <th className="py-2 pr-3">
                                 {canManageTenants && (
                                     <input
                                         type="checkbox"
                                         checked={tenants.length > 0 && selectedTenantIds.length === tenants.length}
                                         onChange={toggleSelectAll}
-                                        className="h-4 w-4 rounded border-slate-300"
+                                        className="h-4 w-4 rounded border-border-strong"
                                     />
                                 )}
                             </th>
@@ -411,30 +411,30 @@ export default function SuperAdminCompanies() {
                     <tbody>
                         {isLoading && (
                             <tr>
-                                <td className="py-5 text-slate-500" colSpan={9}>Loading companies...</td>
+                                <td className="py-5 text-text-tertiary" colSpan={9}>Loading companies...</td>
                             </tr>
                         )}
                         {!isLoading && tenants.length === 0 && (
                             <tr>
-                                <td className="py-5 text-slate-500" colSpan={9}>No companies match this filter.</td>
+                                <td className="py-5 text-text-tertiary" colSpan={9}>No companies match this filter.</td>
                             </tr>
                         )}
                         {!isLoading && tenants.map((tenant) => (
-                            <tr key={tenant.id} className="border-b border-slate-100 last:border-none">
+                            <tr key={tenant.id} className="border-b border-border-subtle last:border-none">
                                 <td className="py-3 pr-3">
                                     {canManageTenants && (
                                         <input
                                             type="checkbox"
                                             checked={selectedTenantIds.includes(tenant.id)}
                                             onChange={() => toggleTenantSelection(tenant.id)}
-                                            className="h-4 w-4 rounded border-slate-300"
+                                            className="h-4 w-4 rounded border-border-strong"
                                         />
                                     )}
                                 </td>
                                 <td className="py-3 pr-3">
-                                    <p className="font-medium text-slate-900">{tenant.name}</p>
-                                    <p className="text-xs text-slate-500">{tenant.id}</p>
-                                    <p className="mt-1 text-xs text-slate-500">{tenant.plan} • {tenant.paymentStatus}</p>
+                                    <p className="font-medium text-text-primary">{tenant.name}</p>
+                                    <p className="text-xs text-text-tertiary">{tenant.id}</p>
+                                    <p className="mt-1 text-xs text-text-tertiary">{tenant.plan} • {tenant.paymentStatus}</p>
                                 </td>
                                 <td className="py-3 pr-3">
                                     <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${tenantStatusClassMap[tenant.status]}`}>
@@ -446,18 +446,18 @@ export default function SuperAdminCompanies() {
                                         </span>
                                     )}
                                     {tenant.daysToTrialEnd !== null && (
-                                        <p className="mt-1 text-xs text-slate-500">Trial ends in {tenant.daysToTrialEnd} day{tenant.daysToTrialEnd === 1 ? '' : 's'}</p>
+                                        <p className="mt-1 text-xs text-text-tertiary">Trial ends in {tenant.daysToTrialEnd} day{tenant.daysToTrialEnd === 1 ? '' : 's'}</p>
                                     )}
                                 </td>
                                 <td className="py-3 pr-3">
                                     <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${healthClassMap[tenant.healthStatus]}`}>
                                         {tenant.healthStatus}
                                     </span>
-                                    <p className="mt-1 text-xs text-slate-700">{tenant.healthScore}/100 • {tenant.healthTrend}</p>
-                                    <p className="mt-1 max-w-[220px] text-xs text-slate-500">{tenant.healthDrivers.slice(0, 2).join(' • ') || 'No active risk flags'}</p>
+                                    <p className="mt-1 text-xs text-text-secondary">{tenant.healthScore}/100 • {tenant.healthTrend}</p>
+                                    <p className="mt-1 max-w-[220px] text-xs text-text-tertiary">{tenant.healthDrivers.slice(0, 2).join(' • ') || 'No active risk flags'}</p>
                                 </td>
                                 <td className="py-3 pr-3">
-                                    <p className="text-xs text-slate-700">
+                                    <p className="text-xs text-text-secondary">
                                         {tenant.limitWarnings.length > 0
                                             ? tenant.limitWarnings.map((warning) => `${warning.label} ${warning.percentUsed ?? 0}%`).join(' • ')
                                             : 'Within limits'}
@@ -469,23 +469,23 @@ export default function SuperAdminCompanies() {
                                     )}
                                 </td>
                                 <td className="py-3 pr-3">
-                                    <p className="text-slate-700">{tenant.activeUsers} / {tenant.totalUsers} users</p>
-                                    <p className="text-xs text-slate-500">
+                                    <p className="text-text-secondary">{tenant.activeUsers} / {tenant.totalUsers} users</p>
+                                    <p className="text-xs text-text-tertiary">
                                         {tenant.moduleUsageSummary.adoptedModules}/{tenant.moduleUsageSummary.enabledModules} modules adopted
                                     </p>
                                     {tenant.moduleUsageSummary.unusedEnabledModules.length > 0 && (
-                                        <p className="text-xs text-slate-500">
+                                        <p className="text-xs text-text-tertiary">
                                             Unused: {tenant.moduleUsageSummary.unusedEnabledModules.slice(0, 2).join(', ')}
                                         </p>
                                     )}
                                 </td>
-                                <td className="py-3 pr-3 text-slate-700">${tenant.monthlyRevenue.toLocaleString()}</td>
-                                <td className="py-3 pr-3 text-xs text-slate-500">{new Date(tenant.updatedAt).toLocaleString()}</td>
+                                <td className="py-3 pr-3 text-text-secondary">${tenant.monthlyRevenue.toLocaleString()}</td>
+                                <td className="py-3 pr-3 text-xs text-text-tertiary">{new Date(tenant.updatedAt).toLocaleString()}</td>
                                 <td className="py-3">
                                     <div className="flex items-center gap-2">
                                         <Link
                                             to={`/super-admin/companies/${tenant.id}`}
-                                            className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                                            className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-background-subtle"
                                         >
                                             Open
                                         </Link>

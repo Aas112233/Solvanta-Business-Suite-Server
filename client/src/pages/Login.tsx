@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import api from '../lib/api';
 import {
@@ -35,6 +35,7 @@ export default function Login() {
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [rememberMe, setRememberMe] = useState(false);
     const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
     const navigate = useNavigate();
     const { setTokens, setUser } = useAuthStore();
@@ -44,8 +45,11 @@ export default function Login() {
         const form = e.currentTarget as HTMLFormElement;
         const formData = new FormData(form);
 
-        const enteredEmail = (email || String(formData.get('login_identifier') || '')).trim();
-        const enteredPassword = password || String(formData.get('login_secret') || '');
+        const enteredEmail = (
+            email
+            || String(formData.get('username') || formData.get('email') || '')
+        ).trim();
+        const enteredPassword = password || String(formData.get('password') || '');
 
         const parsed = loginSchema.safeParse({ email: enteredEmail, password: enteredPassword });
         if (!parsed.success) {
@@ -120,7 +124,7 @@ export default function Login() {
                     </div>
 
                     <Card className="border-border/80 shadow-2xl shadow-brand-500/10" padding="lg">
-                        <form className="space-y-5" onSubmit={handleSubmit} autoComplete="off">
+                        <form className="space-y-5" onSubmit={handleSubmit}>
                             <div className="space-y-2">
                                 <label
                                     htmlFor="email"
@@ -128,22 +132,27 @@ export default function Login() {
                                 >
                                     Email Address
                                 </label>
-                                <Input
-                                    id="email"
-                                    name="login_identifier"
-                                    type="email"
-                                    required
-                                    autoComplete="username"
-                                    value={email}
-                                    onChange={(e) => {
-                                        setEmail(e.target.value);
-                                        setErrors((current) => ({ ...current, email: undefined }));
-                                    }}
-                                    icon={<Mail size={18} />}
-                                    placeholder="Enter your email"
-                                    fullWidth
-                                    error={!!errors.email}
-                                />
+                                <div className="relative">
+                                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-text-tertiary" />
+                                    <input
+                                        id="email"
+                                        name="email"
+                                        type="email"
+                                        required
+                                        autoComplete="username"
+                                        inputMode="email"
+                                        autoCapitalize="none"
+                                        autoCorrect="off"
+                                        spellCheck={false}
+                                        value={email}
+                                        onChange={(e) => {
+                                            setEmail(e.target.value);
+                                            setErrors((current) => ({ ...current, email: undefined }));
+                                        }}
+                                        className="w-full h-10 pl-10 pr-3 py-2 rounded-lg border border-border bg-background-card text-text-primary placeholder:text-text-tertiary transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:border-brand"
+                                        placeholder="Enter your email"
+                                    />
+                                </div>
                                 {errors.email && <p className="text-sm text-danger">{errors.email}</p>}
                             </div>
 
@@ -155,9 +164,10 @@ export default function Login() {
                                     Password
                                 </label>
                                 <div className="relative">
-                                    <Input
+                                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-text-tertiary" />
+                                    <input
                                         id="password"
-                                        name="login_secret"
+                                        name="password"
                                         type={showPassword ? 'text' : 'password'}
                                         required
                                         autoComplete="current-password"
@@ -166,11 +176,8 @@ export default function Login() {
                                             setPassword(e.target.value);
                                             setErrors((current) => ({ ...current, password: undefined }));
                                         }}
-                                        icon={<Lock size={18} />}
+                                        className="w-full h-10 pl-10 pr-11 py-2 rounded-lg border border-border bg-background-card text-text-primary placeholder:text-text-tertiary transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:border-brand"
                                         placeholder="Enter your password"
-                                        fullWidth
-                                        className="pr-11"
-                                        error={!!errors.password}
                                     />
                                     <button
                                         type="button"
@@ -198,16 +205,18 @@ export default function Login() {
                                         id="remember-me"
                                         name="remember-me"
                                         type="checkbox"
+                                        checked={rememberMe}
+                                        onChange={(e) => setRememberMe(e.target.checked)}
                                         className="h-4 w-4 rounded border-border text-text-brand focus:ring-brand-200"
                                     />
                                     Remember for 30 days
                                 </label>
-                                <a
-                                    href="#"
+                                <Link
+                                    to="/forgot-password"
                                     className="text-sm font-medium text-text-brand transition-colors hover:text-brand-400"
                                 >
                                     Forgot password?
-                                </a>
+                                </Link>
                             </div>
 
                             <Button type="submit" loading={loading} fullWidth>

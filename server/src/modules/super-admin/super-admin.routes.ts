@@ -69,6 +69,10 @@ const featureSchema = z.object({
         reports: z.boolean(),
         bom: z.boolean(),
         production: z.boolean(),
+        sales: z.boolean(),
+        items: z.boolean(),
+        suppliers: z.boolean(),
+        hr: z.boolean(),
     }),
 });
 
@@ -140,7 +144,7 @@ const maintenanceSchema = z.object({
 });
 
 const userPasswordSchema = z.object({
-    password: z.string().min(6).max(100),
+    password: z.string().min(8).max(100),
 });
 
 const userStatusSchema = z.object({
@@ -190,6 +194,10 @@ const createTenantSchema = z.object({
         reports: z.boolean(),
         bom: z.boolean(),
         production: z.boolean(),
+        sales: z.boolean(),
+        items: z.boolean(),
+        suppliers: z.boolean(),
+        hr: z.boolean(),
     }).optional(),
 });
 
@@ -403,6 +411,53 @@ async function getTenantCompanyOrThrow(companyId: string) {
 
     if (!company) throw AppError.notFound('Company');
     return company;
+}
+
+function resolveTenantUserAccess(user: {
+    email?: string;
+    role?: { permissions?: string[] | null } | null;
+}) {
+    return resolveSuperAdminAccess({
+        email: user.email,
+        rolePermissions: user.role?.permissions || [],
+    });
+}
+
+function assertTenantUserIsManageable(
+    user: {
+        email?: string;
+        role?: { permissions?: string[] | null } | null;
+    },
+    message = 'Super admin accounts cannot be managed from tenant user controls',
+) {
+    const access = resolveTenantUserAccess(user);
+    if (access.isSuperAdmin) {
+        throw AppError.badRequest(message);
+    }
+}
+
+function mapTenantUser(user: {
+    id: string;
+    name: string;
+    email: string;
+    isActive: boolean;
+    lastLoginAt: Date | null;
+    createdAt: Date;
+    role?: { name?: string | null; permissions?: string[] | null } | null;
+}) {
+    const access = resolveTenantUserAccess(user);
+
+    return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role?.name || 'Unassigned',
+        isActive: user.isActive,
+        lastLoginAt: user.lastLoginAt,
+        createdAt: user.createdAt,
+        isSuperAdmin: access.isSuperAdmin,
+        canImpersonate: !access.isSuperAdmin,
+    };
 }
 
 async function buildTenantSnapshots() {
@@ -865,15 +920,17 @@ superAdminRoutes.post('/tenants', requireSuperAdminPermission(SUPER_ADMIN_PERMIS
 superAdminRoutes.get('/tenants/:id/control-center', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_READ), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = String(req.params.id);
-        const [tenantList, users] = await Promise.all([
-            buildTenantSnapshots(),
-            basePrisma.user.findMany({
+        const canManageUsers = req.user!.superAdminPermissions.includes(SUPER_ADMIN_PERMISSIONS.USERS_MANAGE);
+        const tenantListPromise = buildTenantSnapshots();
+        const users = canManageUsers
+            ? await basePrisma.user.findMany({
                 where: { companyId },
                 include: { role: { select: { name: true, permissions: true } } },
                 orderBy: { createdAt: 'desc' },
                 take: 200,
-            }),
-        ]);
+            })
+            : [];
+        const tenantList = await tenantListPromise;
 
         const tenant = tenantList.find((row) => row.id === companyId);
         if (!tenant) throw AppError.notFound('Company');
@@ -885,23 +942,7 @@ superAdminRoutes.get('/tenants/:id/control-center', requireSuperAdminPermission(
                 branches: tenant.totalBranches,
                 products: tenant.totalProducts,
             },
-            users: users.map((user: any) => {
-                const superAdminAccess = resolveSuperAdminAccess({
-                    email: user.email,
-                    rolePermissions: user.role?.permissions || [],
-                });
-
-                return {
-                    id: user.id,
-                    name: user.name,
-                    email: user.email,
-                    role: user.role?.name || 'Unassigned',
-                    isActive: user.isActive,
-                    lastLoginAt: user.lastLoginAt,
-                    createdAt: user.createdAt,
-                    canImpersonate: !superAdminAccess.isSuperAdmin,
-                };
-            }),
+            users: canManageUsers ? users.map(mapTenantUser) : [],
         });
     } catch (error) {
         next(error);
@@ -932,23 +973,7 @@ superAdminRoutes.get('/tenants/:id/users', requireSuperAdminPermission(SUPER_ADM
                 return user.name.toLowerCase().includes(search) || user.email.toLowerCase().includes(search);
             })
             .slice(0, limit)
-            .map((user: any) => {
-                const superAdminAccess = resolveSuperAdminAccess({
-                    email: user.email,
-                    rolePermissions: user.role?.permissions || [],
-                });
-
-                return {
-                    id: user.id,
-                    name: user.name,
-                    email: user.email,
-                    role: user.role?.name || 'Unassigned',
-                    isActive: user.isActive,
-                    lastLoginAt: user.lastLoginAt,
-                    createdAt: user.createdAt,
-                    canImpersonate: !superAdminAccess.isSuperAdmin,
-                };
-            });
+            .map(mapTenantUser);
 
         sendSuccess(res, {
             company: { id: company.id, name: company.name },
@@ -974,15 +999,7 @@ superAdminRoutes.post('/tenants/:id/users/:userId/impersonate', requireSuperAdmi
 
         if (!target) throw AppError.notFound('User');
         if (!target.isActive) throw AppError.badRequest('Only active users can be impersonated');
-
-        const targetSuperAdminAccess = resolveSuperAdminAccess({
-            email: target.email,
-            rolePermissions: target.role?.permissions || [],
-        });
-
-        if (targetSuperAdminAccess.isSuperAdmin) {
-            throw AppError.badRequest('Super admin accounts cannot be impersonated');
-        }
+        assertTenantUserIsManageable(target, 'Super admin accounts cannot be impersonated');
 
         const session = await AuthService.createImpersonationSession({
             actorUserId: req.user!.id,
@@ -1036,10 +1053,17 @@ superAdminRoutes.patch('/tenants/:id/users/:userId/status', requireSuperAdminPer
 
         const target = await basePrisma.user.findFirst({
             where: { id: userId, companyId },
-            select: { id: true, name: true, email: true, isActive: true },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                isActive: true,
+                role: { select: { permissions: true } },
+            },
         });
 
         if (!target) throw AppError.notFound('User');
+        assertTenantUserIsManageable(target);
         if (target.id === req.user!.id && !parsed.isActive) {
             throw AppError.badRequest('Cannot deactivate your own account from super-admin controls');
         }
@@ -1085,16 +1109,24 @@ superAdminRoutes.patch('/tenants/:id/users/:userId/password', requireSuperAdminP
 
         const target = await basePrisma.user.findFirst({
             where: { id: userId, companyId },
-            select: { id: true, email: true },
+            select: {
+                id: true,
+                email: true,
+                role: { select: { permissions: true } },
+            },
         });
 
         if (!target) throw AppError.notFound('User');
+        assertTenantUserIsManageable(target);
 
         const passwordHash = await bcrypt.hash(parsed.password, 12);
 
         await basePrisma.user.update({
             where: { id: target.id },
-            data: { passwordHash },
+            data: {
+                passwordHash,
+                forcePasswordChange: true, // Force user to change password on next login
+            },
         });
 
         await writeAudit(
