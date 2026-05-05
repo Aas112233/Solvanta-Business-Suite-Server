@@ -310,13 +310,7 @@ export default function SetupWizard() {
     // ── One-click Smart Setup: Seed accounts + Auto-map ──
     const seedMut = useMutation({
         mutationFn: async () => {
-            try {
-                const res = await api.post('/companies/me/seed-accounts');
-                return res.data.data as SeedResult;
-            } catch (err: any) {
-                if (err.response?.status !== 404) throw err;
-                return seedAccountsViaAccountingRoutes();
-            }
+            return seedAccountsViaAccountingRoutes();
         },
         onSuccess: (data) => {
             setSeedResult(data);
