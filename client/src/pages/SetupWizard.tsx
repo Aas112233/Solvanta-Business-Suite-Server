@@ -36,6 +36,93 @@ interface SeedResult {
     mappings: Array<{ mappingType: string; code: string; name: string }>;
 }
 
+const DEFAULT_SEED_ACCOUNTS: Array<{ code: string; name: string; type: AccountType }> = [
+    { code: '1000', name: 'Cash', type: 'ASSET' },
+    { code: '1010', name: 'Bank', type: 'ASSET' },
+    { code: '1200', name: 'Accounts Receivable', type: 'ASSET' },
+    { code: '1300', name: 'Inventory Asset', type: 'ASSET' },
+    { code: '1400', name: 'Input Tax (VAT)', type: 'ASSET' },
+    { code: '2000', name: 'Accounts Payable', type: 'LIABILITY' },
+    { code: '2100', name: 'Output Tax (VAT)', type: 'LIABILITY' },
+    { code: '3000', name: 'Owner Equity', type: 'EQUITY' },
+    { code: '3100', name: 'Retained Earnings', type: 'EQUITY' },
+    { code: '4000', name: 'Sales Revenue', type: 'REVENUE' },
+    { code: '4100', name: 'Sales Returns', type: 'REVENUE' },
+    { code: '4200', name: 'Discount Given', type: 'REVENUE' },
+    { code: '5000', name: 'Cost of Goods Sold (COGS)', type: 'EXPENSE' },
+    { code: '5100', name: 'Purchase Returns', type: 'EXPENSE' },
+    { code: '5200', name: 'Discount Received', type: 'EXPENSE' },
+    { code: '5300', name: 'Damaged Goods', type: 'EXPENSE' },
+    { code: '5400', name: 'Shrinkage', type: 'EXPENSE' },
+    { code: '6000', name: 'General Expenses', type: 'EXPENSE' },
+];
+
+const AUTO_MAPPING_RULES: Record<string, string> = {
+    '1000': 'CASH',
+    '1010': 'BANK',
+    '1200': 'ACCOUNT_RECEIVABLE',
+    '1300': 'INVENTORY_ASSET',
+    '1400': 'INPUT_TAX',
+    '2000': 'ACCOUNT_PAYABLE',
+    '2100': 'OUTPUT_TAX',
+    '4000': 'SALES_REVENUE',
+    '4100': 'SALES_RETURN',
+    '5000': 'COGS_EXPENSE',
+    '5200': 'DISCOUNT_RECEIVED',
+    '4200': 'DISCOUNT_GIVEN',
+    '5300': 'DAMAGED_GOODS_EXPENSE',
+    '5400': 'SHRINKAGE_EXPENSE',
+};
+
+async function seedAccountsViaAccountingRoutes(): Promise<SeedResult> {
+    const existingAccounts = await api.get('/accounting/accounts').then((r) => r.data.data as SeedResult['accounts']);
+    const existingCodes = new Set(existingAccounts.map((account) => account.code));
+
+    let accountsCreated = 0;
+    for (const account of DEFAULT_SEED_ACCOUNTS) {
+        if (existingCodes.has(account.code)) continue;
+        await api.post('/accounting/accounts', account);
+        accountsCreated += 1;
+    }
+
+    const allAccounts = await api.get('/accounting/accounts').then((r) => r.data.data as SeedResult['accounts']);
+    const accountByCode = new Map(allAccounts.map((account) => [account.code, account]));
+    const existingMappings = await api.get('/accounting/mappings').then((r) => r.data.data as Array<{
+        mappingType: string;
+        entityType: string;
+        entityId?: string | null;
+    }>);
+
+    const existingGlobalMappings = new Set(
+        existingMappings
+            .filter((mapping) => mapping.entityType === 'GLOBAL' && !mapping.entityId)
+            .map((mapping) => mapping.mappingType)
+    );
+
+    const mappings: SeedResult['mappings'] = [];
+    for (const [code, mappingType] of Object.entries(AUTO_MAPPING_RULES)) {
+        const account = accountByCode.get(code);
+        if (!account || existingGlobalMappings.has(mappingType)) continue;
+
+        await api.post('/accounting/mappings', {
+            mappingType,
+            entityType: 'GLOBAL',
+            entityId: null,
+            accountId: account.id,
+        });
+        mappings.push({ mappingType, code, name: account.name });
+    }
+
+    return {
+        accountsCreated,
+        accountsExisted: existingAccounts.length,
+        totalAccounts: allAccounts.length,
+        mappingsCreated: mappings.length,
+        accounts: allAccounts,
+        mappings,
+    };
+}
+
 const MAPPING_TYPE_LABELS: Record<string, { label: string; icon: typeof Wallet }> = {
     CASH: { label: 'Cash', icon: Wallet },
     BANK: { label: 'Bank', icon: Landmark },
@@ -53,7 +140,7 @@ const MAPPING_TYPE_LABELS: Record<string, { label: string; icon: typeof Wallet }
     SHRINKAGE_EXPENSE: { label: 'Shrinkage', icon: Receipt },
 };
 
-const currencyOptions = ['SAR', 'USD', 'EUR', 'GBP', 'AED', 'PKR', 'INR', 'KWD', 'QAR'];
+const currencyOptions = ['SAR', 'USD', 'EUR', 'GBP', 'AED', 'BDT', 'PKR', 'INR', 'KWD', 'QAR'];
 const dateFormats = ['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD'];
 const timezoneOptions = [
     'Asia/Riyadh', 'Asia/Dubai', 'UTC', 'Europe/London',
@@ -223,8 +310,13 @@ export default function SetupWizard() {
     // ── One-click Smart Setup: Seed accounts + Auto-map ──
     const seedMut = useMutation({
         mutationFn: async () => {
-            const res = await api.post('/companies/me/seed-accounts');
-            return res.data.data as SeedResult;
+            try {
+                const res = await api.post('/companies/me/seed-accounts');
+                return res.data.data as SeedResult;
+            } catch (err: any) {
+                if (err.response?.status !== 404) throw err;
+                return seedAccountsViaAccountingRoutes();
+            }
         },
         onSuccess: (data) => {
             setSeedResult(data);
