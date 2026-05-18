@@ -1,10 +1,14 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { format } from 'date-fns';
+import { formatTaxLabel, resolveEffectiveTaxRate, useCompanyTaxSettings } from '../../lib/tax';
+import { PDF_BASE_FONT_FAMILY, ensurePdfFontsRegistered, getPdfTextStyle } from '../../lib/pdfFonts';
+
+ensurePdfFontsRegistered();
 
 const styles = StyleSheet.create({
     page: {
         padding: 30,
-        fontFamily: 'Helvetica',
+        fontFamily: PDF_BASE_FONT_FAMILY,
         fontSize: 8,
         color: '#1e293b',
         backgroundColor: '#ffffff',
@@ -192,6 +196,7 @@ interface PurchaseInvoicePdfProps {
 }
 
 export const PurchaseInvoicePdf = ({ purchase, companyName, currency }: PurchaseInvoicePdfProps) => {
+    const companyTax = useCompanyTaxSettings();
     const items = purchase.items || [];
     const totalQty = items.reduce((sum: number, item: any) => sum + Number(item.qty || 0), 0);
 
@@ -200,7 +205,7 @@ export const PurchaseInvoicePdf = ({ purchase, companyName, currency }: Purchase
             <Page size="A4" style={styles.page}>
                 <View style={styles.header} fixed>
                     <View>
-                        <Text style={styles.companyName}>{companyName}</Text>
+                        <Text style={[styles.companyName, getPdfTextStyle(companyName)]}>{companyName}</Text>
                         <Text style={styles.documentType}>Purchase Invoice</Text>
                     </View>
                     <View style={styles.headerRight}>
@@ -215,18 +220,18 @@ export const PurchaseInvoicePdf = ({ purchase, companyName, currency }: Purchase
                     <View style={styles.addressBox}>
                         <Text style={styles.addressLabel}>SUPPLIER</Text>
                         <View style={{ lineHeight: 1.4 }}>
-                            <Text style={styles.addressBold}>{purchase.supplier?.name || 'N/A'}</Text>
+                            <Text style={[styles.addressBold, getPdfTextStyle(purchase.supplier?.name || 'N/A')]}>{purchase.supplier?.name || 'N/A'}</Text>
                             {purchase.supplier?.supplierCode && <Text>Code: {purchase.supplier.supplierCode}</Text>}
-                            {purchase.invoiceNoSupplier && <Text style={{ fontWeight: 'bold', color: '#1e293b' }}>Ref: {purchase.invoiceNoSupplier}</Text>}
+                            {purchase.invoiceNoSupplier && <Text style={[{ fontWeight: 'bold', color: '#1e293b' }, getPdfTextStyle(purchase.invoiceNoSupplier)]}>Ref: {purchase.invoiceNoSupplier}</Text>}
                             {purchase.supplier?.phone && <Text>T: {purchase.supplier.phone}</Text>}
                         </View>
                     </View>
                     <View style={styles.addressBox}>
                         <Text style={styles.addressLabel}>SHIP TO / BILL TO</Text>
                         <View style={{ lineHeight: 1.4 }}>
-                            <Text style={styles.addressBold}>{companyName}</Text>
-                            <Text>Branch: {purchase.branch?.name || '-'}</Text>
-                            {purchase.branch?.address && <Text>{purchase.branch.address}</Text>}
+                            <Text style={[styles.addressBold, getPdfTextStyle(companyName)]}>{companyName}</Text>
+                            <Text>Branch: <Text style={getPdfTextStyle(purchase.branch?.name)}>{purchase.branch?.name || '-'}</Text></Text>
+                            {purchase.branch?.address && <Text style={getPdfTextStyle(purchase.branch.address)}>{purchase.branch.address}</Text>}
                         </View>
                     </View>
                 </View>
@@ -248,7 +253,7 @@ export const PurchaseInvoicePdf = ({ purchase, companyName, currency }: Purchase
                         const qty = Number(item.qty || 0);
                         const unitExVat = Number(item.unitCost || 0);
                         const taxAmount = Number(item.taxAmount || 0);
-                        const taxRate = Number(item.taxRate ?? item.product?.tax?.rate ?? item.product?.taxRate ?? 0.15);
+                        const taxRate = resolveEffectiveTaxRate([item.taxRate, item.product?.tax?.rate, item.product?.taxRate], companyTax);
 
                         const unitIncVat = unitExVat * (1 + taxRate);
                         const lineGrossExVat = qty * unitExVat;
@@ -262,13 +267,13 @@ export const PurchaseInvoicePdf = ({ purchase, companyName, currency }: Purchase
                             <View key={idx} style={styles.tableRow} wrap={false}>
                                 <View style={[styles.cell, styles.colSN]}><Text style={{ textAlign: 'center', fontSize: 7 }}>{idx + 1}</Text></View>
                                 <View style={[styles.cell, styles.colItem]}>
-                                    <Text style={styles.itemMain}>{item.product?.name || item.description}</Text>
-                                    {item.product?.nameArabic && <Text style={styles.itemArabic}>{item.product.nameArabic}</Text>}
+                                    <Text style={[styles.itemMain, getPdfTextStyle(item.product?.name || item.description)]}>{item.product?.name || item.description}</Text>
+                                    {item.product?.nameArabic && <Text style={[styles.itemArabic, getPdfTextStyle(item.product.nameArabic)]}>{item.product.nameArabic}</Text>}
                                     <Text style={styles.itemCode}>{item.product?.itemCode || '-'}</Text>
                                 </View>
                                 <View style={[styles.cell, styles.colQty]}><Text style={{ textAlign: 'center', fontSize: 7 }}>{qty}</Text></View>
                                 <View style={[styles.cell, styles.colUnitName]}>
-                                    <Text style={{ textAlign: 'center', fontSize: 7, fontWeight: 'bold' }}>
+                                    <Text style={[{ textAlign: 'center', fontSize: 7, fontWeight: 'bold' }, getPdfTextStyle(unitName)]}>
                                         {unitName} x{fraction}
                                     </Text>
                                     <Text style={{ textAlign: 'center', fontSize: 6, color: '#64748b', marginTop: 2 }}>{item.unitCode}</Text>
@@ -288,12 +293,12 @@ export const PurchaseInvoicePdf = ({ purchase, companyName, currency }: Purchase
                         {purchase.notes && (
                             <>
                                 <Text style={styles.addressLabel}>ADMIN NOTES</Text>
-                                <Text style={{ fontSize: 7, color: '#475569', fontStyle: 'italic', marginBottom: 15 }}>{purchase.notes}</Text>
+                                <Text style={[{ fontSize: 7, color: '#475569', fontStyle: 'italic', marginBottom: 15 }, getPdfTextStyle(purchase.notes)]}>{purchase.notes}</Text>
                             </>
                         )}
                         <Text style={styles.addressLabel}>AUTHORIZATION</Text>
-                        <Text style={{ fontSize: 9, color: '#334155' }}>Issued by: <Text style={{ fontWeight: 'bold' }}>{purchase.createdBy?.name || '-'}</Text></Text>
-                        <Text style={{ marginTop: 2, fontSize: 7, color: '#94a3b8' }}>Processed at {purchase.branch?.name || '-'}</Text>
+                        <Text style={{ fontSize: 9, color: '#334155' }}>Issued by: <Text style={[{ fontWeight: 'bold' }, getPdfTextStyle(purchase.createdBy?.name)]}>{purchase.createdBy?.name || '-'}</Text></Text>
+                        <Text style={{ marginTop: 2, fontSize: 7, color: '#94a3b8' }}>Processed at <Text style={getPdfTextStyle(purchase.branch?.name)}>{purchase.branch?.name || '-'}</Text></Text>
                     </View>
 
                     <View style={styles.summaryBox}>
@@ -307,7 +312,7 @@ export const PurchaseInvoicePdf = ({ purchase, companyName, currency }: Purchase
                             <Text style={styles.summaryValue}>{Number(purchase.subtotal).toFixed(2)} {currency}</Text>
                         </View>
                         <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>Tax Amount (15%)</Text>
+                            <Text style={styles.summaryLabel}>{formatTaxLabel(companyTax)}</Text>
                             <Text style={styles.summaryValue}>{Number(purchase.taxTotal).toFixed(2)} {currency}</Text>
                         </View>
                         <View style={styles.netTotalRow}>
@@ -318,7 +323,7 @@ export const PurchaseInvoicePdf = ({ purchase, companyName, currency }: Purchase
                 </View>
 
                 <Text style={styles.footerNote} fixed>
-                    Official Purchase Invoice. System generated document. {companyName} ERP.
+                    Official Purchase Invoice. System generated document. <Text style={getPdfTextStyle(companyName)}>{companyName}</Text> ERP.
                 </Text>
             </Page>
         </Document>

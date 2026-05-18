@@ -1,5 +1,7 @@
 import { X, Printer } from 'lucide-react';
 import { printHtmlDocument } from '../../lib/fileExport';
+import { formatCurrencyAmount, useCompanyCurrency } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 interface LabelPrintModalProps {
     isOpen: boolean;
@@ -8,6 +10,9 @@ interface LabelPrintModalProps {
 }
 
 export default function LabelPrintModal({ isOpen, onClose, product }: LabelPrintModalProps) {
+    const currency = useCompanyCurrency();
+    const companyName = useAuthStore((s) => s.user?.company?.name) || 'Company';
+
     if (!isOpen || !product) return null;
 
     const handlePrint = () => {
@@ -17,7 +22,7 @@ export default function LabelPrintModal({ isOpen, onClose, product }: LabelPrint
 
         const html = `
             <div style="width:280px;border:1px solid #000;padding:14px;border-radius:8px;font-family:Arial,sans-serif;">
-                <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">SOLVANTA ERP</div>
+                <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">${String(companyName)}</div>
                 <div style="font-size:14px;font-weight:800;text-transform:uppercase;line-height:1.2;margin-bottom:10px;">
                     ${String(product.name || '')}
                 </div>
@@ -29,7 +34,7 @@ export default function LabelPrintModal({ isOpen, onClose, product }: LabelPrint
                     <div>
                         <div style="font-size:9px;text-transform:uppercase;color:#334155;">Price (Incl. VAT)</div>
                         <div style="font-size:18px;font-weight:800;">
-                            ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR' }).format(product.salePrice || 0)}
+                            ${formatCurrencyAmount(product.salePrice || 0, currency)}
                         </div>
                     </div>
                     <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#475569;">
@@ -59,7 +64,7 @@ export default function LabelPrintModal({ isOpen, onClose, product }: LabelPrint
                 <div className="p-8 flex flex-col items-center gap-6">
                     {/* Preview of Label */}
                     <div className="w-64 border-2 border-dashed border-gray-200 p-4 rounded-lg bg-gray-50 flex flex-col items-center text-center">
-                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">SOLVANTA ERP</div>
+                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{companyName}</div>
                         <div className="text-sm font-black text-gray-900 uppercase leading-tight line-clamp-2 mb-2">{product.name}</div>
 
                         {/* Mock Barcode */}
@@ -76,7 +81,7 @@ export default function LabelPrintModal({ isOpen, onClose, product }: LabelPrint
                             <div className="text-left">
                                 <div className="text-[8px] font-bold text-gray-400 uppercase">Price (Incl. VAT)</div>
                                 <div className="text-lg font-black text-blue-600">
-                                    {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR' }).format(product.salePrice || 0)}
+                                    {formatCurrencyAmount(product.salePrice || 0, currency)}
                                 </div>
                             </div>
                             <div className="text-right text-[10px] font-black text-gray-500 uppercase">{product.category?.name || 'GEN'}</div>

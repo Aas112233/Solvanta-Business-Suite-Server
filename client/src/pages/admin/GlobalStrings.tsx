@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { useAuthStore } from '../../stores/authStore';
 import {
     Tags, Plus, Trash2, Search, Loader2,
@@ -13,6 +13,10 @@ import {
     ChevronRight, Hash, Globe, Layers
 } from 'lucide-react';
 import AppDropdown from '../../components/ui/AppDropdown';
+import {
+    DEFAULT_PURCHASE_PAYMENT_METHOD_GLOBAL_STRINGS,
+    DEFAULT_SALE_PAYMENT_METHOD_GLOBAL_STRINGS,
+} from '../../lib/globalStrings';
 
 // ── Types ───────────────────────────────────────────────────────
 interface GlobalString {
@@ -44,18 +48,10 @@ const PAYMENT_METHOD_GROUPS = new Set(['SALE_PAYMENT_METHOD', 'PURCHASE_PAYMENT_
 const GROUP_DEFAULTS: Record<string, Omit<GlobalString, 'id' | 'group' | 'isActive'>[]> = {
 
     SALE_PAYMENT_METHOD: [
-        { value: 'Cash', systemKey: 'CASH', color: '#10b981' },
-        { value: 'Card', systemKey: 'CARD', color: '#3b82f6' },
-        { value: 'STC Pay', systemKey: 'STC_PAY', color: '#8b5cf6' },
-        { value: 'Bank Transfer', systemKey: 'BANK_TRANSFER', color: '#6b7280' },
-        { value: 'Split Pay', systemKey: 'MIXED', color: '#ec4899' },
-        { value: 'Installments', systemKey: 'INSTALLMENT', color: '#f59e0b' },
-        { value: 'Credit', systemKey: 'CREDIT', color: '#ef4444' },
+        ...DEFAULT_SALE_PAYMENT_METHOD_GLOBAL_STRINGS,
     ],
     PURCHASE_PAYMENT_METHOD: [
-        { value: 'Cash', systemKey: 'CASH', color: '#10b981' },
-        { value: 'Bank Transfer', systemKey: 'BANK_TRANSFER', color: '#6b7280' },
-        { value: 'Credit', systemKey: 'CREDIT', color: '#f59e0b' },
+        ...DEFAULT_PURCHASE_PAYMENT_METHOD_GLOBAL_STRINGS,
     ],
     EXPENSE_CATEGORY: [
         { value: 'Rent' }, { value: 'Utilities' }, { value: 'Salaries' },

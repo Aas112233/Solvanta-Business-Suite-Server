@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import api from '../../lib/api';
 import { useAuthStore } from '../../stores/authStore';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { formatCompanyDate, toDateInputValue, useCompanyRegionalSettings } from '../../lib/companySettings';
 import {
     buildPaymentMethodOptions,
     DEFAULT_SALE_PAYMENT_METHOD_OPTIONS,
     GLOBAL_STRING_GROUPS,
+    SALE_RECEIPT_PAYMENT_METHOD_KEYS,
 } from '../../lib/globalStrings';
 
 export default function ReceiveSalesPayment() {
@@ -16,6 +18,7 @@ export default function ReceiveSalesPayment() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const regionalSettings = useCompanyRegionalSettings();
 
     const initialInvoiceId = searchParams.get('invoiceId') || '';
     const initialCustomerId = searchParams.get('customerId') || '';
@@ -25,7 +28,7 @@ export default function ReceiveSalesPayment() {
     const [invoiceId, setInvoiceId] = useState(initialInvoiceId);
     const [amount, setAmount] = useState(initialAmount);
     const [paymentMethod, setPaymentMethod] = useState('');
-    const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const [paymentDate, setPaymentDate] = useState(() => toDateInputValue(undefined, regionalSettings));
     const [referenceNo, setReferenceNo] = useState('');
     const [notes, setNotes] = useState('');
     const [prefilledInvoiceId, setPrefilledInvoiceId] = useState('');
@@ -56,7 +59,7 @@ export default function ReceiveSalesPayment() {
         () =>
             buildPaymentMethodOptions(globalPaymentMethods, DEFAULT_SALE_PAYMENT_METHOD_OPTIONS, {
                 blankLabel: 'Select Method',
-                allowedKeys: ['CASH', 'CARD', 'BANK_TRANSFER', 'STC_PAY'],
+                allowedKeys: SALE_RECEIPT_PAYMENT_METHOD_KEYS,
             }),
         [globalPaymentMethods]
     );
@@ -279,7 +282,7 @@ export default function ReceiveSalesPayment() {
                         <p className="text-sm text-gray-500">No payment history found</p>
                     ) : (paymentData?.payments || []).map((payment: any) => (
                         <div key={payment.id} className="flex items-center justify-between border-b border-gray-100 pb-2 text-sm">
-                            <span>{payment.paymentNo} · {new Date(payment.paymentDate).toLocaleDateString()} · {payment.paymentMethod}</span>
+                            <span>{payment.paymentNo} · {formatCompanyDate(payment.paymentDate, regionalSettings)} · {payment.paymentMethod}</span>
                             <span className="font-semibold">{Number(payment.amount || 0).toFixed(2)} {currency}</span>
                         </div>
                     ))}

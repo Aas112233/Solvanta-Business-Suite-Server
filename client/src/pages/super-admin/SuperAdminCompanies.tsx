@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { Search } from 'lucide-react';
 import {
     bulkUpdateTenantStatus,
@@ -11,6 +11,7 @@ import {
     updateTenantStatus,
 } from './api';
 import { useAuthStore } from '../../stores/authStore';
+import { DEFAULT_COMPANY_CURRENCY } from '../../lib/companySettings';
 import { SUPER_ADMIN_PERMISSIONS } from '../../lib/superAdminPermissions';
 import SuperAdminAccessCard from './SuperAdminAccessCard';
 import TenantStatusDialog from './TenantStatusDialog';
@@ -52,7 +53,7 @@ export default function SuperAdminCompanies() {
     const [statusReason, setStatusReason] = useState('');
     const [form, setForm] = useState({
         companyName: '',
-        currency: 'SAR',
+        currency: DEFAULT_COMPANY_CURRENCY,
         vatNumber: '',
         contactEmail: '',
         contactPhone: '',
@@ -151,7 +152,7 @@ export default function SuperAdminCompanies() {
             setShowCreateForm(false);
             setForm({
                 companyName: '',
-                currency: 'SAR',
+                currency: DEFAULT_COMPANY_CURRENCY,
                 vatNumber: '',
                 contactEmail: '',
                 contactPhone: '',

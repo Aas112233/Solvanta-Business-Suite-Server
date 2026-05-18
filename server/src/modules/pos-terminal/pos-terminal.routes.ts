@@ -28,6 +28,7 @@ const terminalSchema = z.object({
     policy: z.object({
         allowedPaymentMethods: z.array(z.string()).optional(),
         allowCreditSales: z.boolean().optional(),
+        allowPriceChange: z.boolean().optional(),
         maxDiscountPct: z.number().min(0).max(100).optional(),
         returnWindowDays: z.number().min(0).max(365).optional(),
         allowPosReturns: z.boolean().optional(),

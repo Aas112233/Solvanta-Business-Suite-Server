@@ -12,6 +12,8 @@ import { resolveSuperAdminAccess } from '../../middleware/superAdmin.js';
 import { buildTenantLimitSnapshot, enforceTenantCreateWithinLimit } from '../super-admin/tenant-intelligence.js';
 import { getSuperAdminSettings, resolveFeatureFlags, resolveTenantBilling, resolveTenantLimits } from '../super-admin/super-admin.settings.js';
 import { loadUserAssignedBranches } from './user-profile.utils.js';
+import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
+import { resolveCompanyDocumentSettings, resolveCompanyRegionalSettings } from '../../utils/companySettings.js';
 
 export const userRoutes = Router();
 userRoutes.use(authenticate);
@@ -134,12 +136,18 @@ userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) =>
         const companySettings = (safe.company?.settings && typeof safe.company.settings === 'object' && !Array.isArray(safe.company.settings))
             ? safe.company.settings as Record<string, any>
             : {};
+        const taxSettings = resolveCompanyTaxSettings(companySettings);
+        const regionalSettings = resolveCompanyRegionalSettings(companySettings);
+        const documentSettings = resolveCompanyDocumentSettings(companySettings);
         const companyData = {
             id: safe.company.id,
             name: safe.company.name,
             currency: safe.company.currency,
             logoUrl: safe.company.logoUrl,
             setupCompleted: companySettings.setupCompleted !== false, // default true for existing companies
+            regionalSettings,
+            documentSettings,
+            taxSettings,
         };
         const superAdminSettings = getSuperAdminSettings(safe.company.settings);
         const enabledModules = resolveFeatureFlags(superAdminSettings.featureFlags);

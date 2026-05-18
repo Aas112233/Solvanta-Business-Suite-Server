@@ -31,9 +31,11 @@ import {
     DEFAULT_SALE_PAYMENT_METHOD_OPTIONS,
     GLOBAL_STRING_GROUPS,
 } from '../../lib/globalStrings';
+import { useCompanyCurrency } from '../../lib/companySettings';
 
 export default function UnpostedInvoices() {
     const queryClient = useQueryClient();
+    const currency = useCompanyCurrency();
     const [showFilters, setShowFilters] = useState(false);
     const [searchInput, setSearchInput] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
@@ -253,7 +255,7 @@ export default function UnpostedInvoices() {
                     </div>
                     <div>
                         <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">Total Value</p>
-                        <p className="text-2xl font-black text-gray-900">{totalUnpostedAmount.toLocaleString()} <span className="text-sm font-normal text-gray-400">SAR</span></p>
+                        <p className="text-2xl font-black text-gray-900">{totalUnpostedAmount.toLocaleString()} <span className="text-sm font-normal text-gray-400">{currency}</span></p>
                     </div>
                 </div>
 
@@ -462,7 +464,7 @@ export default function UnpostedInvoices() {
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 text-right">
-                                            <span className="font-black text-gray-900">{inv.grandTotal.toLocaleString()} SAR</span>
+                                            <span className="font-black text-gray-900">{inv.grandTotal.toLocaleString()} {currency}</span>
                                         </td>
                                         <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                                             <button
@@ -487,7 +489,7 @@ export default function UnpostedInvoices() {
                 title="Invoice Details"
                 documentNo={viewingInvoice?.invoiceNo}
                 document={viewingInvoice}
-                currency="SAR"
+                currency={currency}
                 customerDisplay={viewingInvoice ? {
                     title: getSalesCustomerDisplay(viewingInvoice).title,
                     detail: getSalesCustomerDisplay(viewingInvoice).isWalkInLoyalty

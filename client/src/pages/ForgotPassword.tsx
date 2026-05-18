@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { Mail, ArrowLeft } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { z } from 'zod';
 import { Button, Card, Input } from '../components/ui';
 

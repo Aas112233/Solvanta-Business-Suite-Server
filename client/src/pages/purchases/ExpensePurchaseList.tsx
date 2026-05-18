@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import api from '../../lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { Plus, Trash2, Edit, Eye, Loader2 } from 'lucide-react';
 import AppLoader from '../../components/ui/AppLoader';
 import Pagination from '../../components/ui/Pagination';
+import { formatCompanyDate, formatCurrencyAmount, resolveCompanyCurrency } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 interface ExpensePurchase {
     id: string;
@@ -23,6 +25,8 @@ interface ExpensePurchase {
 export default function ExpensePurchaseList() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
     const [page, setPage] = useState(1);
     const limit = 20;
 
@@ -49,7 +53,7 @@ export default function ExpensePurchaseList() {
         {
             header: 'Date',
             accessorKey: 'createdAt',
-            cell: ({ row }: any) => new Date(row.original.createdAt).toLocaleDateString(),
+            cell: ({ row }: any) => formatCompanyDate(row.original.createdAt, company),
         },
         {
             header: 'Invoice No',
@@ -101,7 +105,7 @@ export default function ExpensePurchaseList() {
         {
             header: 'Amount',
             accessorKey: 'totalAmount',
-            cell: ({ row }: any) => `SAR ${Number(row.original.totalAmount).toFixed(2)}`,
+            cell: ({ row }: any) => formatCurrencyAmount(Number(row.original.totalAmount || 0), currency),
         },
         {
             header: 'Items',
@@ -175,7 +179,7 @@ export default function ExpensePurchaseList() {
                             {(data?.data || []).map((expense: any) => (
                                 <tr key={expense.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/purchases/expense/${expense.id}`)}>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {new Date(expense.createdAt).toLocaleDateString()}
+                                        {formatCompanyDate(expense.createdAt, company)}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                         {expense.invoiceNo || '-'}
@@ -205,7 +209,7 @@ export default function ExpensePurchaseList() {
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        SAR {Number(expense.totalAmount).toFixed(2)}
+                                        {formatCurrencyAmount(Number(expense.totalAmount || 0), currency)}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                         {expense._count.items}

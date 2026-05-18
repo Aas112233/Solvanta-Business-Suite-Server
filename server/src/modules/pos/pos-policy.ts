@@ -2,12 +2,14 @@ import jwt from 'jsonwebtoken';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/prisma.js';
 import { AppError } from '../../utils/AppError.js';
+import { POS_PAYMENT_METHODS } from '../../utils/paymentMethods.js';
 
 export type PosPricePriority = 'CUSTOMER_FIRST' | 'TERMINAL_FIRST';
 
 export type PosTerminalPolicy = {
     allowedPaymentMethods: string[];
     allowCreditSales: boolean;
+    allowPriceChange: boolean;
     maxDiscountPct: number;
     returnWindowDays: number;
     allowPosReturns: boolean;
@@ -29,8 +31,9 @@ export type PosSessionPayload = {
 const POS_SESSION_EXPIRY = '12h';
 
 const DEFAULT_POLICY: PosTerminalPolicy = {
-    allowedPaymentMethods: ['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER'],
+    allowedPaymentMethods: [...POS_PAYMENT_METHODS],
     allowCreditSales: true,
+    allowPriceChange: true,
     maxDiscountPct: 100,
     returnWindowDays: 30,
     allowPosReturns: true,
@@ -56,6 +59,7 @@ function sanitizePolicy(raw: any): PosTerminalPolicy {
     return {
         allowedPaymentMethods: uniqueMethods.length ? uniqueMethods : DEFAULT_POLICY.allowedPaymentMethods,
         allowCreditSales: raw?.allowCreditSales === false ? false : true,
+        allowPriceChange: raw?.allowPriceChange === false ? false : true,
         maxDiscountPct: Number.isFinite(maxDiscountPct) ? Math.min(100, Math.max(0, maxDiscountPct)) : DEFAULT_POLICY.maxDiscountPct,
         returnWindowDays: Number.isFinite(returnWindowDays) ? Math.min(365, Math.max(0, returnWindowDays)) : DEFAULT_POLICY.returnWindowDays,
         allowPosReturns: raw?.allowPosReturns === false ? false : true,

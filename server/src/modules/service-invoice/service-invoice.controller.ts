@@ -3,6 +3,7 @@ import { prisma } from '../../lib/prisma.js';
 import { AppError } from '../../utils/AppError.js';
 import { formatDocNo, nextCounter } from '../../utils/documentCounter.js';
 import { sendSuccess } from '../../utils/response.js';
+import { normalizePaymentMethodKey, SERVICE_INVOICE_PAYMENT_METHODS } from '../../utils/paymentMethods.js';
 
 interface ServiceInvoiceItemInput {
     serviceId?: string | null;
@@ -14,7 +15,6 @@ interface ServiceInvoiceItemInput {
     discount?: number;
 }
 
-export const SERVICE_INVOICE_PAYMENT_METHODS = ['CASH', 'CARD', 'BANK_TRANSFER', 'STC_PAY', 'CREDIT'] as const;
 const SUPPORTED_PAYMENT_METHODS = new Set<string>(SERVICE_INVOICE_PAYMENT_METHODS);
 
 function roundMoney(value: number): number {
@@ -64,7 +64,7 @@ export const createServiceInvoice = async (req: Request, res: Response) => {
             throw AppError.forbidden('You do not have access to create invoices for this branch');
         }
 
-        const normalizedPaymentMethod = String(paymentMethod || 'CASH').trim().toUpperCase();
+        const normalizedPaymentMethod = normalizePaymentMethodKey(paymentMethod, 'CASH');
         if (!SUPPORTED_PAYMENT_METHODS.has(normalizedPaymentMethod)) {
             throw AppError.badRequest('Unsupported payment method');
         }

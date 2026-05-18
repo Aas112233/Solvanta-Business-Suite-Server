@@ -3,6 +3,7 @@ import { env } from './config/env.js';
 import { basePrisma, prisma } from './lib/prisma.js';
 import { logger } from './lib/logger.js';
 import { ensureDatabaseIndexes } from './lib/indexManager.js';
+import { ensureConfiguredSuperAdmin } from './bootstrap/superAdmin.js';
 import os from 'os';
 
 const MAX_RETRIES = 5;
@@ -65,6 +66,7 @@ async function main() {
 
         // Ensure database indexes are created for optimal performance
         await ensureDatabaseIndexes();
+        await ensureConfiguredSuperAdmin({ source: 'startup' });
 
         app.listen(Number(env.PORT), env.HOST, () => {
             const localUrl = `http://localhost:${env.PORT}`;

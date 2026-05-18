@@ -518,7 +518,7 @@ model Tax {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   companyId String   @db.ObjectId
   name      String
-  rate      Float // e.g. 0.15 for 15%
+  rate      Float // Decimal percentage, e.g. 0.10 for 10%
   type      TaxType  @default(BOTH)
   isActive  Boolean  @default(true)
   isDefault Boolean  @default(false)
@@ -539,6 +539,7 @@ model Category {
   name      String
   parentId  String?  @db.ObjectId
   code      String?
+  defaultProfitMarginPct Float? @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -611,7 +612,7 @@ model Product {
   kind        ProductKind @default(MERCHANDISE)
 
   taxId     String?       @db.ObjectId
-  taxRate   Float         @default(0.15) // Legacy field, keeping for fallback
+  taxRate   Float         @default(0) // Legacy field, keeping for fallback
   status    ProductStatus @default(ACTIVE)
   deletedAt DateTime?
   createdAt DateTime      @default(now())
@@ -649,6 +650,7 @@ model Product {
   @@index([companyId, kind])
   @@index([companyId, categoryId, status])
   @@index([companyId, itemGroupId, status])
+  @@index([companyId, name])
   @@map("products")
 }
 

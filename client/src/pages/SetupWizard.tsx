@@ -3,8 +3,14 @@ import AppLoader from '../components/ui/AppLoader';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import {
+    DEFAULT_COMPANY_CURRENCY,
+    DEFAULT_COMPANY_DOCUMENT_SETTINGS,
+    DEFAULT_COMPANY_REGIONAL_SETTINGS,
+} from '../lib/companySettings';
+import { DEFAULT_COMPANY_TAX_SETTINGS, resolveCompanyTaxSettings } from '../lib/tax';
 import { useAuthStore } from '../stores/authStore';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import AppDropdown from '../components/ui/AppDropdown';
 import {
     Building2, Globe, Receipt, Landmark, CreditCard, CheckCircle2,
@@ -188,20 +194,26 @@ export default function SetupWizard() {
 
     // Company profile form state
     const [profile, setProfile] = useState({
-        name: '', vatNumber: '', currency: 'SAR', logoUrl: '',
+        name: '', vatNumber: '', currency: DEFAULT_COMPANY_CURRENCY, logoUrl: '',
         contactPhone: '', contactEmail: '', website: '', address: '',
     });
 
     // Regional & Tax form state
     const [regional, setRegional] = useState({
-        timezone: 'Asia/Riyadh', dateFormat: 'DD/MM/YYYY', timeFormat: '24H' as '12H' | '24H',
-        language: 'en', taxLabel: 'VAT', defaultTaxRate: 0.15,
+        timezone: DEFAULT_COMPANY_REGIONAL_SETTINGS.timezone,
+        dateFormat: DEFAULT_COMPANY_REGIONAL_SETTINGS.dateFormat,
+        timeFormat: DEFAULT_COMPANY_REGIONAL_SETTINGS.timeFormat,
+        language: DEFAULT_COMPANY_REGIONAL_SETTINGS.language,
+        taxLabel: DEFAULT_COMPANY_TAX_SETTINGS.label,
+        defaultTaxRate: DEFAULT_COMPANY_TAX_SETTINGS.defaultRate,
     });
 
     // Operational defaults
     const [operational, setOperational] = useState({
-        lowStockThreshold: 10, invoicePrefix: 'INV',
-        quotationPrefix: 'QUO', salesOrderPrefix: 'SO',
+        lowStockThreshold: 10,
+        invoicePrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.invoicePrefix,
+        quotationPrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.quotationPrefix,
+        salesOrderPrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.salesOrderPrefix,
     });
 
     // ── Fetch company data ──
@@ -224,14 +236,14 @@ export default function SetupWizard() {
         const s = company.settings || {};
         const contact = s.contact || {};
         const reg = s.regional || {};
-        const tax = s.tax || {};
+        const tax = resolveCompanyTaxSettings(s);
         const inv = s.inventory || {};
         const docs = s.documents || {};
 
         setProfile({
             name: company.name || '',
             vatNumber: company.vatNumber || '',
-            currency: company.currency || 'SAR',
+            currency: company.currency || DEFAULT_COMPANY_CURRENCY,
             logoUrl: company.logoUrl || '',
             contactPhone: contact.phone || '',
             contactEmail: contact.email || '',
@@ -239,18 +251,18 @@ export default function SetupWizard() {
             address: contact.address || '',
         });
         setRegional({
-            timezone: reg.timezone || 'Asia/Riyadh',
-            dateFormat: reg.dateFormat || 'DD/MM/YYYY',
-            timeFormat: reg.timeFormat || '24H',
-            language: reg.language || 'en',
-            taxLabel: tax.label || 'VAT',
-            defaultTaxRate: tax.defaultRate ?? 0.15,
+            timezone: reg.timezone || DEFAULT_COMPANY_REGIONAL_SETTINGS.timezone,
+            dateFormat: reg.dateFormat || DEFAULT_COMPANY_REGIONAL_SETTINGS.dateFormat,
+            timeFormat: reg.timeFormat || DEFAULT_COMPANY_REGIONAL_SETTINGS.timeFormat,
+            language: reg.language || DEFAULT_COMPANY_REGIONAL_SETTINGS.language,
+            taxLabel: tax.label,
+            defaultTaxRate: tax.defaultRate,
         });
         setOperational({
             lowStockThreshold: inv.lowStockThreshold ?? 10,
-            invoicePrefix: docs.invoicePrefix || 'INV',
-            quotationPrefix: docs.quotationPrefix || 'QUO',
-            salesOrderPrefix: docs.salesOrderPrefix || 'SO',
+            invoicePrefix: docs.invoicePrefix || DEFAULT_COMPANY_DOCUMENT_SETTINGS.invoicePrefix,
+            quotationPrefix: docs.quotationPrefix || DEFAULT_COMPANY_DOCUMENT_SETTINGS.quotationPrefix,
+            salesOrderPrefix: docs.salesOrderPrefix || DEFAULT_COMPANY_DOCUMENT_SETTINGS.salesOrderPrefix,
         });
     }, [company]);
 
@@ -290,16 +302,16 @@ export default function SetupWizard() {
                         language: regional.language.trim() || 'en',
                     },
                     tax: {
-                        label: regional.taxLabel.trim() || 'VAT',
+                        label: regional.taxLabel.trim() || DEFAULT_COMPANY_TAX_SETTINGS.label,
                         defaultRate: Number(regional.defaultTaxRate || 0),
                     },
                     inventory: {
                         lowStockThreshold: Number(operational.lowStockThreshold || 0),
                     },
                     documents: {
-                        invoicePrefix: operational.invoicePrefix.trim() || 'INV',
-                        quotationPrefix: operational.quotationPrefix.trim() || 'QUO',
-                        salesOrderPrefix: operational.salesOrderPrefix.trim() || 'SO',
+                        invoicePrefix: operational.invoicePrefix.trim() || DEFAULT_COMPANY_DOCUMENT_SETTINGS.invoicePrefix,
+                        quotationPrefix: operational.quotationPrefix.trim() || DEFAULT_COMPANY_DOCUMENT_SETTINGS.quotationPrefix,
+                        salesOrderPrefix: operational.salesOrderPrefix.trim() || DEFAULT_COMPANY_DOCUMENT_SETTINGS.salesOrderPrefix,
                     },
                 },
             };

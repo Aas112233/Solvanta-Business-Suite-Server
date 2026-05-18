@@ -1,10 +1,13 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { format } from 'date-fns';
+import { PDF_BASE_FONT_FAMILY, ensurePdfFontsRegistered, getPdfTextStyle } from '../../lib/pdfFonts';
+
+ensurePdfFontsRegistered();
 
 const styles = StyleSheet.create({
     page: {
         padding: 30,
-        fontFamily: 'Helvetica',
+        fontFamily: PDF_BASE_FONT_FAMILY,
         fontSize: 8,
         color: '#1e293b',
         backgroundColor: '#ffffff',
@@ -234,7 +237,7 @@ export const SupplierStatementPdf = ({
             <Page size="A4" style={styles.page}>
                 <View style={styles.header} fixed>
                     <View>
-                        <Text style={styles.companyName}>{companyName}</Text>
+                        <Text style={[styles.companyName, getPdfTextStyle(companyName)]}>{companyName}</Text>
                         <Text style={styles.documentType}>Statement of Account</Text>
                     </View>
                     <View style={styles.headerRight}>
@@ -249,20 +252,20 @@ export const SupplierStatementPdf = ({
                     <View style={styles.addressBox}>
                         <Text style={styles.addressLabel}>Account Information</Text>
                         <View style={{ lineHeight: 1.4 }}>
-                            <Text style={styles.addressBold}>{companyName}</Text>
+                            <Text style={[styles.addressBold, getPdfTextStyle(companyName)]}>{companyName}</Text>
                             <Text style={styles.addressLine}>SOLVANTA ERP System</Text>
                         </View>
                     </View>
                     <View style={styles.addressBox}>
                         <Text style={styles.addressLabel}>Supplier Information</Text>
                         <View style={{ lineHeight: 1.4 }}>
-                            <Text style={styles.addressBold}>{supplier?.name || 'Unknown Supplier'}</Text>
+                            <Text style={[styles.addressBold, getPdfTextStyle(supplier?.name || 'Unknown Supplier')]}>{supplier?.name || 'Unknown Supplier'}</Text>
                             <Text style={styles.addressLine}>Code: {supplier?.supplierCode || '-'}</Text>
                             {supplier?.vatNumber ? <Text style={styles.addressLine}>VAT Number: {supplier.vatNumber}</Text> : null}
                             {supplier?.phone ? <Text style={styles.addressLine}>Phone: {supplier.phone}</Text> : null}
                             {supplier?.email ? <Text style={styles.addressLine}>Email: {supplier.email}</Text> : null}
-                            {supplier?.address?.street ? <Text style={styles.addressLine}>{supplier.address.street}</Text> : null}
-                            {supplier?.address?.city ? <Text style={styles.addressLine}>{supplier.address.city}, {supplier.address.country}</Text> : null}
+                            {supplier?.address?.street ? <Text style={[styles.addressLine, getPdfTextStyle(supplier.address.street)]}>{supplier.address.street}</Text> : null}
+                            {supplier?.address?.city ? <Text style={[styles.addressLine, getPdfTextStyle(`${supplier.address.city}, ${supplier.address.country || ''}`)]}>{supplier.address.city}, {supplier.address.country}</Text> : null}
                         </View>
                     </View>
                 </View>
@@ -295,10 +298,10 @@ export const SupplierStatementPdf = ({
                     {ledger.map((row: any, idx: number) => (
                         <View key={idx} style={styles.tableRow} wrap={false}>
                             <View style={styles.colDate}><Text style={styles.tdText}>{formatDate(row.date)}</Text></View>
-                            <View style={styles.colType}><Text style={styles.tdText}>{row.type}</Text></View>
-                            <View style={styles.colRef}><Text style={styles.tdText}>{row.reference}</Text></View>
-                            <View style={styles.colSuppRef}><Text style={styles.tdText}>{row.supplierInvoiceNo || '-'}</Text></View>
-                            <View style={styles.colDesc}><Text style={styles.tdText}>{row.description}</Text></View>
+                            <View style={styles.colType}><Text style={[styles.tdText, getPdfTextStyle(row.type)]}>{row.type}</Text></View>
+                            <View style={styles.colRef}><Text style={[styles.tdText, getPdfTextStyle(row.reference)]}>{row.reference}</Text></View>
+                            <View style={styles.colSuppRef}><Text style={[styles.tdText, getPdfTextStyle(row.supplierInvoiceNo || '-')]}>{row.supplierInvoiceNo || '-'}</Text></View>
+                            <View style={styles.colDesc}><Text style={[styles.tdText, getPdfTextStyle(row.description)]}>{row.description}</Text></View>
                             <View style={styles.colDebit}>
                                 <Text style={styles.tdText}>
                                     {row.debit > 0 ? row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}

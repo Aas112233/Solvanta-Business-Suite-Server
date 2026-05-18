@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Loader2, Plus, Search } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import api from '../../../lib/api';
 import { useAuthStore } from '../../../stores/authStore';
 import ModuleRefreshButton from '../../../components/ModuleRefreshButton';

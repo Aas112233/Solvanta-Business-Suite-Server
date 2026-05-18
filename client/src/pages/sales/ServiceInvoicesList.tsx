@@ -22,6 +22,8 @@ import {
     Badge,
     StatusBadge,
 } from '@/components/ui';
+import { formatCompanyDate, formatCurrencyAmount, resolveCompanyCurrency } from '@/lib/companySettings';
+import { useAuthStore } from '@/stores/authStore';
 
 interface ServiceInvoice {
     id: string;
@@ -47,6 +49,8 @@ interface ServiceInvoice {
 
 export default function ServiceInvoicesList() {
     const navigate = useNavigate();
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedBranch, setSelectedBranch] = useState('');
     const [printingId, setPrintingId] = useState<string | null>(null);
@@ -233,10 +237,10 @@ export default function ServiceInvoicesList() {
                                         </TableCell>
                                         <TableCell align="right">
                                             <div className="font-medium">
-                                                ${invoice.grandTotal.toFixed(2)}
+                                                {formatCurrencyAmount(Number(invoice.grandTotal || 0), currency)}
                                             </div>
                                             <div className="text-xs text-text-tertiary">
-                                                Subtotal: ${invoice.subtotal.toFixed(2)}
+                                                Subtotal: {formatCurrencyAmount(Number(invoice.subtotal || 0), currency)}
                                             </div>
                                         </TableCell>
                                         <TableCell>
@@ -245,7 +249,7 @@ export default function ServiceInvoicesList() {
                                         <TableCell>
                                             <div className="flex items-center gap-1 text-sm">
                                                 <Calendar size={14} className="text-text-tertiary" />
-                                                {new Date(invoice.createdAt).toLocaleDateString()}
+                                                {formatCompanyDate(invoice.createdAt, company)}
                                             </div>
                                         </TableCell>
                                         <TableCell align="right">

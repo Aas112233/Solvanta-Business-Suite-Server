@@ -17,6 +17,7 @@ import {
     X,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
+import { formatCompanyDate, resolveCompanyCurrency, toDateInputValue } from '../../lib/companySettings';
 import AppDropdown from '../ui/AppDropdown';
 
 type FilterPanel = 'branch' | 'supplier' | 'date' | 'item' | 'columns' | null;
@@ -70,16 +71,13 @@ type ReportFilterMasterData = {
     brands: { id: string; name: string }[];
 };
 
-function toISODate(date: Date): string {
-    return date.toISOString().slice(0, 10);
-}
-
 function money(value: number, currency: string) {
     return `${currency} ${Number(value || 0).toLocaleString()}`;
 }
 
 export default function PurchaseInvoicesReport() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
     const [panel, setPanel] = useState<FilterPanel>(null);
     const [localBranchId, setLocalBranchId] = useState('');
     const [localSupplierId, setLocalSupplierId] = useState('');
@@ -148,6 +146,8 @@ export default function PurchaseInvoicesReport() {
     const activeFilterCount = [localBranchId, localSupplierId, localProductId, localGroupId, localCategoryId, localBrandId, dateFrom || dateTo, showItems ? '1' : ''].filter(Boolean).length;
     const branchName = branches.find((b) => b.id === localBranchId)?.name || 'All Warehouses';
     const supplierName = suppliers.find((s) => s.id === localSupplierId)?.name || 'All Suppliers';
+    const formatRangeDate = (value: string) => (value ? formatCompanyDate(value, company) : 'Any');
+    const dateLabel = dateFrom || dateTo ? `${formatRangeDate(dateFrom)} to ${formatRangeDate(dateTo)}` : 'All Time';
     const selectedProductName = filterMasterData?.products?.find((p) => p.id === localProductId)?.name || 'All Items';
     const selectedGroupName = filterMasterData?.groups?.find((g) => g.id === localGroupId)?.name || 'All Item Groups';
     const selectedCategoryName = filterMasterData?.categories?.find((c) => c.id === localCategoryId)?.name || 'All Categories';
@@ -239,7 +239,7 @@ export default function PurchaseInvoicesReport() {
 
     const applyPreset = (preset: DatePreset) => {
         const now = new Date();
-        const today = toISODate(now);
+        const today = toDateInputValue(now, company);
         setDatePreset(preset);
         if (preset === 'all') {
             setDateFrom('');
@@ -254,18 +254,18 @@ export default function PurchaseInvoicesReport() {
         if (preset === 'last7') {
             const start = new Date(now);
             start.setDate(start.getDate() - 6);
-            setDateFrom(toISODate(start));
+            setDateFrom(toDateInputValue(start, company));
             setDateTo(today);
             return;
         }
         if (preset === 'thisMonth') {
-            setDateFrom(toISODate(new Date(now.getFullYear(), now.getMonth(), 1)));
+            setDateFrom(toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1), company));
             setDateTo(today);
             return;
         }
         if (preset === 'lastMonth') {
-            setDateFrom(toISODate(new Date(now.getFullYear(), now.getMonth() - 1, 1)));
-            setDateTo(toISODate(new Date(now.getFullYear(), now.getMonth(), 0)));
+            setDateFrom(toDateInputValue(new Date(now.getFullYear(), now.getMonth() - 1, 1), company));
+            setDateTo(toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 0), company));
             return;
         }
     };
@@ -307,7 +307,7 @@ export default function PurchaseInvoicesReport() {
             (reportData.invoices || []).forEach((inv: any) => {
                 const base: Record<string, any> = {};
                 if (selectedColumns.purchaseNo) base.purchaseNo = inv.purchaseNo || '';
-                if (selectedColumns.date) base.date = inv.createdAt ? new Date(inv.createdAt).toLocaleDateString() : '';
+                if (selectedColumns.date) base.date = inv.createdAt ? formatCompanyDate(inv.createdAt, company) : '';
                 if (selectedColumns.supplier) base.supplier = inv.supplier?.name || '';
                 if (selectedColumns.warehouse) base.warehouse = inv.branch?.name || '';
                 if (selectedColumns.grandTotal) base.grandTotal = Number(inv.grandTotal || 0);
@@ -347,7 +347,7 @@ export default function PurchaseInvoicesReport() {
             });
 
             await exportExcel({
-                fileName: `purchase-invoices-${showItems ? 'with-items-' : ''}${new Date().toISOString().slice(0, 10)}.xlsx`,
+                fileName: `purchase-invoices-${showItems ? 'with-items-' : ''}${toDateInputValue(undefined, company)}.xlsx`,
                 sheetName: 'Purchase Invoices',
                 title: showItems ? 'Purchase Invoices (Detailed Items) Report' : 'Purchase Invoices Report',
                 filters: {
@@ -357,7 +357,7 @@ export default function PurchaseInvoicesReport() {
                     'Item Group': selectedGroupName,
                     'Item Category': selectedCategoryName,
                     'Brand': selectedBrandName,
-                    'Date Range': dateFrom || dateTo ? `${dateFrom || 'Any'} to ${dateTo || 'Any'}` : 'All Time',
+                    'Date Range': dateLabel,
                     'Detailed Items': showItems ? 'YES' : 'NO',
                     'Active Filters': String(activeFilterCount),
                     'Currency': currency,
@@ -388,7 +388,7 @@ export default function PurchaseInvoicesReport() {
                     <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={() => setPanel(panel === 'branch' ? null : 'branch')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Building2 size={15} /> {branchName}</button>
                         <button type="button" onClick={() => setPanel(panel === 'supplier' ? null : 'supplier')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Truck size={15} /> {supplierName}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'date' ? null : 'date')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><CalendarRange size={15} /> {dateFrom || dateTo ? `${dateFrom || 'Any'} to ${dateTo || 'Any'}` : 'All Time'}</button>
+                        <button type="button" onClick={() => setPanel(panel === 'date' ? null : 'date')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><CalendarRange size={15} /> {dateLabel}</button>
                         <button type="button" onClick={() => setPanel(panel === 'item' ? null : 'item')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Items Filter {itemFiltersCount > 0 ? `(${itemFiltersCount})` : ''}</button>
                         <button type="button" onClick={() => setPanel(panel === 'columns' ? null : 'columns')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Columns {selectedColCount}</button>
                         <button type="button" onClick={() => setShowItems((s) => !s)} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold ${showItems ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}><Layers size={15} /> Items {showItems ? 'On' : 'Off'}</button>
@@ -509,7 +509,7 @@ export default function PurchaseInvoicesReport() {
                                     {previewRows.map((inv: any) => (
                                         <tr key={inv.id} className="hover:bg-slate-50">
                                             <td className="px-4 py-3 font-semibold text-slate-800">{inv.purchaseNo || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-600">{inv.createdAt ? new Date(inv.createdAt).toLocaleDateString() : '-'}</td>
+                                            <td className="px-4 py-3 text-slate-600">{inv.createdAt ? formatCompanyDate(inv.createdAt, company) : '-'}</td>
                                             <td className="px-4 py-3 text-slate-700">{inv.supplier?.name || '-'}</td>
                                             <td className="px-4 py-3 text-slate-700">{inv.branch?.name || '-'}</td>
                                             <td className="px-4 py-3 text-right font-semibold text-slate-800">{money(Number(inv.grandTotal || 0), currency)}</td>

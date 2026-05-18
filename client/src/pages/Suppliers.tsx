@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import ModuleRefreshButton from '../components/ModuleRefreshButton';
 import Pagination from '../components/ui/Pagination';
 import {

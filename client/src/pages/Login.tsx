@@ -13,7 +13,7 @@ import {
     CheckCircle2,
     type LucideIcon,
 } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { z } from 'zod';
 import { Badge, Button, Card, Input } from '../components/ui';
 

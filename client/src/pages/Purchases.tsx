@@ -28,6 +28,7 @@ import ModuleRefreshButton from '../components/ModuleRefreshButton';
 import api from '../lib/api';
 import { clsx } from 'clsx';
 import AppLoader from '../components/ui/AppLoader';
+import { formatCompanyDate, resolveCompanyCurrency } from '../lib/companySettings';
 
 const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
 
@@ -91,7 +92,7 @@ const modules = [
 
 export default function Purchases() {
     const user = useAuthStore((s) => s.user);
-    const currency = user?.company?.currency || 'SAR';
+    const currency = resolveCompanyCurrency(user?.company);
     const formatMoney = (value: number) => `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
     const { data: rawData, isLoading } = useQuery({
@@ -316,7 +317,7 @@ export default function Purchases() {
                                 </div>
                                 <div className="mt-1 flex items-center justify-end gap-1 text-xs text-gray-500 dark:text-gray-400">
                                     <Clock size={12} />
-                                    {new Date(inv.createdAt).toLocaleDateString()}
+                                    {formatCompanyDate(inv.createdAt, user?.company)}
                                 </div>
                             </div>
                         </div>

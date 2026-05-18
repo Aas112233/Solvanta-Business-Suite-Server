@@ -5,43 +5,31 @@ import morgan from 'morgan';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
+import type { RequestHandler, Router } from 'express';
 import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { logger } from './lib/logger.js';
 import { basePrisma } from './lib/prisma.js';
 
-// Import routes
-import { authRoutes } from './modules/auth/auth.routes.js';
-import { companyRoutes } from './modules/company/company.routes.js';
-import { branchRoutes } from './modules/branch/branch.routes.js';
-import { userRoutes } from './modules/user/user.routes.js';
-import { roleRoutes } from './modules/role/role.routes.js';
-import { customerRoutes } from './modules/customer/customer.routes.js';
-import { supplierRoutes } from './modules/supplier/supplier.routes.js';
-import { productRoutes } from './modules/product/product.routes.js';
-import { inventoryRoutes } from './modules/inventory/inventory.routes.js';
-import { purchaseRoutes } from './modules/purchase/purchase.routes.js';
-import { posRoutes } from './modules/pos/pos.routes.js';
-import { accountingRoutes } from './modules/accounting/accounting.routes.js';
-import { unitManagementRoutes } from './modules/unit-management/unit-management.routes.js';
-
-import { reportRoutes } from './modules/reports/report.routes.js';
-import { globalStringRoutes } from './modules/company/global-string.routes.js';
-import { salesRoutes } from './modules/sales/sales.routes.js';
-import { salesCashRoutes } from './modules/sales/cash.routes.js';
-import { posTerminalRoutes } from './modules/pos-terminal/pos-terminal.routes.js';
-import { superAdminRoutes } from './modules/super-admin/super-admin.routes.js';
-import { taxRoutes } from './modules/tax/tax.routes.js';
-import { hrRoutes } from './modules/hr/hr.routes.js';
-import { serviceRoutes } from './modules/service/service.routes.js';
-import { serviceInvoiceRoutes } from './modules/service-invoice/service-invoice.routes.js';
-import { bankRoutes } from './modules/bank/bank.routes.js';
-import { agingRoutes } from './modules/aging/aging.routes.js';
-import { bomRoutes } from './modules/bom/bom.routes.js';
-import { productionRoutes } from './modules/production/production.routes.js';
-
 export const app = express();
 app.disable('etag');
+
+function lazyRouter(importer: () => Promise<Router>): RequestHandler {
+    let routerPromise: Promise<Router> | null = null;
+
+    return async (req, res, next) => {
+        try {
+            if (!routerPromise) {
+                routerPromise = importer();
+            }
+            const router = await routerPromise;
+            router(req, res, next);
+        } catch (error) {
+            routerPromise = null;
+            next(error);
+        }
+    };
+}
 
 function parseCorsOrigins(raw: string) {
     return raw
@@ -178,34 +166,34 @@ v1.use((_req, res, next) => {
     res.setHeader('Expires', '0');
     next();
 });
-v1.use('/auth', authLimiter, authRoutes);
-v1.use('/companies', companyRoutes);
-v1.use('/branches', branchRoutes);
-v1.use('/users', userRoutes);
-v1.use('/roles', roleRoutes);
-v1.use('/customers', customerRoutes);
-v1.use('/suppliers', supplierRoutes);
-v1.use('/products', productRoutes);
-v1.use('/inventory', inventoryRoutes);
-v1.use('/purchases', purchaseRoutes);
-v1.use('/pos', posRoutes);
+v1.use('/auth', authLimiter, lazyRouter(() => import('./modules/auth/auth.routes.js').then((m) => m.authRoutes)));
+v1.use('/companies', lazyRouter(() => import('./modules/company/company.routes.js').then((m) => m.companyRoutes)));
+v1.use('/branches', lazyRouter(() => import('./modules/branch/branch.routes.js').then((m) => m.branchRoutes)));
+v1.use('/users', lazyRouter(() => import('./modules/user/user.routes.js').then((m) => m.userRoutes)));
+v1.use('/roles', lazyRouter(() => import('./modules/role/role.routes.js').then((m) => m.roleRoutes)));
+v1.use('/customers', lazyRouter(() => import('./modules/customer/customer.routes.js').then((m) => m.customerRoutes)));
+v1.use('/suppliers', lazyRouter(() => import('./modules/supplier/supplier.routes.js').then((m) => m.supplierRoutes)));
+v1.use('/products', lazyRouter(() => import('./modules/product/product.routes.js').then((m) => m.productRoutes)));
+v1.use('/inventory', lazyRouter(() => import('./modules/inventory/inventory.routes.js').then((m) => m.inventoryRoutes)));
+v1.use('/purchases', lazyRouter(() => import('./modules/purchase/purchase.routes.js').then((m) => m.purchaseRoutes)));
+v1.use('/pos', lazyRouter(() => import('./modules/pos/pos.routes.js').then((m) => m.posRoutes)));
 
-v1.use('/reports', reportRoutes);
-v1.use('/global-strings', globalStringRoutes);
-v1.use('/sales/cash', salesCashRoutes);
-v1.use('/sales', salesRoutes);
-v1.use('/pos-terminals', posTerminalRoutes);
-v1.use('/super-admin', superAdminRoutes);
-v1.use('/accounting', accountingRoutes);
-v1.use('/taxes', taxRoutes);
-v1.use('/unit-management', unitManagementRoutes);
-v1.use('/hr', hrRoutes);
-v1.use('/services', serviceRoutes);
-v1.use('/service-invoices', serviceInvoiceRoutes);
-v1.use('/bank', bankRoutes);
-v1.use('/aging', agingRoutes);
-v1.use('/bom', bomRoutes);
-v1.use('/production', productionRoutes);
+v1.use('/reports', lazyRouter(() => import('./modules/reports/report.routes.js').then((m) => m.reportRoutes)));
+v1.use('/global-strings', lazyRouter(() => import('./modules/company/global-string.routes.js').then((m) => m.globalStringRoutes)));
+v1.use('/sales/cash', lazyRouter(() => import('./modules/sales/cash.routes.js').then((m) => m.salesCashRoutes)));
+v1.use('/sales', lazyRouter(() => import('./modules/sales/sales.routes.js').then((m) => m.salesRoutes)));
+v1.use('/pos-terminals', lazyRouter(() => import('./modules/pos-terminal/pos-terminal.routes.js').then((m) => m.posTerminalRoutes)));
+v1.use('/super-admin', lazyRouter(() => import('./modules/super-admin/super-admin.routes.js').then((m) => m.superAdminRoutes)));
+v1.use('/accounting', lazyRouter(() => import('./modules/accounting/accounting.routes.js').then((m) => m.accountingRoutes)));
+v1.use('/taxes', lazyRouter(() => import('./modules/tax/tax.routes.js').then((m) => m.taxRoutes)));
+v1.use('/unit-management', lazyRouter(() => import('./modules/unit-management/unit-management.routes.js').then((m) => m.unitManagementRoutes)));
+v1.use('/hr', lazyRouter(() => import('./modules/hr/hr.routes.js').then((m) => m.hrRoutes)));
+v1.use('/services', lazyRouter(() => import('./modules/service/service.routes.js').then((m) => m.serviceRoutes)));
+v1.use('/service-invoices', lazyRouter(() => import('./modules/service-invoice/service-invoice.routes.js').then((m) => m.serviceInvoiceRoutes)));
+v1.use('/bank', lazyRouter(() => import('./modules/bank/bank.routes.js').then((m) => m.bankRoutes)));
+v1.use('/aging', lazyRouter(() => import('./modules/aging/aging.routes.js').then((m) => m.agingRoutes)));
+v1.use('/bom', lazyRouter(() => import('./modules/bom/bom.routes.js').then((m) => m.bomRoutes)));
+v1.use('/production', lazyRouter(() => import('./modules/production/production.routes.js').then((m) => m.productionRoutes)));
 
 app.use('/api/v1', v1);
 

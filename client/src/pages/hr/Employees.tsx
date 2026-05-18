@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Edit2, Plus, Trash2, Users } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import api from '../../lib/api';
+import { useCompanyCurrency } from '../../lib/companySettings';
 import {
     Badge,
     Button,
@@ -71,7 +72,7 @@ type EmployeeFormState = {
     currency: string;
 };
 
-const createInitialFormData = (): EmployeeFormState => ({
+const createInitialFormData = (currency = 'SAR'): EmployeeFormState => ({
     branchId: '',
     employeeNo: '',
     firstName: '',
@@ -85,7 +86,7 @@ const createInitialFormData = (): EmployeeFormState => ({
     employmentType: 'FULL_TIME',
     status: 'ACTIVE',
     salary: 0,
-    currency: 'SAR',
+    currency,
 });
 
 const statusVariantMap: Record<string, 'success' | 'default' | 'warning'> = {
@@ -96,12 +97,13 @@ const statusVariantMap: Record<string, 'success' | 'default' | 'warning'> = {
 
 export function Employees() {
     const queryClient = useQueryClient();
+    const companyCurrency = useCompanyCurrency();
     const [isAdding, setIsAdding] = useState(false);
     const [editingEmployee, setEditingEmployee] = useState<EmployeeRecord | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [branchFilter, setBranchFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState('');
-    const [formData, setFormData] = useState<EmployeeFormState>(createInitialFormData());
+    const [formData, setFormData] = useState<EmployeeFormState>(createInitialFormData(companyCurrency));
 
     const { data: employees = [], isLoading } = useQuery<EmployeeRecord[]>({
         queryKey: ['hr-employees'],
@@ -241,14 +243,14 @@ export function Employees() {
 
     const handleOpenCreate = () => {
         setEditingEmployee(null);
-        setFormData(createInitialFormData());
+        setFormData(createInitialFormData(companyCurrency));
         setIsAdding(true);
     };
 
     const handleCancel = () => {
         setIsAdding(false);
         setEditingEmployee(null);
-        setFormData(createInitialFormData());
+        setFormData(createInitialFormData(companyCurrency));
     };
 
     return (

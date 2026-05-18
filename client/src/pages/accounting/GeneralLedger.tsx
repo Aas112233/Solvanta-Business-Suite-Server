@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { Calculator, Download } from 'lucide-react';
 import { exportExcel } from '../../lib/fileExport';
+import { formatCompanyDate, toDateInputValue } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 import AppDropdown from '../../components/ui/AppDropdown';
 
 interface Account {
@@ -35,10 +37,11 @@ interface GLData {
 }
 
 export default function GeneralLedger() {
+    const company = useAuthStore((s) => s.user?.company);
     // Default to current month
     const today = new Date();
-    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
-    const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
+    const firstDay = toDateInputValue(new Date(today.getFullYear(), today.getMonth(), 1), company);
+    const lastDay = toDateInputValue(new Date(today.getFullYear(), today.getMonth() + 1, 0), company);
 
     const [startDate, setStartDate] = useState(firstDay);
     const [endDate, setEndDate] = useState(lastDay);
@@ -98,7 +101,7 @@ export default function GeneralLedger() {
                     balance: glData.openingBalance
                 },
                 ...glData.transactions.map((tx) => ({
-                    date: new Date(tx.date).toLocaleDateString(),
+                    date: formatCompanyDate(tx.date, company),
                     entryNo: tx.entryNo,
                     memo: `${tx.memo || '-'} ${tx.sourceType ? `(${tx.sourceType})` : ''}`,
                     debit: tx.debit,
@@ -210,7 +213,7 @@ export default function GeneralLedger() {
                             <tbody className="divide-y divide-gray-200">
                                 <tr className="bg-yellow-50/50">
                                     <td colSpan={5} className="px-6 py-3 text-sm font-semibold text-gray-700 italic text-right">
-                                        Opening Balance (As of {new Date(startDate).toLocaleDateString()})
+                                        Opening Balance (As of {formatCompanyDate(startDate, company)})
                                     </td>
                                     <td className="px-6 py-3 text-sm font-mono font-bold text-gray-900 text-right">
                                         {glData.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -227,7 +230,7 @@ export default function GeneralLedger() {
                                     glData.transactions.map((tx) => (
                                         <tr key={tx.id} className="hover:bg-gray-50">
                                             <td className="px-6 py-3 text-sm text-gray-900 whitespace-nowrap">
-                                                {new Date(tx.date).toLocaleDateString()}
+                                                {formatCompanyDate(tx.date, company)}
                                             </td>
                                             <td className="px-6 py-3 text-sm font-mono text-gray-600">
                                                 {tx.entryNo}

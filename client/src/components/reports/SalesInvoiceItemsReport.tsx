@@ -8,7 +8,7 @@ import Pagination from '../ui/Pagination';
 import DateRangeFilter from '../ui/DateRangeFilter';
 import { getSalesCustomerDisplay } from '../../lib/salesCustomerDisplay';
 import { exportExcel, exportPdfFromHtml } from '../../lib/fileExport';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import AppDropdown from '../ui/AppDropdown';
 import {
     buildPaymentMethodOptions,

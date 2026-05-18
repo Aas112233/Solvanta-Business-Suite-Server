@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Pencil, Plus, Save, Search, Trash2 } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import api from '../../lib/api';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import AppLoader from '../../components/ui/AppLoader';

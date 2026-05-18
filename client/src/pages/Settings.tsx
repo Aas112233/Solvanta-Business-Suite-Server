@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { Building2, Loader2, RefreshCw, Save, ShieldAlert } from 'lucide-react';
 import ModuleRefreshButton from '../components/ModuleRefreshButton';
 import { useAuthStore } from '../stores/authStore';
 import AppLoader from '../components/ui/AppLoader';
 import AppDropdown from '../components/ui/AppDropdown';
+import {
+    DEFAULT_COMPANY_CURRENCY,
+    DEFAULT_COMPANY_DOCUMENT_SETTINGS,
+    DEFAULT_COMPANY_REGIONAL_SETTINGS,
+} from '../lib/companySettings';
 
 type CompanyResponse = {
     id: string;
@@ -50,20 +55,20 @@ const timezoneOptions = [
 const emptyForm: SettingsForm = {
     name: '',
     vatNumber: '',
-    currency: 'SAR',
+    currency: DEFAULT_COMPANY_CURRENCY,
     logoUrl: '',
     contactPhone: '',
     contactEmail: '',
     website: '',
     address: '',
-    timezone: 'Asia/Riyadh',
-    dateFormat: 'DD/MM/YYYY',
-    timeFormat: '24H',
-    language: 'en',
+    timezone: DEFAULT_COMPANY_REGIONAL_SETTINGS.timezone,
+    dateFormat: DEFAULT_COMPANY_REGIONAL_SETTINGS.dateFormat,
+    timeFormat: DEFAULT_COMPANY_REGIONAL_SETTINGS.timeFormat,
+    language: DEFAULT_COMPANY_REGIONAL_SETTINGS.language,
     lowStockThreshold: 10,
-    invoicePrefix: 'INV',
-    quotationPrefix: 'QUO',
-    salesOrderPrefix: 'SO',
+    invoicePrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.invoicePrefix,
+    quotationPrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.quotationPrefix,
+    salesOrderPrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.salesOrderPrefix,
 };
 
 function parseForm(company?: CompanyResponse): { form: SettingsForm; rawSettings: Record<string, any> } {
@@ -83,20 +88,20 @@ function parseForm(company?: CompanyResponse): { form: SettingsForm; rawSettings
         form: {
             name: String(company.name || ''),
             vatNumber: String(company.vatNumber || ''),
-            currency: String(company.currency || 'SAR'),
+            currency: String(company.currency || DEFAULT_COMPANY_CURRENCY),
             logoUrl: String(company.logoUrl || ''),
             contactPhone: String(contact.phone || ''),
             contactEmail: String(contact.email || ''),
             website: String(contact.website || ''),
             address: String(contact.address || ''),
-            timezone: String(regional.timezone || 'Asia/Riyadh'),
-            dateFormat: String(regional.dateFormat || 'DD/MM/YYYY'),
-            timeFormat: regional.timeFormat === '12H' ? '12H' : '24H',
-            language: String(regional.language || 'en'),
+            timezone: String(regional.timezone || DEFAULT_COMPANY_REGIONAL_SETTINGS.timezone),
+            dateFormat: String(regional.dateFormat || DEFAULT_COMPANY_REGIONAL_SETTINGS.dateFormat),
+            timeFormat: regional.timeFormat === '12H' ? '12H' : DEFAULT_COMPANY_REGIONAL_SETTINGS.timeFormat,
+            language: String(regional.language || DEFAULT_COMPANY_REGIONAL_SETTINGS.language),
             lowStockThreshold: Number(inventory.lowStockThreshold ?? settings.lowStockThreshold ?? 10),
-            invoicePrefix: String(documents.invoicePrefix || settings.invoicePrefix || 'INV'),
-            quotationPrefix: String(documents.quotationPrefix || 'QUO'),
-            salesOrderPrefix: String(documents.salesOrderPrefix || 'SO'),
+            invoicePrefix: String(documents.invoicePrefix || settings.invoicePrefix || DEFAULT_COMPANY_DOCUMENT_SETTINGS.invoicePrefix),
+            quotationPrefix: String(documents.quotationPrefix || DEFAULT_COMPANY_DOCUMENT_SETTINGS.quotationPrefix),
+            salesOrderPrefix: String(documents.salesOrderPrefix || DEFAULT_COMPANY_DOCUMENT_SETTINGS.salesOrderPrefix),
         },
     };
 }
@@ -155,9 +160,9 @@ export default function Settings() {
                     },
                     documents: {
                         ...(rawSettings.documents || {}),
-                        invoicePrefix: next.invoicePrefix.trim() || 'INV',
-                        quotationPrefix: next.quotationPrefix.trim() || 'QUO',
-                        salesOrderPrefix: next.salesOrderPrefix.trim() || 'SO',
+                        invoicePrefix: next.invoicePrefix.trim() || DEFAULT_COMPANY_DOCUMENT_SETTINGS.invoicePrefix,
+                        quotationPrefix: next.quotationPrefix.trim() || DEFAULT_COMPANY_DOCUMENT_SETTINGS.quotationPrefix,
+                        salesOrderPrefix: next.salesOrderPrefix.trim() || DEFAULT_COMPANY_DOCUMENT_SETTINGS.salesOrderPrefix,
                     },
                 },
             };

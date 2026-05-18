@@ -4,11 +4,12 @@ import { Plus, Edit2, Trash2, CheckCircle2, ShieldAlert, X } from 'lucide-react'
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import api from '../../lib/api';
 import { useAuthStore } from '../../stores/authStore';
 import AppLoader from '../../components/ui/AppLoader';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { useCompanyTaxSettings } from '../../lib/tax';
 
 type Tax = {
     id: string;
@@ -33,6 +34,7 @@ export default function Taxes() {
     const qc = useQueryClient();
     const hasPermission = useAuthStore((s) => s.hasPermission);
     const canManageSettings = hasPermission('admin.manageSettings');
+    const companyTax = useCompanyTaxSettings();
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTax, setEditingTax] = useState<Tax | null>(null);
@@ -49,7 +51,7 @@ export default function Taxes() {
         resolver: zodResolver(taxSchema),
         defaultValues: {
             name: '',
-            rate: 0.15,
+            rate: companyTax.defaultRate,
             type: 'BOTH',
             isActive: true,
             isDefault: false
@@ -111,7 +113,7 @@ export default function Taxes() {
             });
         } else {
             setEditingTax(null);
-            reset({ name: '', rate: 0.15, type: 'BOTH', isActive: true, isDefault: false });
+            reset({ name: '', rate: companyTax.defaultRate, type: 'BOTH', isActive: true, isDefault: false });
         }
         setIsModalOpen(true);
     };

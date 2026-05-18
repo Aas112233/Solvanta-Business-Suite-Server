@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import toast from 'react-hot-toast';
-import { ArrowLeft, Plus, Save, Trash, Pencil, X, Search, FileDown, Loader2 } from 'lucide-react';
+import toast from '@/lib/toast';
+import { ArrowLeft, Plus, Save, Trash, Pencil, Search, FileDown, Loader2, FileSpreadsheet } from 'lucide-react';
 import { z } from 'zod';
 import api from '@/lib/api';
 import ItemSelectorModal from '@/components/inventory/ItemSelectorModal';
 import SupplierCreateModal from '@/components/suppliers/SupplierCreateModal';
+import PurchaseImportModal from './PurchaseImportModal';
 import AppDropdown from '../../components/ui/AppDropdown';
 import AppLoader from '../../components/ui/AppLoader';
 import {
     buildPaymentMethodOptions,
     DEFAULT_PURCHASE_PAYMENT_METHOD_OPTIONS,
     GLOBAL_STRING_GROUPS,
+    PURCHASE_PAYMENT_METHOD_KEYS,
 } from '../../lib/globalStrings';
+import { formatTaxLabel, resolveEffectiveTaxRate, useCompanyTaxSettings } from '../../lib/tax';
 
 type PurchaseFormItem = {
     id?: string;
@@ -28,8 +31,6 @@ type PurchaseFormItem = {
 };
 
 type PurchaseFormErrors = Partial<Record<'supplierId' | 'branchId' | 'paymentMethod' | 'invoiceNoSupplier' | 'notes' | 'items', string>>;
-
-const PURCHASE_PAYMENT_METHODS = ['CASH', 'CARD', 'BANK_TRANSFER', 'CREDIT'] as const;
 
 function normalizeOptionalString(value: unknown) {
     if (typeof value !== 'string') return value;
@@ -81,7 +82,7 @@ const purchaseFormSchema = z.object({
     branchId: z.preprocess(normalizeOptionalString, z.string().min(1, 'Warehouse is required')),
     paymentMethod: z.preprocess(
         (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
-        z.enum(PURCHASE_PAYMENT_METHODS, { message: 'Select a valid payment method' })
+        z.enum(PURCHASE_PAYMENT_METHOD_KEYS, { message: 'Select a valid payment method' })
     ),
     invoiceNoSupplier: z.preprocess(normalizeOptionalString, z.string().max(120, 'Invoice number must be 120 characters or less').optional()),
     notes: z.preprocess(normalizeOptionalString, z.string().max(1000, 'Notes must be 1000 characters or less').optional()),
@@ -93,6 +94,7 @@ export default function PurchaseForm() {
     const { id } = useParams();
     const isEdit = Boolean(id && id !== 'new');
     const queryClient = useQueryClient();
+    const companyTax = useCompanyTaxSettings();
     const [supplierId, setSupplierId] = useState('');
     const [branchId, setBranchId] = useState('');
     const [paymentMethod, setPaymentMethod] = useState('');
@@ -106,6 +108,7 @@ export default function PurchaseForm() {
     const [searchPO, setSearchPO] = useState('');
     const [isSearchingPO, setIsSearchingPO] = useState(false);
     const [formErrors, setFormErrors] = useState<PurchaseFormErrors>({});
+    const [showExcelImport, setShowExcelImport] = useState(false);
 
     const {
         data: suppliers,
@@ -133,7 +136,7 @@ export default function PurchaseForm() {
         () =>
             buildPaymentMethodOptions(globalPaymentMethods, DEFAULT_PURCHASE_PAYMENT_METHOD_OPTIONS, {
                 blankLabel: 'Select Method',
-                allowedKeys: ['CASH', 'CARD', 'BANK_TRANSFER', 'CREDIT'],
+                allowedKeys: PURCHASE_PAYMENT_METHOD_KEYS,
             }),
         [globalPaymentMethods]
     );
@@ -161,7 +164,7 @@ export default function PurchaseForm() {
                 qty: i.qty,
                 unitCost: i.unitCost,
                 lineTotal: i.lineTotal,
-                taxRate: i.taxRate ?? i.product?.tax?.rate ?? i.product?.taxRate ?? 0.15,
+                taxRate: resolveEffectiveTaxRate([i.taxRate, i.product?.tax?.rate, i.product?.taxRate], companyTax),
                 product: i.product,
             })));
         }
@@ -202,6 +205,12 @@ export default function PurchaseForm() {
         setFormErrors((current) => ({ ...current, items: undefined }));
     };
 
+    const importItemsFromExcel = (importedItems: PurchaseFormItem[]) => {
+        setItems((prev) => [...prev, ...importedItems]);
+        setFormErrors((current) => ({ ...current, items: undefined }));
+        toast.success(`Imported ${importedItems.length} purchase line${importedItems.length === 1 ? '' : 's'} from Excel`);
+    };
+
     const startEditItem = (idx: number) => {
         setEditingIndex(idx);
         setShowItemSelector(true);
@@ -223,7 +232,7 @@ export default function PurchaseForm() {
                 qty: i.qty,
                 unitCost: i.unitCost,
                 lineTotal: i.lineTotal,
-                taxRate: i.taxRate ?? i.product?.tax?.rate ?? i.product?.taxRate ?? 0.15,
+                taxRate: resolveEffectiveTaxRate([i.taxRate, i.product?.tax?.rate, i.product?.taxRate], companyTax),
                 product: i.product,
             })));
             setSearchPO('');
@@ -238,9 +247,9 @@ export default function PurchaseForm() {
 
     const totals = useMemo(() => {
         const subtotal = items.reduce((sum, i) => sum + (i.lineTotal || 0), 0);
-        const taxTotal = items.reduce((sum, i) => sum + ((i.lineTotal || 0) * (i.taxRate ?? i.product?.tax?.rate ?? i.product?.taxRate ?? 0.15)), 0);
+        const taxTotal = items.reduce((sum, i) => sum + ((i.lineTotal || 0) * resolveEffectiveTaxRate([i.taxRate, i.product?.tax?.rate, i.product?.taxRate], companyTax)), 0);
         return { subtotal, taxTotal, grandTotal: subtotal + taxTotal };
-    }, [items]);
+    }, [companyTax, items]);
 
     const saveMut = useMutation({
         mutationFn: (payload: any) => isEdit ? api.put(`/purchases/${id}`, payload) : api.post('/purchases', payload),
@@ -281,7 +290,7 @@ export default function PurchaseForm() {
                 ...i,
                 qty: Number(i.qty),
                 unitCost: Number(i.unitCost),
-                taxAmount: (i.lineTotal || 0) * (i.taxRate ?? items[index]?.product?.tax?.rate ?? items[index]?.product?.taxRate ?? 0.15)
+                taxAmount: (i.lineTotal || 0) * resolveEffectiveTaxRate([i.taxRate, items[index]?.product?.tax?.rate, items[index]?.product?.taxRate], companyTax)
             }))
         });
     };
@@ -402,15 +411,24 @@ export default function PurchaseForm() {
                                 <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest">Inventory Items</h3>
                                 <p className="text-xs text-gray-500">Add products received from supplier</p>
                             </div>
-                            <button
-                                onClick={handleOpenAddItem}
-                                type="button"
-                                disabled={!canAddItems}
-                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600"
-                                title={!canAddItems ? 'Select supplier and warehouse first' : 'Add item'}
-                            >
-                                <Plus size={16} /> Add Item
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setShowExcelImport(true)}
+                                    type="button"
+                                    className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-lg hover:bg-emerald-100 transition-all text-xs font-bold"
+                                >
+                                    <FileSpreadsheet size={16} /> Import Excel
+                                </button>
+                                <button
+                                    onClick={handleOpenAddItem}
+                                    type="button"
+                                    disabled={!canAddItems}
+                                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600"
+                                    title={!canAddItems ? 'Select supplier and warehouse first' : 'Add item'}
+                                >
+                                    <Plus size={16} /> Add Item
+                                </button>
+                            </div>
                         </div>
 
                         <div className="border rounded-xl overflow-hidden">
@@ -473,7 +491,7 @@ export default function PurchaseForm() {
                         <h2 className="text-lg font-bold text-gray-900 mb-6 font-mono uppercase tracking-tighter text-center">Summary</h2>
                         <div className="space-y-4">
                             <div className="flex justify-between text-sm"><span className="text-gray-500">Subtotal</span><span className="font-medium">{totals.subtotal.toLocaleString()} SAR</span></div>
-                            <div className="flex justify-between text-sm"><span className="text-gray-500">Tax Total (15%)</span><span className="font-medium">{totals.taxTotal.toLocaleString()} SAR</span></div>
+                            <div className="flex justify-between text-sm"><span className="text-gray-500">{formatTaxLabel(companyTax)}</span><span className="font-medium">{totals.taxTotal.toLocaleString()} SAR</span></div>
                             <div className="pt-4 border-t border-dashed flex justify-between items-center"><span className="font-bold text-gray-900">Grand Total</span><span className="text-xl font-black text-blue-600">{totals.grandTotal.toLocaleString()} SAR</span></div>
                         </div>
                         <button onClick={handleSubmit} disabled={saveMut.isPending || items.length === 0 || !supplierId || !branchId} className="w-full mt-8 flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50 disabled:scale-100 shadow-lg shadow-blue-200">
@@ -502,6 +520,13 @@ export default function PurchaseForm() {
                     void refetchSuppliers();
                 }}
             />
+
+            {showExcelImport && (
+                <PurchaseImportModal
+                    onClose={() => setShowExcelImport(false)}
+                    onImport={importItemsFromExcel}
+                />
+            )}
         </div>
     );
 }

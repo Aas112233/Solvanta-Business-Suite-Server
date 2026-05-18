@@ -8,17 +8,22 @@ import { AppError } from '../../utils/AppError.js';
 import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
 import { z } from 'zod';
 import { enforceTenantCreateWithinLimit } from '../super-admin/tenant-intelligence.js';
+import * as XLSX from 'xlsx';
 
 export const productRoutes = Router();
 productRoutes.use(authenticate);
 
 // ════════════ ZO SCHEMAS ════════════
 
-const itemCodeRegex = /^[0-9]{16}$/;
+const itemCodeRegex = /^[0-9]{1,32}$/;
 const objectIdRegex = /^[a-f\d]{24}$/i;
 
 function normalizeCode(value: unknown): string {
     return String(value ?? '').trim().toUpperCase();
+}
+
+function escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function normalizeOptionalString(value: unknown) {
@@ -252,12 +257,14 @@ const categoryCreateSchema = z.object({
     name: requiredTrimmedString('Category name', 100),
     code: optionalNullableTrimmedString(50),
     parentId: optionalNullableObjectIdSchema,
+    defaultProfitMarginPct: z.coerce.number().min(0).max(1000).default(0),
 }).strict();
 
 const categoryPatchSchema = z.object({
     name: optionalTrimmedString(100),
     code: optionalNullableTrimmedString(50),
     parentId: optionalNullableObjectIdSchema,
+    defaultProfitMarginPct: z.coerce.number().min(0).max(1000).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, {
     message: 'At least one field is required',
 });
@@ -317,6 +324,10 @@ const posSyncQuerySchema = z.object({
     priceGroupId: z.string().optional(),
 });
 
+const productImportResolveSchema = z.object({
+    itemCodes: z.array(requiredTrimmedString('Item code', 32)).min(1).max(1000),
+}).strict();
+
 // ════════════ PRODUCTS (ITEMS) ════════════
 
 // GET /products
@@ -333,55 +344,193 @@ productRoutes.get(
             const query = paginationSchema.parse(req.query);
             const { skip, take, page, limit } = getPaginationParams(query);
             const { categoryId, itemGroupId, brandId, status } = req.query;
+            const companyId = req.user!.companyId;
             const includePricing = ['1', 'true', 'yes'].includes(String(req.query.includePricing || '').toLowerCase());
-            const priceGroupId = typeof req.query.priceGroupId === 'string' ? req.query.priceGroupId : undefined;
-
-            const where: any = { deletedAt: { isSet: false } };
-            if (categoryId && typeof categoryId === 'string') where.categoryId = categoryId;
-            if (itemGroupId && typeof itemGroupId === 'string') where.itemGroupId = itemGroupId;
-            if (brandId && typeof brandId === 'string') where.brandId = brandId;
-            if (status && typeof status === 'string' && status !== 'all') {
-                where.status = status;
-            } else if (!status) {
-                where.status = 'ACTIVE';
-            }
-
-            if (query.search) {
-                where.OR = [
-                    { name: { contains: query.search, mode: 'insensitive' } },
-                    { itemCode: { contains: query.search, mode: 'insensitive' } },
-                    { barcodes: { has: query.search } },
-                    { units: { some: { unitCode: { contains: query.search, mode: 'insensitive' } } } },
-                    { units: { some: { barcodes: { has: query.search } } } } as any,
-                ];
-            }
+            const selectorMode = ['1', 'true', 'yes'].includes(String(req.query.selectorMode || '').toLowerCase());
 
             const allowedSortFields = new Set(['createdAt', 'updatedAt', 'name', 'itemCode', 'status']);
             const effectiveSortBy = query.sortBy && allowedSortFields.has(query.sortBy) ? query.sortBy : 'createdAt';
-            const effectiveSortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
+            const sortDir = query.sortOrder === 'asc' ? 1 : -1;
 
-            const [products, total] = await Promise.all([
-                prisma.product.findMany({
-                    where,
-                    skip,
-                    take,
+            // Build native MongoDB filter (bypasses Prisma $expr → enables index usage)
+            const filter: any = {
+                companyId: { $oid: companyId },
+                deletedAt: { $exists: false },
+            };
+            if (categoryId && typeof categoryId === 'string') filter.categoryId = { $oid: categoryId };
+            if (itemGroupId && typeof itemGroupId === 'string') filter.itemGroupId = { $oid: itemGroupId };
+            if (brandId && typeof brandId === 'string') filter.brandId = { $oid: brandId };
+            if (status && typeof status === 'string' && status.toLowerCase() !== 'all') {
+                filter.status = status;
+            } else if (!status) {
+                filter.status = 'ACTIVE';
+            }
+
+            let searchRankStage: Record<string, unknown> | null = null;
+
+            // For search: smart targeting based on input type using collation-aware range queries
+            const useCollation = !!query.search;
+            if (query.search) {
+                const search = query.search.trim();
+                if (selectorMode) {
+                    const escapedSearch = escapeRegex(search);
+                    const normalizedSearch = search.toUpperCase();
+                    const startsWithPattern = `^${escapedSearch}`;
+                    const wordBoundaryPattern = `(?:^|\\s)${escapedSearch}`;
+
+                    filter.$or = [
+                        { name: { $regex: escapedSearch, $options: 'i' } },
+                        { nameArabic: { $regex: escapedSearch, $options: 'i' } },
+                        { itemCode: { $regex: escapedSearch, $options: 'i' } },
+                        { barcodes: { $elemMatch: { $regex: startsWithPattern, $options: 'i' } } },
+                    ];
+
+                    const exactBarcodeMatch = {
+                        $gt: [
+                            {
+                                $size: {
+                                    $filter: {
+                                        input: { $ifNull: ['$barcodes', []] },
+                                        as: 'barcode',
+                                        cond: { $eq: [{ $toUpper: '$$barcode' }, normalizedSearch] },
+                                    },
+                                },
+                            },
+                            0,
+                        ],
+                    };
+
+                    const prefixBarcodeMatch = {
+                        $gt: [
+                            {
+                                $size: {
+                                    $filter: {
+                                        input: { $ifNull: ['$barcodes', []] },
+                                        as: 'barcode',
+                                        cond: {
+                                            $regexMatch: {
+                                                input: '$$barcode',
+                                                regex: startsWithPattern,
+                                                options: 'i',
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                            0,
+                        ],
+                    };
+
+                    searchRankStage = {
+                        $addFields: {
+                            searchRank: {
+                                $add: [
+                                    { $cond: [{ $eq: [{ $toUpper: '$itemCode' }, normalizedSearch] }, 1000, 0] },
+                                    { $cond: [exactBarcodeMatch, 980, 0] },
+                                    { $cond: [{ $eq: [{ $toUpper: { $ifNull: ['$name', ''] } }, normalizedSearch] }, 940, 0] },
+                                    { $cond: [{ $eq: [{ $toUpper: { $ifNull: ['$nameArabic', ''] } }, normalizedSearch] }, 920, 0] },
+                                    { $cond: [{ $regexMatch: { input: '$itemCode', regex: startsWithPattern, options: 'i' } }, 760, 0] },
+                                    { $cond: [prefixBarcodeMatch, 740, 0] },
+                                    { $cond: [{ $regexMatch: { input: { $ifNull: ['$name', ''] }, regex: startsWithPattern, options: 'i' } }, 700, 0] },
+                                    { $cond: [{ $regexMatch: { input: { $ifNull: ['$nameArabic', ''] }, regex: startsWithPattern, options: 'i' } }, 680, 0] },
+                                    { $cond: [{ $regexMatch: { input: { $ifNull: ['$name', ''] }, regex: wordBoundaryPattern, options: 'i' } }, 460, 0] },
+                                    { $cond: [{ $regexMatch: { input: { $ifNull: ['$nameArabic', ''] }, regex: wordBoundaryPattern, options: 'i' } }, 440, 0] },
+                                    { $cond: [{ $regexMatch: { input: { $ifNull: ['$name', ''] }, regex: escapedSearch, options: 'i' } }, 240, 0] },
+                                    { $cond: [{ $regexMatch: { input: { $ifNull: ['$nameArabic', ''] }, regex: escapedSearch, options: 'i' } }, 220, 0] },
+                                    { $cond: [{ $regexMatch: { input: '$itemCode', regex: escapedSearch, options: 'i' } }, 200, 0] },
+                                ],
+                            },
+                        },
+                    };
+                } else {
+                    const isOnlyNumbers = /^\d+$/.test(search);
+                    const searchEnd = search + '\uffff';
+
+                    if (isOnlyNumbers) {
+                        // If purely numeric, search itemCode and barcodes (unit codes) only
+                        filter.$or = [
+                            { itemCode: { $gte: search, $lt: searchEnd } },
+                            { barcodes: search.toUpperCase() }, // We do exact match for barcodes or we could do range if we want prefix barcodes. Let's do prefix for barcodes too!
+                        ];
+                    } else {
+                        // If contains text, search name, itemCode, and barcodes
+                        filter.$or = [
+                            { name: { $gte: search, $lt: searchEnd } },
+                            { itemCode: { $gte: search, $lt: searchEnd } },
+                            { barcodes: search.toUpperCase() },
+                        ];
+                    }
+                }
+            }
+
+            // Step 1 + 3: Run ID query and count query in PARALLEL via raw commands
+            const runAggregate = (pipeline: any[]) => {
+                const cmd: any = { aggregate: 'products', pipeline, cursor: {} };
+                if (useCollation) cmd.collation = { locale: 'en', strength: 2 };
+                return prisma.$runCommandRaw(cmd).then((r: any) => r.cursor?.firstBatch ?? []);
+            };
+
+            // Step 1 + 3: Run ID query and count query in PARALLEL
+            const idPipeline = [
+                { $match: filter },
+                ...(searchRankStage ? [searchRankStage, { $sort: { searchRank: -1, name: 1, [effectiveSortBy]: sortDir } }] : [{ $sort: { [effectiveSortBy]: sortDir } }]),
+                { $skip: skip },
+                { $limit: take + 1 },
+                { $project: { _id: 1 } },
+            ];
+            const countPipeline = [{ $match: filter }, { $count: 'total' }];
+
+            const [rawMatches, countResult] = await Promise.all([
+                runAggregate(idPipeline),
+                page === 1 ? runAggregate(countPipeline) : Promise.resolve(null),
+            ]);
+
+            const hasMore = rawMatches.length > take;
+            const matchedIds = (hasMore ? rawMatches.slice(0, take) : rawMatches)
+                .map((r: any) => r._id?.$oid ?? String(r._id));
+
+            // Step 2: Hydrate full data with Prisma relations (cheap — querying by indexed _id)
+            let products: any[] = [];
+            if (matchedIds.length > 0) {
+                products = await prisma.product.findMany({
+                    where: { id: { in: matchedIds } },
                     include: {
                         category: { select: { id: true, name: true } },
                         // @ts-ignore
                         itemGroup: { select: { id: true, name: true } },
                         brand: { select: { id: true, name: true } },
-                        tax: true,
-                        units: true,
+                        units: selectorMode
+                            ? {
+                                select: {
+                                    id: true,
+                                    unitCode: true,
+                                    unitName: true,
+                                    qtyInBaseUnit: true,
+                                    salePrice: true,
+                                    costPrice: true,
+                                    barcodes: true,
+                                    isBase: true,
+                                },
+                                orderBy: [{ isBase: 'desc' as const }, { qtyInBaseUnit: 'asc' as const }],
+                            }
+                            : {
+                                select: { unitName: true, salePrice: true, isBase: true },
+                                orderBy: { isBase: 'desc' as const },
+                                take: 1,
+                            },
                         ...(includePricing ? {
                             priceGroupPrices: {
                                 select: { id: true, priceGroupId: true, unitCode: true, salePrice: true },
                             }
                         } : {}),
                     },
-                    orderBy: { [effectiveSortBy]: effectiveSortOrder },
-                }),
-                prisma.product.count({ where }),
-            ]);
+                });
+                // Restore sort order from raw query
+                const idOrder = new Map<string, number>(matchedIds.map((id: string, i: number) => [id, i]));
+                products.sort((a: any, b: any) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
+            }
+
+            const total = countResult ? (countResult[0]?.total ?? 0) : skip + matchedIds.length + (hasMore ? 1 : 0);
 
             sendPaginated(res, products, total, page, limit);
         } catch (error) { next(error); }
@@ -764,6 +913,9 @@ productRoutes.get('/:id/audit', requirePermission(PERMISSIONS.PRODUCT_VIEW), asy
 // GET /products/:id
 productRoutes.get('/:id', requirePermission(PERMISSIONS.PRODUCT_VIEW), async (req, res, next) => {
     try {
+        // Allow later static routes like /import-template to handle non-ObjectId segments.
+        if (!objectIdRegex.test(String(req.params.id || ''))) return next();
+
         const product = await prisma.product.findFirst({
             where: {
                 id: req.params.id as string,
@@ -1248,6 +1400,357 @@ productRoutes.put('/:id/pricing', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT,
     } catch (error) { next(error); }
 });
 
+// ════════════ EXCEL IMPORT ════════════
+
+productRoutes.post(
+    '/import-resolve',
+    requirePermission(PERMISSIONS.PRODUCT_VIEW),
+    validate({ body: productImportResolveSchema }),
+    async (req, res, next) => {
+        try {
+            const companyId = req.user!.companyId;
+            const { itemCodes } = req.body as z.infer<typeof productImportResolveSchema>;
+            const normalizedItemCodes = Array.from(new Set(itemCodes.map((code) => normalizeCode(code)).filter(Boolean)));
+
+            const products = await prisma.product.findMany({
+                where: {
+                    companyId,
+                    deletedAt: { isSet: false },
+                    itemCode: { in: normalizedItemCodes },
+                } as any,
+                select: {
+                    id: true,
+                    itemCode: true,
+                    name: true,
+                    nameArabic: true,
+                    taxRate: true,
+                    tax: { select: { id: true, rate: true, name: true } },
+                    units: {
+                        select: {
+                            id: true,
+                            unitCode: true,
+                            unitName: true,
+                            qtyInBaseUnit: true,
+                            costPrice: true,
+                            salePrice: true,
+                            isBase: true,
+                        },
+                        orderBy: [{ isBase: 'desc' as const }, { qtyInBaseUnit: 'asc' as const }],
+                    },
+                },
+            });
+
+            sendSuccess(res, products);
+        } catch (error) { next(error); }
+    }
+);
+
+// GET /products/import-template  — generate and stream the template workbook
+productRoutes.get(
+    '/import-template',
+    requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM),
+    async (_req, res, next) => {
+        try {
+            const wb = XLSX.utils.book_new();
+
+            // ── Header row ──
+            const headers = [
+                'Item Code', 'Item Name (EN)', 'Item Name (AR)',
+                'Group', 'Category', 'Brand',
+                'Tax Rate %', 'Item Status',
+                'Unit Name', 'Unit Code', 'Is Base Unit',
+                'Fraction', 'Sale Price', 'Cost Price', 'Min Neg Price', 'Unit Status',
+                'Flavor Barcode 1', 'Flavor Barcode 2', 'Flavor Barcode 3',
+            ];
+
+            // ── Two example rows ──
+            const example1 = [
+                '1234567890123456', 'Sample Item', 'عنصر مثال',
+                'Electronics', 'Mobile Phones', 'Samsung',
+                15, 'ACTIVE',
+                'Piece', '1234567890123456PCS', 'YES',
+                1, 10.00, 7.00, '', 'ACTIVE',
+                '', '', '',
+            ];
+            const example2 = [
+                '1234567890123456', 'Sample Item', 'عنصر مثال',
+                'Electronics', 'Mobile Phones', 'Samsung',
+                15, 'ACTIVE',
+                'Box', '1234567890123456BOX', 'NO',
+                12, 110.00, 78.00, 100.00, 'ACTIVE',
+                '1234567890123BCFLAV1', '', '',
+            ];
+
+            const ws = XLSX.utils.aoa_to_sheet([headers, example1, example2]);
+
+            // Column widths
+            ws['!cols'] = headers.map((h) => ({ wch: Math.max(h.length + 4, 18) }));
+
+            XLSX.utils.book_append_sheet(wb, ws, 'Items');
+
+            const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            res.setHeader('Content-Disposition', 'attachment; filename="items-import-template.xlsx"');
+            res.setHeader('Content-Length', String(buf.length));
+            res.end(buf);
+        } catch (error) { next(error); }
+    }
+);
+
+// ── Import payload schema ──
+const importExcelRowSchema = z.object({
+    itemCode:        z.string().min(1),
+    itemNameEN:      z.string().min(1),
+    itemNameAR:      z.string().optional().default(''),
+    group:           z.string().min(1),
+    category:        z.string().min(1),
+    brand:           z.string().optional().default(''),
+    taxRate:         z.coerce.number().min(0).max(100).default(0),
+    itemStatus:      z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
+    unitName:        z.string().min(1),
+    unitCode:        z.string().min(1),
+    isBaseUnit:      z.string().optional().default('NO'),
+    fraction:        z.coerce.number().positive().default(1),
+    salePrice:       z.coerce.number().min(0),
+    costPrice:       z.coerce.number().min(0).default(0),
+    minNegPrice:     z.union([z.coerce.number().min(0), z.literal(''), z.null()]).optional(),
+    unitStatus:      z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
+    flavorBarcode1:  z.string().optional().default(''),
+    flavorBarcode2:  z.string().optional().default(''),
+    flavorBarcode3:  z.string().optional().default(''),
+});
+
+const importExcelBodySchema = z.object({
+    rows:              z.array(importExcelRowSchema).min(1, 'No rows provided').max(500, 'Maximum 500 rows per import'),
+    duplicateStrategy: z.enum(['skip', 'overwrite']).default('skip'),
+});
+
+// POST /products/import-excel
+productRoutes.post(
+    '/import-excel',
+    requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM),
+    validate({ body: importExcelBodySchema }),
+    async (req, res, next) => {
+        try {
+            const companyId = req.user!.companyId;
+            const { rows, duplicateStrategy } = req.body as z.infer<typeof importExcelBodySchema>;
+
+            // ── Guard: item-code format (1–32 digits) ──
+            const itemCodePattern = /^\d{1,32}$/;
+            const malformedCodes = rows
+                .map((r, i) => ({ r, i }))
+                .filter(({ r }) => !itemCodePattern.test(String(r.itemCode || '')));
+            if (malformedCodes.length > 0) {
+                throw AppError.badRequest(
+                    `${malformedCodes.length} row(s) have an invalid Item Code (must be 1–32 digits). First bad row: ${malformedCodes[0].i + 1}`
+                );
+            }
+
+            // ── Guard: unit code uniqueness within payload ──
+            const payloadUnitCodes = new Map<string, string>(); // uc -> itemCode
+            for (const r of rows) {
+                const uc = normalizeCode(r.unitCode);
+                const ic = normalizeCode(r.itemCode);
+                if (payloadUnitCodes.has(uc) && payloadUnitCodes.get(uc) !== ic) {
+                    throw AppError.badRequest(
+                        `Unit Code "${uc}" is assigned to multiple items in the upload (items: ${payloadUnitCodes.get(uc)} and ${ic}). Fix the file and re-upload.`
+                    );
+                }
+                payloadUnitCodes.set(uc, ic);
+            }
+
+            // ── Resolve category / group / brand names → IDs (batch) ──
+            const categoryNames = [...new Set(rows.map((r) => String(r.category || '').trim()))].filter(Boolean);
+            const groupNames    = [...new Set(rows.map((r) => String(r.group    || '').trim()))].filter(Boolean);
+            const brandNames    = [...new Set(rows.map((r) => String(r.brand    || '').trim()))].filter(Boolean);
+
+            const [categories, groups, brands] = await Promise.all([
+                prisma.category.findMany({
+                    where: { companyId, name: { in: categoryNames, mode: 'insensitive' } },
+                    select: { id: true, name: true },
+                }),
+                (prisma as any).itemGroup.findMany({
+                    where: { companyId, name: { in: groupNames, mode: 'insensitive' } },
+                    select: { id: true, name: true },
+                }),
+                prisma.brand.findMany({
+                    where: { companyId, name: { in: brandNames, mode: 'insensitive' } },
+                    select: { id: true, name: true },
+                }),
+            ]);
+
+            const catMap:   Map<string, string> = new Map(categories.map((c: any) => [c.name.toLowerCase(), c.id]));
+            const groupMap: Map<string, string> = new Map(groups.map((g: any)    => [g.name.toLowerCase(), g.id]));
+            const brandMap: Map<string, string> = new Map(brands.map((b: any)    => [b.name.toLowerCase(), b.id]));
+
+            // ── Group rows by itemCode ──
+            const itemMap = new Map<string, z.infer<typeof importExcelRowSchema>[]>();
+            for (const r of rows) {
+                const ic = normalizeCode(r.itemCode);
+                if (!itemMap.has(ic)) itemMap.set(ic, []);
+                itemMap.get(ic)!.push(r);
+            }
+
+            // ── Fetch existing products for duplicate strategy ──
+            const allItemCodes = [...itemMap.keys()];
+            const existingProducts = await prisma.product.findMany({
+                where: { companyId, itemCode: { in: allItemCodes }, deletedAt: { isSet: false } },
+                select: { id: true, itemCode: true },
+            });
+            const existingByCode = new Map(existingProducts.map((p) => [normalizeCode(p.itemCode), p.id]));
+
+            // ── Process each item ──
+            let imported   = 0;
+            let skipped    = 0;
+            let overwritten = 0;
+            const errors: string[] = [];
+
+            for (const [itemCode, unitRows] of itemMap.entries()) {
+                const firstRow = unitRows[0];
+                const isExisting = existingByCode.has(itemCode);
+
+                // Per-item error boundary
+                try {
+                    // Validate category / group
+                    const catId   = catMap.get(String(firstRow.category || '').trim().toLowerCase());
+                    const groupId = groupMap.get(String(firstRow.group   || '').trim().toLowerCase());
+                    const brandId = firstRow.brand ? brandMap.get(String(firstRow.brand).trim().toLowerCase()) : undefined;
+
+                    if (!catId)   throw new Error(`Category "${firstRow.category}" not found`);
+                    if (!groupId) throw new Error(`Group "${firstRow.group}" not found`);
+
+                    // Validate base unit — accept YES / Y / TRUE / 1 (case-insensitive)
+                    const isYes = (v: any) => { const s = String(v ?? '').trim().toUpperCase(); return s === 'YES' || s === 'Y' || s === 'TRUE' || s === '1'; };
+                    const baseRows = unitRows.filter((r) => isYes(r.isBaseUnit));
+                    if (baseRows.length !== 1) {
+                        throw new Error(`Item must have exactly one base unit row (Is Base Unit = YES/Y/TRUE/1) — found ${baseRows.length}`);
+                    }
+                    const baseRow = baseRows[0];
+                    if (Number(baseRow.fraction) !== 1) {
+                        throw new Error(`Base unit fraction must be 1 (got ${baseRow.fraction})`);
+                    }
+
+                    // Build units payload
+                    const processedUnits = unitRows.map((r) => {
+                        const uc = normalizeCode(r.unitCode);
+                        const flavorBCs = [r.flavorBarcode1, r.flavorBarcode2, r.flavorBarcode3]
+                            .map((bc) => normalizeCode(bc))
+                            .filter(Boolean);
+                        const barcodes = Array.from(new Set([uc, ...flavorBCs]));
+                        const isBase   = isYes(r.isBaseUnit);
+                        const mnp      = r.minNegPrice !== '' && r.minNegPrice != null ? Number(r.minNegPrice) : null;
+                        return {
+                            unitName:                 String(r.unitName || '').trim() || 'Piece',
+                            unitCode:                 uc,
+                            qtyInBaseUnit:            Number(r.fraction)  || 1,
+                            salePrice:                Number(r.salePrice) || 0,
+                            costPrice:                Number(r.costPrice) || 0,
+                            isBase,
+                            isDefaultSaleUnit:        isBase,
+                            barcodes,
+                            minimumNegotiationPrice:  mnp,
+                        };
+                    });
+
+                    const allUnitBarcodes = processedUnits.flatMap((u) => u.barcodes);
+                    const mergedBarcodes  = Array.from(new Set(allUnitBarcodes));
+
+                    if (isExisting) {
+                        if (duplicateStrategy === 'skip') {
+                            skipped++;
+                            continue;
+                        }
+                        // overwrite: replace the product's units entirely
+                        const existingId = existingByCode.get(itemCode)!;
+
+                        // Uniqueness check: ensure unit codes don't collide with OTHER products
+                        for (const u of processedUnits) {
+                            const conflict = await (prisma as any).productUnit.findFirst({
+                                where: {
+                                    unitCode: u.unitCode,
+                                    product: { companyId, deletedAt: { isSet: false }, id: { not: existingId } },
+                                },
+                                select: { id: true },
+                            });
+                            if (conflict) throw new Error(`Unit Code "${u.unitCode}" is already used by another item`);
+                        }
+
+                        await prisma.$transaction(async (tx) => {
+                            await (tx as any).productUnit.deleteMany({ where: { productId: existingId } });
+                            await tx.product.update({
+                                where: { id: existingId },
+                                data: {
+                                    name:        firstRow.itemNameEN.trim(),
+                                    nameArabic:  firstRow.itemNameAR?.trim() || null,
+                                    categoryId:  catId,
+                                    itemGroupId: groupId,
+                                    brandId:     brandId ?? null,
+                                    taxRate:     Number(firstRow.taxRate) || 0,
+                                    status:      firstRow.itemStatus === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+                                    barcodes:    mergedBarcodes,
+                                },
+                            });
+                            await (tx as any).productUnit.createMany({
+                                data: processedUnits.map((u) => ({ ...u, productId: existingId })),
+                            });
+                        }, { maxWait: 15000, timeout: 30000 });
+                        overwritten++;
+                    } else {
+                        // new product — uniqueness check on item code
+                        const codeConflict = await prisma.product.findFirst({
+                            where: { companyId, itemCode, deletedAt: { isSet: false } },
+                            select: { id: true },
+                        });
+                        if (codeConflict) {
+                            // Race-condition guard (already exists after our initial fetch)
+                            skipped++;
+                            continue;
+                        }
+
+                        // Uniqueness check on unit codes
+                        for (const u of processedUnits) {
+                            const conflict = await (prisma as any).productUnit.findFirst({
+                                where: {
+                                    unitCode: u.unitCode,
+                                    product: { companyId, deletedAt: { isSet: false } },
+                                },
+                                select: { id: true },
+                            });
+                            if (conflict) throw new Error(`Unit Code "${u.unitCode}" is already used by another item`);
+                        }
+
+                        await prisma.$transaction(async (tx) => {
+                            const product = await tx.product.create({
+                                data: {
+                                    companyId,
+                                    itemCode,
+                                    name:        firstRow.itemNameEN.trim(),
+                                    nameArabic:  firstRow.itemNameAR?.trim() || null,
+                                    categoryId:  catId,
+                                    itemGroupId: groupId,
+                                    brandId:     brandId ?? null,
+                                    taxRate:     Number(firstRow.taxRate) || 0,
+                                    status:      firstRow.itemStatus === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+                                    barcodes:    mergedBarcodes,
+                                },
+                            });
+                            await (tx as any).productUnit.createMany({
+                                data: processedUnits.map((u) => ({ ...u, productId: product.id })),
+                            });
+                        }, { maxWait: 15000, timeout: 30000 });
+                        imported++;
+                    }
+                } catch (itemErr: any) {
+                    // Non-fatal: collect error and continue with next item
+                    errors.push(`Item ${itemCode}: ${itemErr?.message ?? 'Unknown error'}`);
+                }
+            }
+
+            sendSuccess(res, { imported, skipped, overwritten, errors, total: itemMap.size });
+        } catch (error) { next(error); }
+    }
+);
+
 // ════════════ MASTER DATA ════════════
 
 // Categories
@@ -1260,7 +1763,7 @@ productRoutes.get('/meta/categories', requirePermission(PERMISSIONS.PRODUCT_VIEW
 productRoutes.post('/meta/categories', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ body: categoryCreateSchema }), async (req, res, next) => {
     try {
         const companyId = req.user!.companyId;
-        const { name, code, parentId } = req.body as z.infer<typeof categoryCreateSchema>;
+        const { name, code, parentId, defaultProfitMarginPct } = req.body as z.infer<typeof categoryCreateSchema>;
         if (parentId) {
             await assertCategoryExists(companyId, parentId);
         }
@@ -1270,6 +1773,7 @@ productRoutes.post('/meta/categories', requireAnyPermission(PERMISSIONS.PRODUCT_
                 name,
                 code: code ? String(code).trim().toUpperCase() : null,
                 parentId: parentId ?? null,
+                defaultProfitMarginPct: Number(defaultProfitMarginPct || 0),
             }
         });
         sendSuccess(res, category);
@@ -1279,7 +1783,7 @@ productRoutes.patch('/meta/categories/:id', requireAnyPermission(PERMISSIONS.PRO
     try {
         const companyId = req.user!.companyId;
         const id = req.params.id as string;
-        const { name, code, parentId } = req.body as z.infer<typeof categoryPatchSchema>;
+        const { name, code, parentId, defaultProfitMarginPct } = req.body as z.infer<typeof categoryPatchSchema>;
         const existing = await prisma.category.findFirst({ where: { id, companyId }, select: { id: true } });
         if (!existing) throw AppError.notFound('Category');
         if (parentId === id) throw AppError.badRequest('Category cannot be its own parent');
@@ -1292,6 +1796,7 @@ productRoutes.patch('/meta/categories/:id', requireAnyPermission(PERMISSIONS.PRO
                 ...(name !== undefined ? { name } : {}),
                 ...(code !== undefined ? { code: code ? String(code).trim().toUpperCase() : null } : {}),
                 ...(parentId !== undefined ? { parentId: parentId ?? null } : {}),
+                ...(defaultProfitMarginPct !== undefined ? { defaultProfitMarginPct: Number(defaultProfitMarginPct) } : {}),
             }
         });
         sendSuccess(res, category);

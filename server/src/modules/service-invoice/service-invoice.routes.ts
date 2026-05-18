@@ -4,10 +4,10 @@ import {
     createServiceInvoice,
     getServiceInvoices,
     getServiceInvoiceById,
-    SERVICE_INVOICE_PAYMENT_METHODS,
 } from './service-invoice.controller.js';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
+import { SERVICE_INVOICE_PAYMENT_METHODS } from '../../utils/paymentMethods.js';
 
 const router = Router();
 

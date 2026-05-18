@@ -10,14 +10,18 @@ import StockAdjustmentModal from './StockAdjustmentModal';
 import LabelPrintModal from './LabelPrintModal';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import { exportExcel } from '../../lib/fileExport';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import Pagination from '../../components/ui/Pagination';
 import AppDropdown from '../../components/ui/AppDropdown';
 import { formatDecomposedQty } from '../../lib/inventoryUtils';
+import { formatCurrencyAmount, useCompanyCurrency } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 export default function StockOverview() {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
+    const currency = useCompanyCurrency();
+    const companyName = useAuthStore((s) => s.user?.company?.name) || 'Company';
 
     // UI State (Inputs)
     const [page, setPage] = useState(1);
@@ -119,7 +123,7 @@ export default function StockOverview() {
                 fileName: `Stock_Overview_${new Date().toISOString().split('T')[0]}`,
                 sheetName: 'Stock Status',
                 title: 'Current Inventory Status',
-                companyName: 'SOLVANTA ERP',
+                companyName,
                 branchName: selectedBranch?.name || 'All Warehouses',
                 branchCode: selectedBranch?.code,
                 filters: {
@@ -212,7 +216,7 @@ export default function StockOverview() {
                     <div>
                         <p className="text-sm text-gray-500">Total Valuation</p>
                         <p className="text-xl font-bold">
-                            {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR' }).format(analytics?.totalValuation || 0)}
+                            {formatCurrencyAmount(analytics?.totalValuation || 0, currency)}
                         </p>
                     </div>
                 </div>
@@ -352,10 +356,10 @@ export default function StockOverview() {
                                                 </div>
                                             </td>
                                             <td className="py-3 px-4 text-sm text-gray-600 text-right">
-                                                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR' }).format(group.avgCost)}
+                                                {formatCurrencyAmount(group.avgCost, currency)}
                                             </td>
                                             <td className="py-3 px-4 text-sm text-gray-900 text-right font-medium">
-                                                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR' }).format(group.totalBaseQty * group.avgCost)}
+                                                {formatCurrencyAmount(group.totalBaseQty * group.avgCost, currency)}
                                             </td>
                                             <td className="py-3 px-4 text-sm text-center">
                                                 <button

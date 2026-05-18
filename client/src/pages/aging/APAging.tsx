@@ -25,6 +25,7 @@ import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
 import api, { getApiErrorMessage } from '@/lib/api';
+import { formatCompanyDate, formatCurrencyAmount, toDateInputValue, useCompanyCurrency } from '@/lib/companySettings';
 
 // Types
 interface APAgingSummary {
@@ -71,11 +72,20 @@ interface InvoiceAging {
 export default function APAging() {
   const navigate = useNavigate();
   const notify = useNotification();
+  const currency = useCompanyCurrency();
+  const formatMoney = (value: number, maximumFractionDigits?: number) =>
+    maximumFractionDigits === undefined
+      ? formatCurrencyAmount(value, currency)
+      : new Intl.NumberFormat('en-US', {
+          style: 'currency',
+          currency,
+          maximumFractionDigits,
+        }).format(value);
 
   // State
   const [data, setData] = useState<APAgingSummary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [asOfDate, setAsOfDate] = useState(new Date().toISOString().split('T')[0]);
+  const [asOfDate, setAsOfDate] = useState(() => toDateInputValue());
   const [selectedSupplier, setSelectedSupplier] = useState<SupplierAging | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
@@ -140,10 +150,7 @@ export default function APAging() {
       align: 'right' as const,
       render: (row: SupplierAging) => (
         <div className="text-right text-green-600">
-          {row.current > 0 ? row.current.toLocaleString('en-US', {
-            style: 'currency',
-            currency: 'SAR',
-          }) : '-'}
+          {row.current > 0 ? formatMoney(row.current) : '-'}
         </div>
       ),
     },
@@ -153,10 +160,7 @@ export default function APAging() {
       align: 'right' as const,
       render: (row: SupplierAging) => (
         <div className="text-right text-yellow-600">
-          {row.days31to60 > 0 ? row.days31to60.toLocaleString('en-US', {
-            style: 'currency',
-            currency: 'SAR',
-          }) : '-'}
+          {row.days31to60 > 0 ? formatMoney(row.days31to60) : '-'}
         </div>
       ),
     },
@@ -166,10 +170,7 @@ export default function APAging() {
       align: 'right' as const,
       render: (row: SupplierAging) => (
         <div className="text-right text-orange-600">
-          {row.days61to90 > 0 ? row.days61to90.toLocaleString('en-US', {
-            style: 'currency',
-            currency: 'SAR',
-          }) : '-'}
+          {row.days61to90 > 0 ? formatMoney(row.days61to90) : '-'}
         </div>
       ),
     },
@@ -179,10 +180,7 @@ export default function APAging() {
       align: 'right' as const,
       render: (row: SupplierAging) => (
         <div className="text-right text-red-600">
-          {row.over90 > 0 ? row.over90.toLocaleString('en-US', {
-            style: 'currency',
-            currency: 'SAR',
-          }) : '-'}
+          {row.over90 > 0 ? formatMoney(row.over90) : '-'}
         </div>
       ),
     },
@@ -192,10 +190,7 @@ export default function APAging() {
       align: 'right' as const,
       render: (row: SupplierAging) => (
         <div className="text-right font-semibold text-slate-900">
-          {row.total.toLocaleString('en-US', {
-            style: 'currency',
-            currency: 'SAR',
-          })}
+          {formatMoney(row.total)}
         </div>
       ),
     },
@@ -229,7 +224,7 @@ export default function APAging() {
         </div>
       ),
     },
-  ], [navigate]);
+  ], [currency, navigate]);
 
   // Invoice columns for detail modal
   const invoiceColumns = useMemo(() => [
@@ -245,7 +240,7 @@ export default function APAging() {
       header: 'Date',
       render: (inv: InvoiceAging) => (
         <div className="text-sm">
-          {new Date(inv.date).toLocaleDateString()}
+          {formatCompanyDate(inv.date)}
         </div>
       ),
     },
@@ -267,14 +262,11 @@ export default function APAging() {
       align: 'right' as const,
       render: (inv: InvoiceAging) => (
         <div className="text-right font-medium">
-          {inv.balance.toLocaleString('en-US', {
-            style: 'currency',
-            currency: 'SAR',
-          })}
+          {formatMoney(inv.balance)}
         </div>
       ),
     },
-  ], []);
+  ], [currency]);
 
   const handleExport = () => {
     if (!data) return;
@@ -363,11 +355,7 @@ export default function APAging() {
                     {bucket.label}
                   </div>
                   <div className="text-2xl font-bold text-slate-900">
-                    {amount.toLocaleString('en-US', {
-                      style: 'currency',
-                      currency: 'SAR',
-                      maximumFractionDigits: 0,
-                    })}
+                    {formatMoney(amount, 0)}
                   </div>
                   <div className="text-sm text-slate-500 mt-1">
                     {percentage.toFixed(1)}% of total
@@ -387,10 +375,7 @@ export default function APAging() {
                 <div>
                   <div className="text-sm text-slate-500">Total Payable</div>
                   <div className="text-2xl font-bold text-slate-900">
-                    {data.summary.total.toLocaleString('en-US', {
-                      style: 'currency',
-                      currency: 'SAR',
-                    })}
+                    {formatMoney(data.summary.total)}
                   </div>
                 </div>
               </div>
@@ -452,37 +437,25 @@ export default function APAging() {
               <div className="p-3 bg-green-50 rounded-lg text-center">
                 <div className="text-sm text-green-600">Current</div>
                 <div className="font-semibold text-green-900">
-                  {selectedSupplier.current.toLocaleString('en-US', {
-                    style: 'currency',
-                    currency: 'SAR',
-                  })}
+                  {formatMoney(selectedSupplier.current)}
                 </div>
               </div>
               <div className="p-3 bg-yellow-50 rounded-lg text-center">
                 <div className="text-sm text-yellow-600">31-60 Days</div>
                 <div className="font-semibold text-yellow-900">
-                  {selectedSupplier.days31to60.toLocaleString('en-US', {
-                    style: 'currency',
-                    currency: 'SAR',
-                  })}
+                  {formatMoney(selectedSupplier.days31to60)}
                 </div>
               </div>
               <div className="p-3 bg-orange-50 rounded-lg text-center">
                 <div className="text-sm text-orange-600">61-90 Days</div>
                 <div className="font-semibold text-orange-900">
-                  {selectedSupplier.days61to90.toLocaleString('en-US', {
-                    style: 'currency',
-                    currency: 'SAR',
-                  })}
+                  {formatMoney(selectedSupplier.days61to90)}
                 </div>
               </div>
               <div className="p-3 bg-red-50 rounded-lg text-center">
                 <div className="text-sm text-red-600">Over 90</div>
                 <div className="font-semibold text-red-900">
-                  {selectedSupplier.over90.toLocaleString('en-US', {
-                    style: 'currency',
-                    currency: 'SAR',
-                  })}
+                  {formatMoney(selectedSupplier.over90)}
                 </div>
               </div>
             </div>
@@ -503,10 +476,7 @@ export default function APAging() {
             <div className="flex justify-between items-center pt-4 border-t">
               <div className="text-slate-500">Total Outstanding</div>
               <div className="text-2xl font-bold text-slate-900">
-                {selectedSupplier.total.toLocaleString('en-US', {
-                  style: 'currency',
-                  currency: 'SAR',
-                })}
+                {formatMoney(selectedSupplier.total)}
               </div>
             </div>
           </div>

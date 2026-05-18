@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import { exportExcel } from '../../lib/fileExport';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import Pagination from '../../components/ui/Pagination';
 import DateRangeFilter from '../../components/ui/DateRangeFilter';
 import AppDropdown from '../../components/ui/AppDropdown';

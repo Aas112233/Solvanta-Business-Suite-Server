@@ -8,6 +8,8 @@ import { ALL_PERMISSIONS } from '../../config/permissions.js';
 import { resolveSuperAdminAccess } from '../../middleware/superAdmin.js';
 import { SUPER_ADMIN_PERMISSIONS } from '../super-admin/super-admin.permissions.js';
 import { loadUserAssignedBranches } from '../user/user-profile.utils.js';
+import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
+import { resolveCompanyDocumentSettings, resolveCompanyRegionalSettings } from '../../utils/companySettings.js';
 
 const jwtExpiry = env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'];
 const jwtRefreshExpiry = env.JWT_REFRESH_EXPIRES_IN as jwt.SignOptions['expiresIn'];
@@ -129,6 +131,9 @@ export class AuthService {
             const companySettings = (fullUser.company?.settings && typeof fullUser.company.settings === 'object' && !Array.isArray(fullUser.company.settings))
                 ? fullUser.company.settings as Record<string, any>
                 : {};
+            const taxSettings = resolveCompanyTaxSettings(companySettings);
+            const regionalSettings = resolveCompanyRegionalSettings(companySettings);
+            const documentSettings = resolveCompanyDocumentSettings(companySettings);
             const superAdminAccess = resolveSuperAdminAccess({
                 email: fullUser.email,
                 rolePermissions: fullUser.role?.permissions || [],
@@ -157,6 +162,9 @@ export class AuthService {
                         currency: fullUser.company.currency,
                         logoUrl: fullUser.company.logoUrl,
                         setupCompleted: companySettings.setupCompleted !== false,
+                        regionalSettings,
+                        documentSettings,
+                        taxSettings,
                     },
                     branches: assignedBranches,
                     isSuperAdmin,
@@ -170,6 +178,9 @@ export class AuthService {
         const companySettings = (fullUser.company?.settings && typeof fullUser.company.settings === 'object' && !Array.isArray(fullUser.company.settings))
             ? fullUser.company.settings as Record<string, any>
             : {};
+        const taxSettings = resolveCompanyTaxSettings(companySettings);
+        const regionalSettings = resolveCompanyRegionalSettings(companySettings);
+        const documentSettings = resolveCompanyDocumentSettings(companySettings);
         const superAdminAccess = resolveSuperAdminAccess({
             email: fullUser.email,
             rolePermissions: fullUser.role?.permissions || [],
@@ -209,6 +220,9 @@ export class AuthService {
                     currency: fullUser.company.currency,
                     logoUrl: fullUser.company.logoUrl,
                     setupCompleted: companySettings.setupCompleted !== false, // default true for existing companies
+                    regionalSettings,
+                    documentSettings,
+                    taxSettings,
                 },
                 branches: effectiveBranches,
                 isSuperAdmin,

@@ -1,17 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import api from '../../lib/api';
 import AppLoader from '../../components/ui/AppLoader';
 import AppDropdown from '../../components/ui/AppDropdown';
-
-function toInputDate(value?: string | null): string {
-    if (!value) return new Date().toLocaleDateString('en-CA');
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return new Date().toLocaleDateString('en-CA');
-    return date.toLocaleDateString('en-CA');
-}
+import { toDateInputValue, useCompanyRegionalSettings } from '../../lib/companySettings';
 
 export default function PurchaseReturnForm() {
     const navigate = useNavigate();
@@ -19,11 +13,12 @@ export default function PurchaseReturnForm() {
     const isEdit = Boolean(returnId);
     const [searchParams] = useSearchParams();
     const queryClient = useQueryClient();
+    const regionalSettings = useCompanyRegionalSettings();
     const [purchaseId, setPurchaseId] = useState(isEdit ? '' : (searchParams.get('purchaseId') || ''));
     const [purchaseSearch, setPurchaseSearch] = useState('');
     const [notes, setNotes] = useState('');
     const [reason, setReason] = useState('');
-    const [returnDate, setReturnDate] = useState(new Date().toLocaleDateString('en-CA'));
+    const [returnDate, setReturnDate] = useState(() => toDateInputValue(undefined, regionalSettings));
     const [qtyByItem, setQtyByItem] = useState<Record<string, number>>({});
     const [isPrefilled, setIsPrefilled] = useState(false);
     const [returnAsBaseUnit, setReturnAsBaseUnit] = useState(false);
@@ -55,7 +50,7 @@ export default function PurchaseReturnForm() {
         setPurchaseId(existingReturn.purchaseInvoice?.id || '');
         setReason(existingReturn.reason || '');
         setNotes(existingReturn.notes || '');
-        setReturnDate(toInputDate(existingReturn.createdAt));
+        setReturnDate(toDateInputValue(existingReturn.createdAt, regionalSettings));
 
         const mappedQty: Record<string, number> = {};
         for (const line of existingReturn.items || []) {
@@ -64,7 +59,7 @@ export default function PurchaseReturnForm() {
         }
         setQtyByItem(mappedQty);
         setIsPrefilled(true);
-    }, [isEdit, existingReturn, isPrefilled]);
+    }, [isEdit, existingReturn, isPrefilled, regionalSettings]);
 
     const saveMut = useMutation({
         mutationFn: (payload: any) => {

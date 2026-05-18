@@ -10,11 +10,12 @@ import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import Pagination from '../../components/ui/Pagination';
 import { getSalesCustomerDisplay } from '../../lib/salesCustomerDisplay';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { toDateInputValue } from '../../lib/companySettings';
 
 export default function OverdueInvoices() {
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
     const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = toDateInputValue();
 
     const [page, setPage] = useState(1);
     const [limit, setLimit] = useState(20);

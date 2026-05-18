@@ -28,6 +28,7 @@ import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
 import api, { getApiErrorMessage } from '@/lib/api';
+import { formatCompanyDate, toDateInputValue, useCompanyRegionalSettings } from '@/lib/companySettings';
 
 // Types
 interface BankAccount {
@@ -72,6 +73,7 @@ export default function BankReconciliation() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const notify = useNotification();
+  const regionalSettings = useCompanyRegionalSettings();
   
   const accountId = searchParams.get('accountId');
 
@@ -87,7 +89,7 @@ export default function BankReconciliation() {
   const [selectedTransactions, setSelectedTransactions] = useState<Set<string>>(new Set());
   
   const [formData, setFormData] = useState({
-    statementDate: new Date().toISOString().split('T')[0],
+    statementDate: toDateInputValue(undefined, regionalSettings),
     statementNumber: '',
     closingBalance: '',
     openingBalance: '',
@@ -267,7 +269,7 @@ export default function BankReconciliation() {
       header: 'Date',
       render: (transaction: BankTransaction) => (
         <div className="text-sm">
-          {new Date(transaction.transactionDate).toLocaleDateString()}
+          {formatCompanyDate(transaction.transactionDate, regionalSettings)}
         </div>
       ),
     },
@@ -318,7 +320,7 @@ export default function BankReconciliation() {
       header: 'Statement Date',
       render: (rec: Reconciliation) => (
         <div className="font-medium">
-          {new Date(rec.statementDate).toLocaleDateString()}
+          {formatCompanyDate(rec.statementDate, regionalSettings)}
         </div>
       ),
     },
@@ -396,14 +398,14 @@ export default function BankReconciliation() {
         </div>
       ),
     },
-  ], []);
+  ], [regionalSettings]);
 
   // If in active reconciliation mode
   if (activeReconciliation) {
     return (
       <PageTemplate
         title={`Reconciling: ${selectedAccount?.accountName}`}
-        subtitle={`Statement Date: ${new Date(activeReconciliation.statementDate).toLocaleDateString()}`}
+        subtitle={`Statement Date: ${formatCompanyDate(activeReconciliation.statementDate, regionalSettings)}`}
         breadcrumb={[
           { label: 'Home', href: '/' },
           { label: 'Banking', href: '/bank' },

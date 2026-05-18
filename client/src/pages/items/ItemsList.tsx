@@ -1,31 +1,64 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import api from '../../lib/api';
-import toast from 'react-hot-toast';
-import { Plus, Edit2, Trash2, Search, Filter, Loader2, Package, Layout } from 'lucide-react';
-import ModuleRefreshButton from '../../components/ModuleRefreshButton';
+import { Plus, Edit2, Search, Loader2, Package, Layout, FileSpreadsheet } from 'lucide-react';
 import Pagination from '../../components/ui/Pagination';
 import AppDropdown from '../../components/ui/AppDropdown';
 import { useAuthStore } from '../../stores/authStore';
+import ItemImportModal from './ItemImportModal';
+
+interface ItemListRow {
+    id: string;
+    name: string;
+    itemCode: string;
+    status: string;
+    itemGroup?: { name?: string | null } | null;
+    category?: { name?: string | null } | null;
+    brand?: { name?: string | null } | null;
+    units?: Array<{
+        unitName: string;
+        salePrice: number;
+    }>;
+}
+
+interface ProductsListResponse {
+    data: ItemListRow[];
+    meta?: {
+        pagination?: {
+            page: number;
+            limit: number;
+            total: number;
+            totalPages: number;
+        };
+    };
+}
+
+type ItemFilters = {
+    categoryId: string;
+    itemGroupId: string;
+    brandId: string;
+    status: string;
+    sortBy: string;
+    sortOrder: 'asc' | 'desc';
+};
 
 export default function ItemsList() {
     const navigate = useNavigate();
     const { hasPermission } = useAuthStore();
     const canEditItem = hasPermission('product.edit') || hasPermission('product.editItem');
+    const [showImport, setShowImport] = useState(false);
     const [searchInput, setSearchInput] = useState('');
     const [querySearch, setQuerySearch] = useState('');
     const [page, setPage] = useState(1);
     const [limit, setLimit] = useState(20);
-    const qc = useQueryClient();
-    const storageKey = 'items-list-saved-filters-v1';
 
     // Filters
-    const [filters, setFilters] = useState({
+    const [filters, setFilters] = useState<ItemFilters>({
         categoryId: '',
         itemGroupId: '',
         brandId: '',
-        status: '',
+        status: 'all',
         sortBy: 'createdAt',
         sortOrder: 'desc' as 'asc' | 'desc',
     });
@@ -36,9 +69,9 @@ export default function ItemsList() {
     const { data: groups, refetch: refetchGroups, isFetching: isFetchingGroups } = useQuery({ queryKey: ['groups'], queryFn: () => api.get('/products/meta/groups').then(r => r.data.data) });
     const { data: brands, refetch: refetchBrands, isFetching: isFetchingBrands } = useQuery({ queryKey: ['brands'], queryFn: () => api.get('/products/meta/brands').then(r => r.data.data) });
 
-    const { data, isLoading, isError, error, isFetching } = useQuery({
+    const { data, isLoading, isError, error, isFetching } = useQuery<ProductsListResponse>({
         queryKey: ['products', querySearch, page, limit, queryFilters],
-        queryFn: () => {
+        queryFn: ({ signal }) => {
             const params: Record<string, any> = {
                 page,
                 limit,
@@ -50,52 +83,30 @@ export default function ItemsList() {
             if (queryFilters.itemGroupId) params.itemGroupId = queryFilters.itemGroupId;
             if (queryFilters.brandId) params.brandId = queryFilters.brandId;
             if (queryFilters.status) params.status = queryFilters.status;
-            return api.get('/products', { params }).then((r) => r.data);
+            return api.get<ProductsListResponse>('/products', { params, signal }).then((r) => r.data);
         },
         retry: 1,
+        placeholderData: keepPreviousData,
     });
     const pagination = data?.meta?.pagination;
-
-    useEffect(() => {
-        const raw = localStorage.getItem(storageKey);
-        if (!raw) return;
-        try {
-            const parsed = JSON.parse(raw);
-            if (parsed?.filters) {
-                setFilters(parsed.filters);
-                setQueryFilters(parsed.filters);
-            }
-            if (typeof parsed?.search === 'string') {
-                setSearchInput(parsed.search);
-                setQuerySearch(parsed.search);
-            }
-        } catch { }
-    }, []);
-
-    const canSaveCurrentFilter = useMemo(() => Boolean(
-        searchInput.trim() ||
-        filters.categoryId ||
-        filters.itemGroupId ||
-        filters.brandId ||
-        filters.status ||
-        filters.sortBy !== 'createdAt' ||
-        filters.sortOrder !== 'desc'
-    ), [searchInput, filters]);
 
     const applyFilters = () => {
         setPage(1);
         setQuerySearch(searchInput);
-        setQueryFilters(filters);
+        setQueryFilters({
+            ...filters,
+            status: filters.status || 'all',
+        });
     };
 
-    const saveCurrentFilter = () => {
-        localStorage.setItem(storageKey, JSON.stringify({ search: searchInput, filters }));
-        toast.success('Items filter saved');
-    };
-
-    const clearSavedFilter = () => {
-        localStorage.removeItem(storageKey);
-        toast.success('Saved filter cleared');
+    const applyDropdownFilter = <K extends keyof ItemFilters>(key: K, value: ItemFilters[K]) => {
+        const nextFilters = {
+            ...filters,
+            [key]: value,
+        };
+        setPage(1);
+        setFilters(nextFilters);
+        setQueryFilters(nextFilters);
     };
 
 
@@ -105,19 +116,25 @@ export default function ItemsList() {
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                    <div className="flex items-center gap-3">
-                        <h1 className="text-2xl font-bold text-gray-900">Items</h1>
-                        <ModuleRefreshButton queryKeys={[['products'], ['categories'], ['groups'], ['brands']]} />
-                    </div>
+                    <h1 className="text-2xl font-bold text-gray-900">Items</h1>
                     <p className="text-sm text-gray-500">Manage products and services</p>
                 </div>
-                <button
-                    onClick={() => navigate('/items/new')}
-                    disabled={!canEditItem}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    <Plus size={18} /> Add Item
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setShowImport(true)}
+                        disabled={!canEditItem}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <FileSpreadsheet size={17} className="text-green-600" /> Import from Excel
+                    </button>
+                    <button
+                        onClick={() => navigate('/items/new')}
+                        disabled={!canEditItem}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <Plus size={18} /> Add Item
+                    </button>
+                </div>
             </div>
 
             {/* Controls */}
@@ -135,7 +152,7 @@ export default function ItemsList() {
                 <div className="flex gap-2 overflow-x-auto pb-1">
                     <AppDropdown
                         value={filters.categoryId}
-                        onChange={(v) => setFilters(prev => ({ ...prev, categoryId: v }))}
+                        onChange={(v) => applyDropdownFilter('categoryId', v)}
                         options={[{ value: '', label: 'All Categories' }, ...(cats || []).map((c: any) => ({ value: c.id, label: c.name }))]}
                         placeholder="All Categories"
                         searchable
@@ -145,7 +162,7 @@ export default function ItemsList() {
                     />
                     <AppDropdown
                         value={filters.itemGroupId}
-                        onChange={(v) => setFilters(prev => ({ ...prev, itemGroupId: v }))}
+                        onChange={(v) => applyDropdownFilter('itemGroupId', v)}
                         options={[{ value: '', label: 'All Groups' }, ...(groups || []).map((g: any) => ({ value: g.id, label: g.name }))]}
                         placeholder="All Groups"
                         searchable
@@ -155,7 +172,7 @@ export default function ItemsList() {
                     />
                     <AppDropdown
                         value={filters.brandId}
-                        onChange={(v) => setFilters(prev => ({ ...prev, brandId: v }))}
+                        onChange={(v) => applyDropdownFilter('brandId', v)}
                         options={[{ value: '', label: 'All Brands' }, ...(brands || []).map((b: any) => ({ value: b.id, label: b.name }))]}
                         placeholder="All Brands"
                         searchable
@@ -165,19 +182,24 @@ export default function ItemsList() {
                     />
                     <AppDropdown
                         value={filters.status}
-                        onChange={(v) => setFilters(prev => ({ ...prev, status: v }))}
-                        options={[{ value: '', label: 'All Status' }, { value: 'ACTIVE', label: 'Active' }, { value: 'INACTIVE', label: 'Inactive' }]}
+                        onChange={(v) => applyDropdownFilter('status', v)}
+                        options={[
+                            { value: 'all', label: 'All Status' },
+                            { value: 'ACTIVE', label: 'Active' },
+                            { value: 'INACTIVE', label: 'Inactive' },
+                            { value: 'DISCONTINUED', label: 'Discontinued' },
+                        ]}
                         placeholder="All Status"
                     />
                     <AppDropdown
                         value={filters.sortBy}
-                        onChange={(v) => setFilters(prev => ({ ...prev, sortBy: v }))}
+                        onChange={(v) => applyDropdownFilter('sortBy', v)}
                         options={[{ value: 'createdAt', label: 'Sort: Created' }, { value: 'updatedAt', label: 'Sort: Updated' }, { value: 'name', label: 'Sort: Name' }, { value: 'itemCode', label: 'Sort: Item Code' }, { value: 'status', label: 'Sort: Status' }]}
                         placeholder="Sort By"
                     />
                     <AppDropdown
                         value={filters.sortOrder}
-                        onChange={(v) => setFilters(prev => ({ ...prev, sortOrder: v as 'asc' | 'desc' }))}
+                        onChange={(v) => applyDropdownFilter('sortOrder', v as 'asc' | 'desc')}
                         options={[{ value: 'desc', label: 'Desc' }, { value: 'asc', label: 'Asc' }]}
                         placeholder="Order"
                     />
@@ -190,26 +212,11 @@ export default function ItemsList() {
                     </button>
                     <button
                         type="button"
-                        onClick={saveCurrentFilter}
-                        disabled={!canSaveCurrentFilter}
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white hover:bg-gray-50 text-gray-700 disabled:opacity-50"
-                    >
-                        Save Filter
-                    </button>
-                    <button
-                        type="button"
-                        onClick={clearSavedFilter}
-                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white hover:bg-gray-50 text-gray-700"
-                    >
-                        Clear Saved
-                    </button>
-                    <button
-                        type="button"
                         onClick={() => {
                             setSearchInput('');
                             setQuerySearch('');
                             setPage(1);
-                            const reset = { categoryId: '', itemGroupId: '', brandId: '', status: '', sortBy: 'createdAt', sortOrder: 'desc' as const };
+                            const reset = { categoryId: '', itemGroupId: '', brandId: '', status: 'all', sortBy: 'createdAt', sortOrder: 'desc' as const };
                             setFilters(reset);
                             setQueryFilters(reset);
                         }}
@@ -326,6 +333,7 @@ export default function ItemsList() {
                     />
                 )}
             </div>
+            {showImport && <ItemImportModal onClose={() => setShowImport(false)} />}
         </div>
     );
 }

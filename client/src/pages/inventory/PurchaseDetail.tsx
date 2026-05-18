@@ -3,10 +3,16 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Printer, Package, User, Building, Calendar, DollarSign, ReceiptText, Pencil } from 'lucide-react';
 import api from '../../lib/api';
 import AppLoader from '../../components/ui/AppLoader';
+import { formatTaxLabel, useCompanyTaxSettings } from '../../lib/tax';
+import { formatCompanyDate, formatCompanyDateTime, formatCurrencyAmount, resolveCompanyCurrency } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 export default function PurchaseDetail() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const companyTax = useCompanyTaxSettings();
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
 
     const { data: purchase, isLoading, isError } = useQuery({
         queryKey: ['purchase', id],
@@ -26,6 +32,8 @@ export default function PurchaseDetail() {
 
     if (isLoading) return <AppLoader />;
     if (isError || !purchase) return <div className="p-8 text-center text-red-500 font-bold">Purchase record not found</div>;
+    const recordedAt = formatCompanyDateTime(purchase.createdAt, company);
+    const recordedTime = recordedAt.includes(', ') ? recordedAt.split(', ').slice(1).join(', ') : '';
 
     return (
         <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
@@ -85,8 +93,8 @@ export default function PurchaseDetail() {
                 <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
                     <div className="p-2 bg-purple-50 text-purple-600 rounded-lg w-fit mb-4"><Calendar size={20} /></div>
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Recorded On</p>
-                    <p className="font-black text-gray-900">{new Date(purchase.createdAt).toLocaleDateString()}</p>
-                    <p className="text-xs text-gray-500 mt-1">{new Date(purchase.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                    <p className="font-black text-gray-900">{formatCompanyDate(purchase.createdAt, company)}</p>
+                    <p className="text-xs text-gray-500 mt-1">{recordedTime || recordedAt}</p>
                 </div>
                 <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
                     <div className="p-2 bg-orange-50 text-orange-600 rounded-lg w-fit mb-4"><User size={20} /></div>
@@ -97,9 +105,9 @@ export default function PurchaseDetail() {
                 <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
                     <div className="p-2 bg-green-50 text-green-600 rounded-lg w-fit mb-4"><DollarSign size={20} /></div>
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Total Bill</p>
-                    <p className="font-black text-gray-900 text-lg">{purchase.grandTotal.toLocaleString()} SAR</p>
+                    <p className="font-black text-gray-900 text-lg">{formatCurrencyAmount(Number(purchase.grandTotal || 0), currency)}</p>
                     <p className="text-xs text-green-600 font-bold mt-1">
-                        Paid {Number(paymentData?.totals?.paid || 0).toFixed(2)} · Outstanding {Number(paymentData?.totals?.outstanding || purchase.grandTotal).toFixed(2)}
+                        Paid {formatCurrencyAmount(Number(paymentData?.totals?.paid || 0), currency)} · Outstanding {formatCurrencyAmount(Number(paymentData?.totals?.outstanding || purchase.grandTotal), currency)}
                     </p>
                 </div>
             </div>
@@ -121,7 +129,7 @@ export default function PurchaseDetail() {
                             <th className="py-4 px-6 text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">Unit</th>
                             <th className="py-4 px-6 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Quantity</th>
                             <th className="py-4 px-6 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Unit Cost</th>
-                            <th className="py-4 px-6 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">VAT (15%)</th>
+                            <th className="py-4 px-6 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">{formatTaxLabel(companyTax)}</th>
                             <th className="py-4 px-6 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Subtotal</th>
                         </tr>
                     </thead>
@@ -157,12 +165,12 @@ export default function PurchaseDetail() {
                             <td className="py-4 px-6 text-right text-sm font-black text-gray-900 font-mono">{purchase.subtotal.toLocaleString()}</td>
                         </tr>
                         <tr>
-                            <td colSpan={5} className="py-4 px-6 text-right text-sm font-bold text-gray-500">VAT (15%)</td>
+                            <td colSpan={5} className="py-4 px-6 text-right text-sm font-bold text-gray-500">{formatTaxLabel(companyTax)}</td>
                             <td className="py-4 px-6 text-right text-sm font-black text-red-600 font-mono">{purchase.taxTotal.toLocaleString()}</td>
                         </tr>
                         <tr className="bg-blue-600 text-white">
                             <td colSpan={5} className="py-6 px-6 text-right text-lg font-black uppercase tracking-widest">Grand Total</td>
-                            <td className="py-6 px-6 text-right text-2xl font-black font-mono tracking-tighter">{purchase.grandTotal.toLocaleString()} SAR</td>
+                            <td className="py-6 px-6 text-right text-2xl font-black font-mono tracking-tighter">{formatCurrencyAmount(Number(purchase.grandTotal || 0), currency)}</td>
                         </tr>
                     </tfoot>
                 </table>

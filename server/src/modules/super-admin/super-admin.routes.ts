@@ -10,6 +10,11 @@ import { AppError } from '../../utils/AppError.js';
 import { DEFAULT_SYSTEM_ROLES } from '../../config/permissions.js';
 import { AuthService } from '../auth/auth.service.js';
 import { SUPER_ADMIN_PERMISSIONS } from './super-admin.permissions.js';
+import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
+import {
+    DEFAULT_COMPANY_DOCUMENT_SETTINGS,
+    DEFAULT_COMPANY_REGIONAL_SETTINGS,
+} from '../../utils/companySettings.js';
 import {
     type FeatureFlags,
     type SuperAdminSettings,
@@ -321,6 +326,7 @@ function isAnnouncementExpired(expiresAt: string) {
 }
 
 function buildTenantCompanySettings(payload: z.infer<typeof createTenantSchema>) {
+    const defaultTaxSettings = resolveCompanyTaxSettings(undefined);
     return {
         setupCompleted: false,
         contact: {
@@ -330,23 +336,23 @@ function buildTenantCompanySettings(payload: z.infer<typeof createTenantSchema>)
             address: payload.company.contactAddress || '',
         },
         regional: {
-            timezone: payload.company.timezone || 'UTC',
-            dateFormat: payload.company.dateFormat || 'YYYY-MM-DD',
-            timeFormat: payload.company.timeFormat || '24H',
-            language: payload.company.language || 'en',
+            timezone: payload.company.timezone || DEFAULT_COMPANY_REGIONAL_SETTINGS.timezone,
+            dateFormat: payload.company.dateFormat || DEFAULT_COMPANY_REGIONAL_SETTINGS.dateFormat,
+            timeFormat: payload.company.timeFormat || DEFAULT_COMPANY_REGIONAL_SETTINGS.timeFormat,
+            language: payload.company.language || DEFAULT_COMPANY_REGIONAL_SETTINGS.language,
         },
         tax: {
-            label: 'VAT',
-            defaultRate: 0.15,
-            inclusivePricing: false,
+            label: defaultTaxSettings.label,
+            defaultRate: defaultTaxSettings.defaultRate,
+            inclusivePricing: defaultTaxSettings.inclusivePricing,
         },
         inventory: {
             lowStockThreshold: 10,
         },
         documents: {
-            invoicePrefix: 'INV',
-            quotationPrefix: 'QUO',
-            salesOrderPrefix: 'SO',
+            invoicePrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.invoicePrefix,
+            quotationPrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.quotationPrefix,
+            salesOrderPrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.salesOrderPrefix,
         },
         superAdmin: {
             status: 'Active',

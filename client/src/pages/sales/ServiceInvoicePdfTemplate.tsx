@@ -1,10 +1,14 @@
 import type { ServiceInvoice } from './ServiceInvoiceView';
+import { formatCompanyDate, formatCurrencyAmount, resolveCompanyCurrency } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 interface ServiceInvoicePdfTemplateProps {
     invoice: ServiceInvoice;
 }
 
 export function ServiceInvoicePdfTemplate({ invoice }: ServiceInvoicePdfTemplateProps) {
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
     return (
         <div className="p-8 bg-white">
             {/* Header */}
@@ -16,7 +20,7 @@ export function ServiceInvoicePdfTemplate({ invoice }: ServiceInvoicePdfTemplate
                 <div className="text-right">
                     <h2 className="text-2xl font-bold">{invoice.invoiceNo}</h2>
                     <p className="text-sm text-gray-600">
-                        {new Date(invoice.createdAt).toLocaleDateString()}
+                        {formatCompanyDate(invoice.createdAt, company)}
                     </p>
                 </div>
             </div>
@@ -94,16 +98,16 @@ export function ServiceInvoicePdfTemplate({ invoice }: ServiceInvoicePdfTemplate
                             </td>
                             <td className="py-3 px-4 text-right">{item.qty}</td>
                             <td className="py-3 px-4 text-right">
-                                ${item.unitPrice.toFixed(2)}
+                                {formatCurrencyAmount(Number(item.unitPrice || 0), currency)}
                             </td>
                             <td className="py-3 px-4 text-right text-gray-600">
-                                ${item.discount.toFixed(2)}
+                                {formatCurrencyAmount(Number(item.discount || 0), currency)}
                             </td>
                             <td className="py-3 px-4 text-right text-gray-600">
-                                ${item.taxAmount.toFixed(2)}
+                                {formatCurrencyAmount(Number(item.taxAmount || 0), currency)}
                             </td>
                             <td className="py-3 px-4 text-right font-semibold">
-                                ${item.lineTotal.toFixed(2)}
+                                {formatCurrencyAmount(Number(item.lineTotal || 0), currency)}
                             </td>
                         </tr>
                     ))}
@@ -115,24 +119,24 @@ export function ServiceInvoicePdfTemplate({ invoice }: ServiceInvoicePdfTemplate
                 <div className="w-64 space-y-2">
                     <div className="flex justify-between text-sm">
                         <span className="text-gray-600">Subtotal</span>
-                        <span className="font-medium">${invoice.subtotal.toFixed(2)}</span>
+                        <span className="font-medium">{formatCurrencyAmount(Number(invoice.subtotal || 0), currency)}</span>
                     </div>
                     {invoice.discountTotal > 0 && (
                         <div className="flex justify-between text-sm">
                             <span className="text-gray-600">Discount</span>
                             <span className="font-medium text-red-600">
-                                -${invoice.discountTotal.toFixed(2)}
+                                -{formatCurrencyAmount(Number(invoice.discountTotal || 0), currency)}
                             </span>
                         </div>
                     )}
                     <div className="flex justify-between text-sm">
                         <span className="text-gray-600">Tax</span>
-                        <span className="font-medium">${invoice.taxTotal.toFixed(2)}</span>
+                        <span className="font-medium">{formatCurrencyAmount(Number(invoice.taxTotal || 0), currency)}</span>
                     </div>
                     <div className="border-t-2 border-brand pt-2">
                         <div className="flex justify-between text-lg font-bold">
                             <span>Grand Total</span>
-                            <span className="text-brand">${invoice.grandTotal.toFixed(2)}</span>
+                            <span className="text-brand">{formatCurrencyAmount(Number(invoice.grandTotal || 0), currency)}</span>
                         </div>
                     </div>
                 </div>

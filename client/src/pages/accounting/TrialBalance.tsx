@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { Calculator } from 'lucide-react';
+import { toDateInputValue } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 interface TrialBalanceLine {
     id: string;
@@ -14,7 +16,8 @@ interface TrialBalanceLine {
 }
 
 export default function TrialBalance() {
-    const [asOfDate, setAsOfDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const company = useAuthStore((s) => s.user?.company);
+    const [asOfDate, setAsOfDate] = useState(() => toDateInputValue(undefined, company));
 
     const { data: tbLines = [], isLoading } = useQuery<TrialBalanceLine[]>({
         queryKey: ['trialBalance', asOfDate],

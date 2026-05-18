@@ -9,6 +9,7 @@ import DateRangeFilter from '@/components/ui/DateRangeFilter';
 import ModuleRefreshButton from '@/components/ModuleRefreshButton';
 import Pagination from '@/components/ui/Pagination';
 import { getSalesCustomerDisplay } from '@/lib/salesCustomerDisplay';
+import { toDateInputValue } from '@/lib/companySettings';
 
 type CreditRow = {
     id: string;
@@ -28,7 +29,7 @@ export default function SalesCreditControl() {
     const navigate = useNavigate();
     const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = toDateInputValue();
 
     const [searchInput, setSearchInput] = useState('');
     const [dateInput, setDateInput] = useState({ startDate: '', endDate: today });

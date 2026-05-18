@@ -6,16 +6,18 @@ import {
     CheckCircle2, Clock, Printer, ShoppingBag, ArrowRight
 } from 'lucide-react';
 import api from '@/lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { printPdfFromComponent } from '@/lib/fileExport';
 import { PurchaseOrderPdf } from '@/components/purchases/PurchaseOrderPdf';
 import { useAuthStore } from '@/stores/authStore';
+import { formatCompanyDate, useCompanyCurrency } from '@/lib/companySettings';
 
 export default function PurchaseOrderDetail() {
     const { id } = useParams();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const user = useAuthStore((s: any) => s.user);
+    const currency = useCompanyCurrency();
 
     const { data: order, isLoading } = useQuery({
         queryKey: ['purchase-orders', id],
@@ -58,8 +60,8 @@ export default function PurchaseOrderDetail() {
         await printPdfFromComponent(
             <PurchaseOrderPdf
                 order={order}
-                companyName={user?.company?.name || 'SOLVANTA ERP'}
-                currency="SAR"
+                companyName={user?.company?.name || 'Company'}
+                currency={currency}
             />
         );
     };
@@ -80,7 +82,7 @@ export default function PurchaseOrderDetail() {
                             </span>
                         </div>
                         <p className="text-sm text-gray-500 mt-1 flex items-center gap-1">
-                            Created on {new Date(order.createdAt).toLocaleDateString()} by {order.createdBy?.name}
+                            Created on {formatCompanyDate(order.createdAt, user?.company)} by {order.createdBy?.name}
                         </p>
                     </div>
                 </div>
@@ -200,13 +202,13 @@ export default function PurchaseOrderDetail() {
                             <div className="flex items-center gap-3 text-sm">
                                 <Calendar size={16} className="text-gray-400" />
                                 <span className="text-gray-500">Order Date:</span>
-                                <span className="font-bold text-gray-900 ml-auto">{new Date(order.date).toLocaleDateString()}</span>
+                                <span className="font-bold text-gray-900 ml-auto">{formatCompanyDate(order.date, user?.company)}</span>
                             </div>
                             <div className="flex items-center gap-3 text-sm">
                                 <Clock size={16} className="text-gray-400" />
                                 <span className="text-gray-500">Expected:</span>
                                 <span className="font-bold text-orange-600 ml-auto leading-none">
-                                    {order.expectedDate ? new Date(order.expectedDate).toLocaleDateString() : 'N/A'}
+                                    {order.expectedDate ? formatCompanyDate(order.expectedDate, user?.company) : 'N/A'}
                                 </span>
                             </div>
                         </div>

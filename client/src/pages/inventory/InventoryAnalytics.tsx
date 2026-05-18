@@ -7,10 +7,12 @@ import {
 import { TrendingUp, Package, DollarSign, PieChart as PieIcon, Layers } from 'lucide-react';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import AppLoader from '../../components/ui/AppLoader';
+import { formatCurrencyAmount, useCompanyCurrency } from '../../lib/companySettings';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
 export default function InventoryAnalytics() {
+    const currency = useCompanyCurrency();
     const { data: analytics, isLoading } = useQuery({
         queryKey: ['inventory-analytics'],
         queryFn: () => api.get('/inventory/analytics').then((r: any) => r.data.data)
@@ -36,7 +38,7 @@ export default function InventoryAnalytics() {
                     <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl w-fit mb-4"><DollarSign size={24} /></div>
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Valuation</p>
                     <h2 className="text-3xl font-black text-gray-900 tracking-tighter">
-                        {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR' }).format(analytics?.totalValuation || 0)}
+                        {formatCurrencyAmount(analytics?.totalValuation || 0, currency)}
                     </h2>
                 </div>
                 <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-xl shadow-gray-100/50">
@@ -75,6 +77,7 @@ export default function InventoryAnalytics() {
                                     ))}
                                 </Pie>
                                 <Tooltip
+                                    formatter={(value: any) => formatCurrencyAmount(Number(value || 0), currency)}
                                     contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 50px rgba(0,0,0,0.1)', fontWeight: 'bold' }}
                                 />
                                 <Legend verticalAlign="bottom" height={36} />
@@ -103,7 +106,7 @@ export default function InventoryAnalytics() {
                                     tickFormatter={(v) => v.length > 15 ? v.substring(0, 12) + '...' : v}
                                 />
                                 <Tooltip
-                                    formatter={(value: any) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR' }).format(value)}
+                                    formatter={(value: any) => formatCurrencyAmount(Number(value || 0), currency)}
                                     contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 50px rgba(0,0,0,0.1)' }}
                                 />
                                 <Bar dataKey="value" fill="#3b82f6" radius={[0, 10, 10, 0]} />

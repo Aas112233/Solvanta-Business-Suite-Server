@@ -8,10 +8,12 @@ import { useAuthStore } from '../../stores/authStore';
 import Pagination from '../../components/ui/Pagination';
 import { getSalesCustomerDisplay } from '../../lib/salesCustomerDisplay';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { formatCompanyDate, resolveCompanyCurrency } from '../../lib/companySettings';
 
 export default function SalesPayments() {
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
     const [page, setPage] = useState(1);
     const [limit, setLimit] = useState(20);
     const [searchInput, setSearchInput] = useState('');
@@ -117,7 +119,7 @@ export default function SalesPayments() {
                         ) : rows.map((row: any) => (
                             <tr key={row.id} className="border-t border-gray-100">
                                 <td className="px-4 py-3 text-sm font-semibold text-gray-900">{row.invoiceNo}</td>
-                                <td className="px-4 py-3 text-sm text-gray-600">{new Date(row.createdAt).toLocaleDateString()}</td>
+                                <td className="px-4 py-3 text-sm text-gray-600">{formatCompanyDate(row.createdAt, company)}</td>
                                 <td className="px-4 py-3 text-sm text-gray-700">
                                     <div className="flex flex-col leading-tight">
                                         <span>{getSalesCustomerDisplay(row).title}</span>

@@ -21,14 +21,16 @@ import {
     RefreshCw
 } from 'lucide-react';
 import api from '../../lib/api';
-import { format } from 'date-fns';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import AppLoader from '../../components/ui/AppLoader';
+import { formatCompanyDate, formatCompanyDateTime, useCompanyCurrency, useCompanyRegionalSettings } from '../../lib/companySettings';
 
 export default function SalesQuotationDetail() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     const [showActions, setShowActions] = useState(false);
+    const currency = useCompanyCurrency();
+    const regionalSettings = useCompanyRegionalSettings();
 
     // Fetch quotation details
     const { data: quotation, isLoading, error, refetch } = useQuery({
@@ -100,8 +102,6 @@ export default function SalesQuotationDetail() {
         const Icon = icons[status] || Clock;
         return <Icon size={16} />;
     };
-
-    const currency = 'SAR';
 
     return (
         <div className="space-y-6 max-w-7xl mx-auto">
@@ -196,7 +196,7 @@ export default function SalesQuotationDetail() {
                                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Date</p>
                                     <div className="flex items-center gap-2 text-gray-700">
                                         <Calendar size={16} />
-                                        <span className="font-medium">{format(new Date(quotation.date), 'dd MMMM yyyy')}</span>
+                                        <span className="font-medium">{formatCompanyDate(quotation.date, regionalSettings)}</span>
                                     </div>
                                 </div>
                                 <div>
@@ -204,7 +204,7 @@ export default function SalesQuotationDetail() {
                                     <div className="flex items-center gap-2 text-gray-700">
                                         <Clock size={16} />
                                         <span className="font-medium">
-                                            {quotation.validUntil ? format(new Date(quotation.validUntil), 'dd MMMM yyyy') : 'No expiry'}
+                                            {quotation.validUntil ? formatCompanyDate(quotation.validUntil, regionalSettings) : 'No expiry'}
                                         </span>
                                     </div>
                                 </div>
@@ -438,7 +438,7 @@ export default function SalesQuotationDetail() {
                                 <div className="w-2 h-2 rounded-full bg-blue-500 mt-2"></div>
                                 <div className="flex-1">
                                     <p className="text-sm font-medium text-gray-900">Created</p>
-                                    <p className="text-xs text-gray-500">{format(new Date(quotation.createdAt), 'dd MMM yyyy, hh:mm a')}</p>
+                                    <p className="text-xs text-gray-500">{formatCompanyDateTime(quotation.createdAt, regionalSettings)}</p>
                                 </div>
                             </div>
                             {quotation.updatedAt && quotation.updatedAt !== quotation.createdAt && (
@@ -446,7 +446,7 @@ export default function SalesQuotationDetail() {
                                     <div className="w-2 h-2 rounded-full bg-gray-400 mt-2"></div>
                                     <div className="flex-1">
                                         <p className="text-sm font-medium text-gray-900">Last Updated</p>
-                                        <p className="text-xs text-gray-500">{format(new Date(quotation.updatedAt), 'dd MMM yyyy, hh:mm a')}</p>
+                                        <p className="text-xs text-gray-500">{formatCompanyDateTime(quotation.updatedAt, regionalSettings)}</p>
                                     </div>
                                 </div>
                             )}

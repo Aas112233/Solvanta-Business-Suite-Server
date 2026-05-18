@@ -5,7 +5,7 @@ import {
     Calendar, Building, User, Info, CheckCheck, FileText
 } from 'lucide-react';
 import api from '../../lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import AppLoader from '../../components/ui/AppLoader';
 
 export default function StockCountDetail() {

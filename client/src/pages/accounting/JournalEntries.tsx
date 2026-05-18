@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { FileText, Plus, X, Trash2, Loader2, Filter, RotateCcw } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { formatCompanyDate, toDateInputValue } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 interface Account {
     id: string;
@@ -27,7 +29,19 @@ interface JournalEntry {
     }[];
 }
 
+function createInitialFormData(source?: unknown) {
+    return {
+        date: toDateInputValue(undefined, source),
+        memo: '',
+        lines: [
+            { id: Math.random().toString(36).substr(2, 9), accountId: '', debit: '', credit: '' },
+            { id: Math.random().toString(36).substr(2, 9), accountId: '', debit: '', credit: '' }
+        ]
+    };
+}
+
 export default function JournalEntries() {
+    const company = useAuthStore((s) => s.user?.company);
     const queryClient = useQueryClient();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [filters, setFilters] = useState({
@@ -37,14 +51,7 @@ export default function JournalEntries() {
     });
     const [hasSearched, setHasSearched] = useState(false);
 
-    const [formData, setFormData] = useState(() => ({
-        date: new Date().toISOString().slice(0, 10),
-        memo: '',
-        lines: [
-            { id: Math.random().toString(36).substr(2, 9), accountId: '', debit: '', credit: '' },
-            { id: Math.random().toString(36).substr(2, 9), accountId: '', debit: '', credit: '' }
-        ]
-    }));
+    const [formData, setFormData] = useState(() => createInitialFormData(company));
     const [formError, setFormError] = useState('');
 
     const { data: branches = [] } = useQuery({
@@ -90,14 +97,7 @@ export default function JournalEntries() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['journalEntries'] });
             setIsModalOpen(false);
-            setFormData({
-                date: new Date().toISOString().slice(0, 10),
-                memo: '',
-                lines: [
-                    { id: Math.random().toString(36).substr(2, 9), accountId: '', debit: '', credit: '' },
-                    { id: Math.random().toString(36).substr(2, 9), accountId: '', debit: '', credit: '' }
-                ]
-            });
+            setFormData(createInitialFormData(company));
             setFormError('');
             toast.success('Journal entry posted successfully.');
         },
@@ -277,7 +277,7 @@ export default function JournalEntries() {
                                     <React.Fragment key={entry.id}>
                                         <tr className="bg-gray-50/50">
                                             <td className="px-6 py-3 text-sm text-gray-900 border-l-4 border-blue-500 font-medium whitespace-nowrap">
-                                                {new Date(entry.date).toLocaleDateString()}
+                                                {formatCompanyDate(entry.date, company)}
                                             </td>
                                             <td className="px-6 py-3 text-sm font-mono text-gray-600 whitespace-nowrap">
                                                 {entry.entryNo}

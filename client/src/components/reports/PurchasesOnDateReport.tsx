@@ -19,6 +19,7 @@ import {
     X,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
+import { formatCompanyDate, resolveCompanyCurrency, toDateInputValue } from '../../lib/companySettings';
 import AppDropdown from '../ui/AppDropdown';
 
 type FilterPanel = 'date' | 'branch' | 'supplier' | 'item' | 'search' | 'columns' | null;
@@ -113,10 +114,6 @@ type PurchasesOnDateData = {
     items?: PurchasesOnDateLine[];
 };
 
-function todayISO() {
-    return new Date().toISOString().slice(0, 10);
-}
-
 function money(value: number, currency: string) {
     return `${currency} ${Number(value || 0).toLocaleString()}`;
 }
@@ -133,9 +130,10 @@ function formatUnitFraction(line: PurchasesOnDateLine) {
 }
 
 export default function PurchasesOnDateReport() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
     const [panel, setPanel] = useState<FilterPanel>(null);
-    const [targetDate, setTargetDate] = useState(todayISO());
+    const [targetDate, setTargetDate] = useState(() => toDateInputValue(undefined, company));
     const [branchId, setBranchId] = useState('');
     const [supplierId, setSupplierId] = useState('');
     const [productId, setProductId] = useState('');
@@ -265,6 +263,7 @@ export default function PurchasesOnDateReport() {
     const branchName = branches.find((b) => b.id === branchId)?.name || 'All Warehouses';
     const supplierName = suppliers.find((s) => s.id === supplierId)?.name || 'All Suppliers';
     const searchLabel = search.trim() ? `Search: ${search.trim()}` : 'No Search';
+    const targetDateLabel = targetDate ? formatCompanyDate(targetDate, company) : 'Select Date';
 
     const toggleColumn = (key: ColumnKey) => setSelectedColumns((prev) => ({ ...prev, [key]: !prev[key] }));
     const setAllColumns = (value: boolean) => {
@@ -304,7 +303,7 @@ export default function PurchasesOnDateReport() {
                 const matchedUnit = line.product?.units?.find((u) => String(u.unitCode || '').toLowerCase() === String(line.unitCode || '').toLowerCase());
                 const row: Record<string, any> = {};
                 if (selectedColumns.purchaseNo) row.purchaseNo = line.invoice?.purchaseNo || '';
-                if (selectedColumns.date) row.date = line.invoice?.createdAt ? new Date(line.invoice.createdAt).toLocaleDateString() : '';
+                if (selectedColumns.date) row.date = line.invoice?.createdAt ? formatCompanyDate(line.invoice.createdAt, company) : '';
                 if (selectedColumns.supplier) row.supplier = line.invoice?.supplier?.name || '';
                 if (selectedColumns.warehouse) row.warehouse = line.invoice?.branch?.name || '';
                 if (selectedColumns.itemCode) row.itemCode = line.product?.itemCode || '';
@@ -326,9 +325,9 @@ export default function PurchasesOnDateReport() {
             await exportExcel({
                 fileName: `purchases-on-date-${targetDate}.xlsx`,
                 sheetName: 'Purchases On Date',
-                title: `Purchases On Date Report (${targetDate})`,
+                title: `Purchases On Date Report (${targetDateLabel})`,
                 filters: {
-                    'Date': targetDate,
+                    'Date': targetDateLabel,
                     'Branch': branchName,
                     'Supplier': supplierName,
                     'Search': search.trim() || 'None',
@@ -359,7 +358,7 @@ export default function PurchasesOnDateReport() {
 
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
                     <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setPanel(panel === 'date' ? null : 'date')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><CalendarRange size={15} /> {targetDate}</button>
+                        <button type="button" onClick={() => setPanel(panel === 'date' ? null : 'date')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><CalendarRange size={15} /> {targetDateLabel}</button>
                         <button type="button" onClick={() => setPanel(panel === 'branch' ? null : 'branch')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Building2 size={15} /> {branchName}</button>
                         <button type="button" onClick={() => setPanel(panel === 'supplier' ? null : 'supplier')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Truck size={15} /> {supplierName}</button>
                         <button type="button" onClick={() => setPanel(panel === 'item' ? null : 'item')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Layers size={15} /> Item Filters {itemFiltersCount > 0 ? `(${itemFiltersCount})` : ''}</button>
@@ -499,7 +498,7 @@ export default function PurchasesOnDateReport() {
                                     {previewRows.map((line) => (
                                         <tr key={line.id} className="hover:bg-slate-50">
                                             <td className="px-4 py-3 font-semibold text-slate-800">{line.invoice?.purchaseNo || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-600">{line.invoice?.createdAt ? new Date(line.invoice.createdAt).toLocaleDateString() : '-'}</td>
+                                            <td className="px-4 py-3 text-slate-600">{line.invoice?.createdAt ? formatCompanyDate(line.invoice.createdAt, company) : '-'}</td>
                                             <td className="px-4 py-3 text-slate-700">{line.invoice?.supplier?.name || '-'}</td>
                                             <td className="px-4 py-3 text-slate-700">{line.invoice?.branch?.name || '-'}</td>
                                             <td className="px-4 py-3 text-slate-700">

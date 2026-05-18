@@ -1,24 +1,27 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import api from '../../lib/api';
 import AppDropdown from '../../components/ui/AppDropdown';
 import {
     buildPaymentMethodOptions,
     DEFAULT_PURCHASE_PAYMENT_METHOD_OPTIONS,
     GLOBAL_STRING_GROUPS,
+    PURCHASE_SETTLEMENT_PAYMENT_METHOD_KEYS,
 } from '../../lib/globalStrings';
+import { formatCompanyDate, toDateInputValue, useCompanyRegionalSettings } from '../../lib/companySettings';
 
 export default function PurchasePaymentForm() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
+    const regionalSettings = useCompanyRegionalSettings();
     const [purchaseId, setPurchaseId] = useState(searchParams.get('purchaseId') || '');
     const [purchaseSearch, setPurchaseSearch] = useState('');
     const [amount, setAmount] = useState('');
     const [paymentMethod, setPaymentMethod] = useState('');
-    const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const [paymentDate, setPaymentDate] = useState(() => toDateInputValue(undefined, regionalSettings));
     const [referenceNo, setReferenceNo] = useState('');
     const [notes, setNotes] = useState('');
 
@@ -39,7 +42,7 @@ export default function PurchasePaymentForm() {
         () =>
             buildPaymentMethodOptions(globalPaymentMethods, DEFAULT_PURCHASE_PAYMENT_METHOD_OPTIONS, {
                 blankLabel: 'Select Method',
-                allowedKeys: ['CASH', 'CARD', 'BANK_TRANSFER'],
+                allowedKeys: PURCHASE_SETTLEMENT_PAYMENT_METHOD_KEYS,
             }),
         [globalPaymentMethods]
     );
@@ -181,7 +184,7 @@ export default function PurchasePaymentForm() {
                         <p className="text-sm text-gray-500">No payments recorded</p>
                     ) : (paymentData?.payments || []).map((payment: any) => (
                         <div key={payment.id} className="flex items-center justify-between text-sm border-b border-gray-100 pb-2">
-                            <span>{payment.paymentNo} · {new Date(payment.paymentDate).toLocaleDateString()} · {payment.paymentMethod}</span>
+                            <span>{payment.paymentNo} · {formatCompanyDate(payment.paymentDate, regionalSettings)} · {payment.paymentMethod}</span>
                             <span className="font-semibold">{Number(payment.amount || 0).toFixed(2)}</span>
                         </div>
                     ))}

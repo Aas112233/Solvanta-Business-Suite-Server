@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { Save, ArrowLeft, Plus, Trash2, Loader2, RefreshCw, Lock } from 'lucide-react';
 import AppDropdown from '../../components/ui/AppDropdown';
 import { useAuthStore } from '../../stores/authStore';
@@ -12,7 +12,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import AppLoader from '../../components/ui/AppLoader';
 
 const itemFormSchema = z.object({
-    itemCode: z.string().regex(/^\d{16}$/, 'Item Code must be exactly 16 digits'),
+    itemCode: z.string().regex(/^\d{1,32}$/, 'Item Code must be between 1 and 32 digits'),
     name: z.string().min(1, 'Name is required'),
     nameArabic: z.string().optional(),
     categoryId: z.string().min(1, 'Category is required'),
@@ -32,6 +32,12 @@ const unitSchema = z.object({
 });
 
 type ItemFormValues = z.infer<typeof itemFormSchema>;
+
+const PRICE_EPSILON = 0.000001;
+const roundDerivedPrice = (value: number) => Number(value.toFixed(6));
+const arePricesEqual = (left: number, right: number) => Math.abs(Number(left || 0) - Number(right || 0)) < PRICE_EPSILON;
+const calculateRecommendedSalePrice = (costPrice: number, marginPct: number) =>
+    roundDerivedPrice(Math.max(0, Number(costPrice || 0)) * (1 + (Math.max(0, Number(marginPct || 0)) / 100)));
 
 /** Small inline component to type & confirm a new flavor barcode */
 function UnitBarcodeInput({ onAdd }: { onAdd: (bc: string) => void | Promise<void> }) {
@@ -81,10 +87,11 @@ export default function ItemForm() {
     const [showBrandModal, setShowBrandModal] = useState(false);
     const [newGroupName, setNewGroupName] = useState('');
     const [newCategoryName, setNewCategoryName] = useState('');
+    const [newCategoryMarginPct, setNewCategoryMarginPct] = useState('0');
     const [newBrandName, setNewBrandName] = useState('');
     const [formData, setFormData] = useState<any>({
         itemCode: '', name: '', nameArabic: '', categoryId: '', itemGroupId: '', brandId: '',
-        taxRate: 0.15, status: 'ACTIVE',
+        status: 'ACTIVE',
         barcodes: []
     });
     const [units, setUnits] = useState<any[]>([
@@ -93,6 +100,8 @@ export default function ItemForm() {
     const [pricingOverrides, setPricingOverrides] = useState<Record<string, string>>({});
     const [priceMinOverrides, setPriceMinOverrides] = useState<Record<string, string>>({});
     const [unitErrors, setUnitErrors] = useState<Record<number, string[]>>({});
+    const [baseSalePriceSource, setBaseSalePriceSource] = useState<'auto' | 'manual'>('auto');
+    const baseSalePriceInitializedRef = useRef(false);
 
     const canEditItem = hasPermission('product.edit') || hasPermission('product.editItem');
     const canEditPricing = hasPermission('product.edit') || hasPermission('product.editPricing');
@@ -154,15 +163,20 @@ export default function ItemForm() {
 
     const createCategoryMut = useMutation({
         mutationFn: async () => {
-            const res = await api.post('/products/meta/categories', { name: newCategoryName.trim() });
+            const res = await api.post('/products/meta/categories', {
+                name: newCategoryName.trim(),
+                defaultProfitMarginPct: Number(newCategoryMarginPct || 0),
+            });
             return res.data.data;
         },
         onSuccess: (created) => {
             qc.invalidateQueries({ queryKey: ['categories'] });
             if (created?.id) {
                 setFormData((prev: any) => ({ ...prev, categoryId: created.id }));
+                setValue('categoryId', created.id);
             }
             setNewCategoryName('');
+            setNewCategoryMarginPct('0');
             setShowCategoryModal(false);
             toast.success('Category added');
         },
@@ -204,6 +218,13 @@ export default function ItemForm() {
     }, [isNew]);
 
     useEffect(() => {
+        if (isNew) {
+            baseSalePriceInitializedRef.current = true;
+            setBaseSalePriceSource('auto');
+        }
+    }, [isNew]);
+
+    useEffect(() => {
         if (item) {
             setFormData({
                 itemCode: item.itemCode,
@@ -212,7 +233,6 @@ export default function ItemForm() {
                 categoryId: item.categoryId || '',
                 itemGroupId: item.itemGroupId || '',
                 brandId: item.brandId || '',
-                taxRate: item.taxRate,
                 status: item.status,
                 barcodes: item.barcodes || []
             });
@@ -241,8 +261,56 @@ export default function ItemForm() {
             }
             setPricingOverrides(nextOverrides);
             setPriceMinOverrides(nextMinOverrides);
+            baseSalePriceInitializedRef.current = false;
         }
     }, [item, setValue]);
+
+    const selectedCategory = useMemo(
+        () => (cats || []).find((category: any) => String(category.id) === String(formData.categoryId || '')),
+        [cats, formData.categoryId]
+    );
+    const categoryProfitMarginPct = Number(selectedCategory?.defaultProfitMarginPct || 0);
+    const recommendedBaseSalePrice = useMemo(
+        () => calculateRecommendedSalePrice(Number(units[0]?.costPrice || 0), categoryProfitMarginPct),
+        [categoryProfitMarginPct, units]
+    );
+
+    useEffect(() => {
+        if (!cats || isNew || !item || units.length === 0 || baseSalePriceInitializedRef.current) return;
+        setBaseSalePriceSource(arePricesEqual(Number(units[0]?.salePrice || 0), recommendedBaseSalePrice) ? 'auto' : 'manual');
+        baseSalePriceInitializedRef.current = true;
+    }, [cats, isNew, item, recommendedBaseSalePrice, units]);
+
+    const syncDerivedUnitPricing = (draftUnits: any[]) => {
+        if (draftUnits.length <= 1) return draftUnits;
+        const baseSalePrice = Number(draftUnits[0]?.salePrice || 0);
+        const baseCostPrice = Number(draftUnits[0]?.costPrice || 0);
+
+        return draftUnits.map((unit, index) => {
+            if (index === 0) return unit;
+            const fraction = Number(unit.qtyInBaseUnit || 0);
+            if (!Number.isFinite(fraction) || fraction <= 0) return unit;
+            return {
+                ...unit,
+                salePrice: roundDerivedPrice(baseSalePrice * fraction),
+                costPrice: roundDerivedPrice(baseCostPrice * fraction),
+            };
+        });
+    };
+
+    useEffect(() => {
+        if (baseSalePriceSource !== 'auto' || units.length === 0 || !baseSalePriceInitializedRef.current) return;
+
+        setUnits((currentUnits) => {
+            if (currentUnits.length === 0) return currentUnits;
+            const currentBaseSalePrice = Number(currentUnits[0]?.salePrice || 0);
+            if (arePricesEqual(currentBaseSalePrice, recommendedBaseSalePrice)) return currentUnits;
+
+            const nextUnits = [...currentUnits];
+            nextUnits[0] = { ...nextUnits[0], salePrice: recommendedBaseSalePrice };
+            return syncDerivedUnitPricing(nextUnits);
+        });
+    }, [baseSalePriceSource, recommendedBaseSalePrice]);
 
     // Mutation
     const saveMut = useMutation({
@@ -325,7 +393,9 @@ export default function ItemForm() {
 
     // Helper for Units
     const addUnit = () => {
-        setUnits([...units, { unitName: '', unitCode: '', qtyInBaseUnit: 1, isBase: false, salePrice: 0, costPrice: 0, barcodes: [] }]);
+        const baseSalePrice = Number(units[0]?.salePrice || 0);
+        const baseCostPrice = Number(units[0]?.costPrice || 0);
+        setUnits([...units, { unitName: '', unitCode: '', qtyInBaseUnit: 1, isBase: false, salePrice: baseSalePrice, costPrice: baseCostPrice, barcodes: [] }]);
     };
     const removeUnit = (idx: number) => {
         if (idx === 0) return toast.error('Cannot remove Base Unit');
@@ -334,7 +404,29 @@ export default function ItemForm() {
     const updateUnit = (idx: number, field: string, val: any) => {
         const newUnits = [...units];
         newUnits[idx] = { ...newUnits[idx], [field]: val };
+
+        if (idx === 0 && field === 'salePrice') {
+            setBaseSalePriceSource('manual');
+            setUnits(syncDerivedUnitPricing(newUnits));
+            return;
+        }
+
+        if ((idx === 0 && field === 'costPrice') || (idx > 0 && field === 'qtyInBaseUnit')) {
+            setUnits(syncDerivedUnitPricing(newUnits));
+            return;
+        }
+
         setUnits(newUnits);
+    };
+
+    const applyRecommendedBaseSalePrice = () => {
+        setBaseSalePriceSource('auto');
+        setUnits((currentUnits) => {
+            if (currentUnits.length === 0) return currentUnits;
+            const nextUnits = [...currentUnits];
+            nextUnits[0] = { ...nextUnits[0], salePrice: recommendedBaseSalePrice };
+            return syncDerivedUnitPricing(nextUnits);
+        });
     };
 
     const duplicateUnitCodes = useMemo(() => {
@@ -525,7 +617,7 @@ export default function ItemForm() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="space-y-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Item Code (16 digits) *</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Item Code (1-32 digits) *</label>
                                 <div className="flex gap-2">
                                     <Controller
                                         name="itemCode"
@@ -541,7 +633,7 @@ export default function ItemForm() {
                                                 }}
                                                 className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono ${errors.itemCode ? 'border-red-400' : 'border-gray-300'}`}
                                                 placeholder="0000000000000000"
-                                                maxLength={16}
+                                                maxLength={32}
                                                 readOnly={!isNew}
                                             />
                                         )}
@@ -664,6 +756,9 @@ export default function ItemForm() {
                                         )}
                                     />
                                     {errors.categoryId && <p className="mt-1 text-xs text-red-600">{errors.categoryId.message}</p>}
+                                    <p className="mt-1 text-[11px] text-gray-500">
+                                        Default profit margin: <span className="font-semibold text-emerald-600">{categoryProfitMarginPct.toFixed(2)}%</span>
+                                    </p>
                                 </div>
                             </div>
                             <div>
@@ -780,6 +875,29 @@ export default function ItemForm() {
                                                 disabled={!canEditItem}
                                                 className="w-full px-2 py-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                                             />
+                                            {idx === 0 && selectedCategory && (
+                                                <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px]">
+                                                    <span className="font-semibold text-emerald-600">
+                                                        Recommended: {recommendedBaseSalePrice.toFixed(2)}
+                                                    </span>
+                                                    <span className="text-gray-500">
+                                                        {categoryProfitMarginPct.toFixed(2)}% from category margin
+                                                    </span>
+                                                    {baseSalePriceSource === 'auto' ? (
+                                                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 border border-emerald-200">
+                                                            Auto
+                                                        </span>
+                                                    ) : !arePricesEqual(Number(u.salePrice || 0), recommendedBaseSalePrice) ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={applyRecommendedBaseSalePrice}
+                                                            className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 font-semibold text-blue-700 hover:bg-blue-100"
+                                                        >
+                                                            Apply
+                                                        </button>
+                                                    ) : null}
+                                                </div>
+                                            )}
                                         </div>
                                         <div>
                                             <label className="block text-xs font-medium text-gray-500 mb-1">Cost Price</label>
@@ -1025,10 +1143,22 @@ export default function ItemForm() {
                                     placeholder="e.g. Snacks"
                                 />
                             </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Default Profit %</label>
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={newCategoryMarginPct}
+                                    onChange={(e) => setNewCategoryMarginPct(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                    placeholder="e.g. 15"
+                                />
+                            </div>
                             <div className="flex justify-end gap-2">
                                 <button
                                     type="button"
-                                    onClick={() => { setShowCategoryModal(false); setNewCategoryName(''); }}
+                                    onClick={() => { setShowCategoryModal(false); setNewCategoryName(''); setNewCategoryMarginPct('0'); }}
                                     className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50"
                                 >
                                     Cancel

@@ -3,6 +3,11 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
+const defaultSeedTaxRate = (() => {
+    const parsed = Number(process.env.SEED_DEFAULT_TAX_RATE || 0);
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0;
+})();
+const defaultSeedTaxLabel = String(process.env.SEED_TAX_LABEL || 'Tax').trim() || 'Tax';
 
 const generateDigits = (length: number) => {
     let result = '';
@@ -46,9 +51,17 @@ async function main() {
             vatNumber: '300000000000003',
             currency: 'SAR',
             settings: {
-                lowStockThreshold: 10,
-                invoicePrefix: 'INV',
-                taxRate: 0.15,
+                tax: {
+                    label: defaultSeedTaxLabel,
+                    defaultRate: defaultSeedTaxRate,
+                    inclusivePricing: false,
+                },
+                inventory: {
+                    lowStockThreshold: 10,
+                },
+                documents: {
+                    invoicePrefix: 'INV',
+                },
             },
         },
     });
@@ -198,12 +211,12 @@ async function main() {
                     name: p.name,
                     categoryId: categories[p.cat].id,
                     brandId: p.brand !== null ? brands[p.brand].id : null,
-                    barcodes: [pieceBarcode, cartonBarcode],                    taxRate: 0.15,
+                    barcodes: [pieceBarcode, cartonBarcode],                    taxRate: defaultSeedTaxRate,
                     units: {
                         create: [
                             {
                                 unitName: 'Piece',
-                                unitCode: pieceBarcode, // unitCode is now the numeric barcode
+                                unitCode: itemCode, // unitCode is now the numeric barcode
                                 qtyInBaseUnit: 1,
                                 salePrice: p.sale,
                                 costPrice: p.cost,

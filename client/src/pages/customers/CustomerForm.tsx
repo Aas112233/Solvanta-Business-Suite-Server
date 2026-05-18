@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../../lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import AppDropdown from '../../components/ui/AppDropdown';
 

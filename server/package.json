@@ -12,6 +12,7 @@
         "db:generate": "prisma generate",
         "db:push": "prisma db push",
         "db:migrate": "prisma migrate dev",
+        "db:indexes": "tsx src/scripts/ensure-indexes.ts",
         "db:studio": "prisma studio",
         "bootstrap:super-admin": "tsx scripts/bootstrap-super-admin.ts",
         "sync:admin-role-permissions": "tsx scripts/sync-admin-role-permissions.ts",
@@ -44,6 +45,7 @@
         "tsx": "^4.19.2",
         "typescript": "^5.7.3",
         "winston": "^3.17.0",
+        "xlsx": "^0.18.5",
         "zod": "^3.24.1"
     },
     "devDependencies": {

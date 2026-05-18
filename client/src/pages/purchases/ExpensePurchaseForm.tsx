@@ -2,10 +2,18 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { ArrowLeft, Save, Loader2, Plus, Trash2 } from 'lucide-react';
 import AppLoader from '../../components/ui/AppLoader';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { toDateInputValue, useCompanyRegionalSettings } from '../../lib/companySettings';
+import {
+    buildPaymentMethodOptions,
+    DEFAULT_PURCHASE_PAYMENT_METHOD_OPTIONS,
+    EXPENSE_PURCHASE_PAYMENT_METHOD_KEYS,
+    GLOBAL_STRING_GROUPS,
+    normalizePaymentMethodKey,
+} from '../../lib/globalStrings';
 
 interface ExpensePurchaseItem {
     description: string;
@@ -29,11 +37,12 @@ export default function ExpensePurchaseForm() {
    const { id} = useParams<{ id: string }>();
    const queryClient = useQueryClient();
    const isEditMode = Boolean(id);
+   const regionalSettings = useCompanyRegionalSettings();
 
    const [form, setForm] = useState<ExpensePurchaseForm>({
         vendorName: '',
         invoiceNo: '',
-        date: new Date().toISOString().split('T')[0],
+        date: toDateInputValue(undefined, regionalSettings),
        paymentMethod: 'CASH',
         branchId: '',
         notes: '',
@@ -54,6 +63,16 @@ export default function ExpensePurchaseForm() {
         }).then(r => r.data.data),
     });
 
+    const { data: globalPaymentMethods, refetch: refetchPaymentMethods, isFetching: isFetchingPaymentMethods } = useQuery<any[]>({
+        queryKey: ['global-strings', GLOBAL_STRING_GROUPS.purchasePaymentMethods],
+        queryFn: () => api.get(`/global-strings?group=${GLOBAL_STRING_GROUPS.purchasePaymentMethods}`).then((r) => r.data.data),
+    });
+
+    const resolvedPaymentMethodOptions = buildPaymentMethodOptions(globalPaymentMethods, DEFAULT_PURCHASE_PAYMENT_METHOD_OPTIONS, {
+        blankLabel: 'Select payment method',
+        allowedKeys: EXPENSE_PURCHASE_PAYMENT_METHOD_KEYS,
+    });
+
     // Fetch existing data if editing
    const { data: existingData, isLoading: isFetching } = useQuery({
         queryKey: ['expense-purchase', id],
@@ -67,8 +86,8 @@ export default function ExpensePurchaseForm() {
             setForm({
                 vendorName: existingData.vendorName || '',
                 invoiceNo: existingData.invoiceNo || '',
-                date: new Date(existingData.date).toISOString().split('T')[0],
-               paymentMethod: existingData.paymentMethod === 'BANK' ? 'BANK_TRANSFER' : (existingData.paymentMethod || 'CASH'),
+                date: toDateInputValue(existingData.date, regionalSettings),
+               paymentMethod: normalizePaymentMethodKey(existingData.paymentMethod, 'CASH') as ExpensePurchaseForm['paymentMethod'],
                 branchId: existingData.branchId || '',
                 notes: existingData.notes || '',
                 items: existingData.items?.length > 0 
@@ -81,7 +100,7 @@ export default function ExpensePurchaseForm() {
                     : [{ description: '', expenseAccountId: '', amount: 0, quantity: 1 }],
             });
         }
-    }, [existingData]);
+    }, [existingData, regionalSettings]);
 
     // Create/Update mutation
    const mutation = useMutation({
@@ -234,12 +253,11 @@ export default function ExpensePurchaseForm() {
                             <AppDropdown
                                 value={form.paymentMethod}
                                 onChange={(value) => setForm(prev => ({ ...prev, paymentMethod: value as any }))}
-                                options={[
-                                    { value: 'CASH', label: 'Cash' },
-                                    { value: 'BANK_TRANSFER', label: 'Bank Transfer' },
-                                    { value: 'CREDIT', label: 'Credit (Accounts Payable)' },
-                                ]}
+                                options={resolvedPaymentMethodOptions}
                                 placeholder="Select payment method"
+                                onRefresh={() => refetchPaymentMethods()}
+                                refreshing={isFetchingPaymentMethods}
+                                refreshLabel="Refresh methods"
                             />
                         </div>
 

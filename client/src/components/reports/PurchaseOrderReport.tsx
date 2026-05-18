@@ -16,6 +16,7 @@ import {
 import api from '../../lib/api';
 import type { ExcelColumn } from '../../lib/excelReport';
 import { exportExcel } from '../../lib/fileExport';
+import { formatCompanyDate, resolveCompanyCurrency, toDateInputValue } from '../../lib/companySettings';
 import { useAuthStore } from '../../stores/authStore';
 import AppDropdown from '../ui/AppDropdown';
 
@@ -77,16 +78,19 @@ const columnDefs: { key: ColumnKey; label: string }[] = [
     { key: 'lastPurchasedAt', label: 'Last Purchased At' },
 ];
 
-function toISODate(date: Date) { return date.toISOString().slice(0, 10); }
 function money(value: number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString()}`; }
-function defaultRange() {
+function defaultRange(source?: unknown) {
     const now = new Date();
-    return { from: toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), to: toISODate(now) };
+    return {
+        from: toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1), source),
+        to: toDateInputValue(now, source),
+    };
 }
 
 export default function PurchaseOrderReport() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
-    const defaults = defaultRange();
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
+    const defaults = defaultRange(company);
     const [panel, setPanel] = useState<FilterPanel>(null);
     const [branchId, setBranchId] = useState('');
     const [supplierId, setSupplierId] = useState('');
@@ -156,7 +160,8 @@ export default function PurchaseOrderReport() {
     const activeFilterCount = [branchId, supplierId, includeZeroRequired ? '1' : '', dateFrom || dateTo, productId, groupId, categoryId, brandId].filter(Boolean).length;
     const branchName = branches.find((b) => b.id === branchId)?.name || 'All Warehouses';
     const supplierName = suppliers.find((s) => s.id === supplierId)?.name || 'All Suppliers';
-    const dateLabel = `${dateFrom || 'Any'} to ${dateTo || 'Any'}`;
+    const formatRangeDate = (value: string) => (value ? formatCompanyDate(value, company) : 'Any');
+    const dateLabel = `${formatRangeDate(dateFrom)} to ${formatRangeDate(dateTo)}`;
     const selectedProductName = master?.products?.find((p) => p.id === productId)?.name || 'All Items';
     const selectedGroupName = master?.groups?.find((g) => g.id === groupId)?.name || 'All Item Groups';
     const selectedCategoryName = master?.categories?.find((c) => c.id === categoryId)?.name || 'All Categories';
@@ -164,12 +169,12 @@ export default function PurchaseOrderReport() {
 
     const applyPreset = (preset: DatePreset) => {
         const now = new Date();
-        const today = toISODate(now);
+        const today = toDateInputValue(now, company);
         setDatePreset(preset);
         if (preset === 'today') { setDateFrom(today); setDateTo(today); return; }
-        if (preset === 'last7') { const start = new Date(now); start.setDate(start.getDate() - 6); setDateFrom(toISODate(start)); setDateTo(today); return; }
-        if (preset === 'thisMonth') { setDateFrom(toISODate(new Date(now.getFullYear(), now.getMonth(), 1))); setDateTo(today); return; }
-        if (preset === 'lastMonth') { setDateFrom(toISODate(new Date(now.getFullYear(), now.getMonth() - 1, 1))); setDateTo(toISODate(new Date(now.getFullYear(), now.getMonth(), 0))); }
+        if (preset === 'last7') { const start = new Date(now); start.setDate(start.getDate() - 6); setDateFrom(toDateInputValue(start, company)); setDateTo(today); return; }
+        if (preset === 'thisMonth') { setDateFrom(toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1), company)); setDateTo(today); return; }
+        if (preset === 'lastMonth') { setDateFrom(toDateInputValue(new Date(now.getFullYear(), now.getMonth() - 1, 1), company)); setDateTo(toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 0), company)); }
     };
 
     const setAllColumns = (value: boolean) => setSelectedColumns((prev) => Object.fromEntries(Object.keys(prev).map((k) => [k, value])) as Record<ColumnKey, boolean>);
@@ -194,12 +199,12 @@ export default function PurchaseOrderReport() {
                 unitPurchasePriceIncVat: { col: { key: 'unitPurchasePriceIncVat', header: 'Unit Price Inc VAT', type: 'currency', width: 18 }, val: (r) => Number(r.unitPurchasePriceIncVat || 0) },
                 requiredValueExVat: { col: { key: 'requiredValueExVat', header: 'Required Value Ex VAT', type: 'currency', width: 20 }, val: (r) => Number(r.requiredQty || 0) * Number(r.unitPurchasePriceExVat || 0) },
                 requiredValueIncVat: { col: { key: 'requiredValueIncVat', header: 'Required Value Inc VAT', type: 'currency', width: 20 }, val: (r) => Number(r.requiredQty || 0) * Number(r.unitPurchasePriceIncVat || 0) },
-                lastPurchasedAt: { col: { key: 'lastPurchasedAt', header: 'Last Purchased At', width: 18 }, val: (r) => (r.lastPurchasedAt ? new Date(r.lastPurchasedAt).toLocaleDateString() : '') },
+                lastPurchasedAt: { col: { key: 'lastPurchasedAt', header: 'Last Purchased At', width: 18 }, val: (r) => (r.lastPurchasedAt ? formatCompanyDate(r.lastPurchasedAt, company) : '') },
             };
             const selectedKeys = columnDefs.map((c) => c.key).filter((k) => selectedColumns[k]);
             const exportRows = rows.map((r) => Object.fromEntries(selectedKeys.map((k) => [k, excelMap[k].val(r)])));
             await exportExcel({
-                fileName: `purchase-order-report-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                fileName: `purchase-order-report-${toDateInputValue(undefined, company)}.xlsx`,
                 sheetName: 'Purchase Order Report',
                 title: 'Purchase Order Suggestion Report',
                 filters: {

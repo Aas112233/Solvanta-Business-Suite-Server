@@ -1,20 +1,23 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { ArrowLeft, Plus, Save, Trash, Pencil, X, Calendar } from 'lucide-react';
 import api from '@/lib/api';
 import ItemSelectorModal from '@/components/inventory/ItemSelectorModal';
 import AppLoader from '@/components/ui/AppLoader';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { toDateInputValue, useCompanyRegionalSettings } from '../../lib/companySettings';
+import { formatTaxLabel, resolveEffectiveTaxRate, useCompanyTaxSettings } from '../../lib/tax';
 
 export default function PurchaseOrderForm() {
     const { id } = useParams();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
+    const regionalSettings = useCompanyRegionalSettings();
     const [supplierId, setSupplierId] = useState('');
     const [branchId, setBranchId] = useState('');
-    const [date, setDate] = useState(new Date().toLocaleDateString('en-CA'));
+    const [date, setDate] = useState(() => toDateInputValue(undefined, regionalSettings));
     const [expectedDate, setExpectedDate] = useState('');
     const [notes, setNotes] = useState('');
     const [items, setItems] = useState<any[]>([]);
@@ -22,6 +25,7 @@ export default function PurchaseOrderForm() {
     const canAddItems = Boolean(supplierId && branchId);
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
     const [editForm, setEditForm] = useState<any | null>(null);
+    const companyTax = useCompanyTaxSettings();
 
     const isEdit = !!id;
 
@@ -49,16 +53,16 @@ export default function PurchaseOrderForm() {
         if (poData) {
             setSupplierId(poData.supplierId);
             setBranchId(poData.branchId);
-            setDate(new Date(poData.date).toLocaleDateString('en-CA'));
-            setExpectedDate(poData.expectedDate ? new Date(poData.expectedDate).toLocaleDateString('en-CA') : '');
+            setDate(toDateInputValue(poData.date, regionalSettings));
+            setExpectedDate(poData.expectedDate ? toDateInputValue(poData.expectedDate, regionalSettings) : '');
             setNotes(poData.notes || '');
             setItems(poData.items.map((i: any) => ({
                 ...i,
                 productName: i.product?.name,
-                taxRate: i.taxRate ?? i.product?.tax?.rate ?? i.product?.taxRate ?? 0.15,
+                taxRate: resolveEffectiveTaxRate([i.taxRate, i.product?.tax?.rate, i.product?.taxRate], companyTax),
             })));
         }
-    }, [poData]);
+    }, [companyTax, poData, regionalSettings]);
 
     const addItemFromModal = (item: any) => {
         setItems(prev => [...prev, item]);
@@ -104,9 +108,9 @@ export default function PurchaseOrderForm() {
 
     const totals = useMemo(() => {
         const subtotal = items.reduce((sum, i) => sum + (i.lineTotal || 0), 0);
-        const taxTotal = items.reduce((sum, i) => sum + ((i.lineTotal || 0) * (i.taxRate ?? i.product?.tax?.rate ?? i.product?.taxRate ?? 0.15)), 0);
+        const taxTotal = items.reduce((sum, i) => sum + ((i.lineTotal || 0) * resolveEffectiveTaxRate([i.taxRate, i.product?.tax?.rate, i.product?.taxRate], companyTax)), 0);
         return { subtotal, taxTotal, grandTotal: subtotal + taxTotal };
-    }, [items]);
+    }, [companyTax, items]);
 
     const createMut = useMutation({
         mutationFn: (payload: any) => isEdit ? api.put(`/purchases/orders/${id}`, payload) : api.post('/purchases/orders', payload),
@@ -133,7 +137,7 @@ export default function PurchaseOrderForm() {
                 unitCode: i.unitCode,
                 qty: Number(i.qty),
                 unitCost: Number(i.unitCost),
-                taxAmount: (i.lineTotal || 0) * (i.taxRate ?? i.product?.tax?.rate ?? i.product?.taxRate ?? 0.15),
+                taxAmount: (i.lineTotal || 0) * resolveEffectiveTaxRate([i.taxRate, i.product?.tax?.rate, i.product?.taxRate], companyTax),
                 lineTotal: i.lineTotal
             }))
         });
@@ -290,7 +294,7 @@ export default function PurchaseOrderForm() {
                                 <span className="font-medium">{totals.subtotal.toLocaleString()} SAR</span>
                             </div>
                             <div className="flex justify-between text-sm">
-                                <span className="text-gray-500">Tax Total (15%)</span>
+                                <span className="text-gray-500">{formatTaxLabel(companyTax)}</span>
                                 <span className="font-medium">{totals.taxTotal.toLocaleString()} SAR</span>
                             </div>
                             <div className="pt-4 border-t border-dashed flex justify-between items-center">

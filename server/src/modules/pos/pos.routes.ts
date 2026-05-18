@@ -13,6 +13,7 @@ import bcrypt from 'bcryptjs';
 import { getPosTerminalPolicy, issuePosSessionToken, verifyPosSessionToken } from './pos-policy.js';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { InventoryService } from '../inventory/InventoryService.js';
+import { POS_PAYMENT_METHODS } from '../../utils/paymentMethods.js';
 export const posRoutes = Router();
 posRoutes.use(authenticate);
 
@@ -23,8 +24,6 @@ function isBranchAdmin(req: any): boolean {
 }
 
 const objectIdRegex = /^[a-f\d]{24}$/i;
-const POS_PAYMENT_METHODS = ['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER'] as const;
-
 function normalizeOptionalString(value: unknown) {
     if (typeof value !== 'string') return value;
     const trimmed = value.trim();
@@ -820,8 +819,23 @@ posRoutes.get('/session/me', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMIS
         });
         if (!terminal) throw AppError.unauthorized('Terminal in session is unavailable');
 
+        const policy = await getPosTerminalPolicy(req.user!.companyId, terminal.id);
+        const token = issuePosSessionToken({
+            type: 'pos-session',
+            companyId: req.user!.companyId,
+            terminalId: terminal.id,
+            branchId: terminal.branchId,
+            posUserId: session.posUserId,
+            terminalPriceGroupId: terminal.priceGroupId || null,
+            policy,
+        });
+
         sendSuccess(res, {
             ...session,
+            token,
+            policy,
+            branchId: terminal.branchId,
+            terminalPriceGroupId: terminal.priceGroupId || null,
             terminal: {
                 id: terminal.id,
                 code: terminal.code,
@@ -1384,9 +1398,19 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                 const overrideKey = `${item.productId}::${String(unit.unitCode).toUpperCase()}`;
                 const hasOverride = priceOverrides.has(overrideKey);
                 const overrideData = priceOverrides.get(overrideKey);
-                const unitPrice = hasOverride && overrideData
+                const defaultUnitPrice = hasOverride && overrideData
                     ? Number(overrideData.salePrice)
                     : Number(unit.salePrice);
+                const requestedUnitPrice = item.unitPrice == null ? defaultUnitPrice : Number(item.unitPrice);
+                if (!Number.isFinite(requestedUnitPrice) || requestedUnitPrice < 0) {
+                    throw AppError.badRequest('Invalid unit price');
+                }
+                if (usePosSession && posSession && posSession.policy.allowPriceChange === false && requestedUnitPrice !== defaultUnitPrice) {
+                    throw AppError.badRequest(`Price changes are disabled for this POS terminal for item ${product.name}`);
+                }
+                const unitPrice = usePosSession && posSession?.policy.allowPriceChange !== false
+                    ? requestedUnitPrice
+                    : defaultUnitPrice;
                 const minPrice = hasOverride && overrideData
                     ? (overrideData.minPrice ?? unit.minimumNegotiationPrice)
                     : unit.minimumNegotiationPrice;
@@ -1400,7 +1424,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                 const effectiveUnitPrice = lineSubtotalPreview / qty;
                 if (minPrice != null && effectiveUnitPrice < minPrice) {
                     if (!managerOrAdmin) {
-                        throw AppError.badRequest(`Price cannot be lower than the minimum allowed price (${minPrice} SAR) for item ${product.name}`);
+                        throw AppError.badRequest(`Price cannot be lower than the minimum allowed price (${minPrice}) for item ${product.name}`);
                     }
                 }
                 if (usePosSession) {

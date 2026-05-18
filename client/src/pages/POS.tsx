@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../stores/authStore';
 import api from '../lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import ModuleRefreshButton from '../components/ModuleRefreshButton';
 import ShiftCloseDialog from '../components/pos/ShiftCloseDialog';
 import { Search, Plus, Minus, Trash2, ShoppingCart, CreditCard, Banknote, Loader2, Barcode, User, MapPin, Calendar, Info, MoreHorizontal } from 'lucide-react';
@@ -25,6 +25,7 @@ import {
     setMetaValue,
     upsertCachedProducts,
 } from '../lib/posProductCache';
+import { formatTaxLabel, resolveEffectiveTaxRate, useCompanyTaxSettings } from '../lib/tax';
 
 interface CartItem {
     productId: string;
@@ -88,6 +89,7 @@ export default function POS() {
     const qc = useQueryClient();
     const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
     const companyName = useAuthStore((s) => s.user?.company?.name) || 'SOLVANTA ERP';
+    const companyTax = useCompanyTaxSettings();
 
     // ─── Terminal / Shift state ─────────────────
     const [selectedTerminalId, setSelectedTerminalId] = useState<string>('');
@@ -130,6 +132,7 @@ export default function POS() {
     const [pendingLoyaltyPointsRedeemed, setPendingLoyaltyPointsRedeemed] = useState(0);
 
     const allowedPaymentMethods = (posPolicy?.allowedPaymentMethods || ['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER']).map((m: string) => String(m).toUpperCase());
+    const canChangeSellPrice = posPolicy?.allowPriceChange !== false;
     const canViewShifts = hasPermission('pos.viewShifts') || hasPermission('pos.viewOwnShifts') || hasPermission('pos.access');
     const canViewAllShifts = hasPermission('pos.viewShifts') || hasPermission('pos.access');
     const selectedPriceGroupId = useMemo(() => {
@@ -173,6 +176,9 @@ export default function POS() {
 
     useEffect(() => {
         if (!posSession) return;
+        if (posSession.token) {
+            sessionStorage.setItem('posSessionToken', posSession.token);
+        }
         setSelectedTerminalId(posSession.terminalId);
         setBranchId(posSession.branchId);
         setPosPolicy(posSession.policy || null);
@@ -247,8 +253,6 @@ export default function POS() {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-
-
     useEffect(() => {
         barcodeRef.current?.focus();
     }, []);
@@ -259,82 +263,121 @@ export default function POS() {
         }
     }, [scanWarning]);
 
-    useEffect(() => {
-        let cancelled = false;
+    const syncPosProducts = async () => {
         const bucket = POS_CACHE_SCHEMA_VERSION;
         activeBucketRef.current = bucket;
         scanCacheRef.current.clear();
 
-        const run = async () => {
-            try {
-                const cached = await getCachedProducts(bucket);
-                if (!cancelled && activeBucketRef.current === bucket) {
-                    localScanIndexRef.current = buildScanIndex(cached);
-                }
-
-                const syncMetaKey = `pos:lastSyncAt:${bucket}`;
-                const since = await getMetaValue(syncMetaKey);
-                let page = 1;
-                let hasMore = true;
-                let serverTime = '';
-
-                while (hasMore && !cancelled) {
-                    const res = await api.get('/products/pos-sync', {
-                        params: {
-                            since: since || undefined,
-                            page,
-                            limit: 500,
-                        },
-                    });
-                    const payload = res.data.data || {};
-                    const items = (payload.items || []) as PosCachedProduct[];
-                    hasMore = Boolean(payload.hasMore);
-                    serverTime = payload.serverTime || serverTime;
-                    page += 1;
-
-                    if (!items.length) continue;
-
-                    const toUpsert: PosCachedProduct[] = [];
-                    const toRemove: string[] = [];
-                    for (const item of items) {
-                        if (item.deletedAt || item.status !== 'ACTIVE') {
-                            toRemove.push(item.id);
-                        } else {
-                            toUpsert.push(item);
-                        }
-                    }
-
-                    await upsertCachedProducts(bucket, toUpsert);
-                    await removeCachedProducts(bucket, toRemove);
-                }
-
-                if (serverTime) {
-                    await setMetaValue(syncMetaKey, serverTime);
-                }
-
-                const latest = await getCachedProducts(bucket);
-                if (!cancelled && activeBucketRef.current === bucket) {
-                    localScanIndexRef.current = buildScanIndex(latest);
-                }
-            } catch {
-                // Silent fallback: scanner still uses API path when cache/sync fails.
+        try {
+            const cached = await getCachedProducts(bucket);
+            if (activeBucketRef.current === bucket) {
+                localScanIndexRef.current = buildScanIndex(cached);
             }
-        };
 
-        void run();
-        return () => { cancelled = true; };
+            const syncMetaKey = `pos:lastSyncAt:${bucket}`;
+            const since = await getMetaValue(syncMetaKey);
+            let page = 1;
+            let hasMore = true;
+            let serverTime = '';
+
+            while (hasMore) {
+                const res = await api.get('/products/pos-sync', {
+                    params: {
+                        since: since || undefined,
+                        page,
+                        limit: 500,
+                    },
+                });
+                const payload = res.data.data || {};
+                const items = (payload.items || []) as PosCachedProduct[];
+                hasMore = Boolean(payload.hasMore);
+                serverTime = payload.serverTime || serverTime;
+                page += 1;
+
+                if (!items.length) continue;
+
+                const toUpsert: PosCachedProduct[] = [];
+                const toRemove: string[] = [];
+                for (const item of items) {
+                    if (item.deletedAt || item.status !== 'ACTIVE') {
+                        toRemove.push(item.id);
+                    } else {
+                        toUpsert.push(item);
+                    }
+                }
+
+                await upsertCachedProducts(bucket, toUpsert);
+                await removeCachedProducts(bucket, toRemove);
+            }
+
+            if (serverTime) {
+                await setMetaValue(syncMetaKey, serverTime);
+            }
+
+            const latest = await getCachedProducts(bucket);
+            if (activeBucketRef.current === bucket) {
+                localScanIndexRef.current = buildScanIndex(latest);
+                localProductsRef.current = latest;
+            }
+        } catch (err) {
+            console.error('POS sync failed:', err);
+        }
+    };
+
+    useEffect(() => {
+        void syncPosProducts();
     }, []);
 
-    const { data: products } = useQuery({
-        queryKey: ['pos-products', activeBranchId, search],
-        queryFn: () => api.get('/products', {
-            params: {
-                search,
-                limit: 20,
-                includePricing: true,
+    const handlePosRefresh = async () => {
+        await Promise.all([
+            syncPosProducts(),
+            refetchPosSession(),
+            refetchTerminals(),
+            refetchShift(),
+            refetchBranches()
+        ]);
+    };
+
+    const [localSearchResults, setLocalSearchResults] = useState<PosCachedProduct[]>([]);
+    const localProductsRef = useRef<PosCachedProduct[]>([]);
+
+    useEffect(() => {
+        if (!search || search.length < 2) {
+            setLocalSearchResults([]);
+            return;
+        }
+        
+        const q = search.trim().toLowerCase();
+        const isNumeric = /^\d+$/.test(q);
+        
+        const results = localProductsRef.current.filter((p) => {
+            if (isNumeric) {
+                // Numeric search targets itemCode and barcodes
+                if (p.itemCode && p.itemCode.toLowerCase().includes(q)) return true;
+                if (p.units?.some(u => u.barcode && u.barcode.toLowerCase().includes(q))) return true;
+                return false;
             }
-        }).then((r) => r.data.data),
-        enabled: search.length > 1,
+            // Text search targets name, itemCode, and barcodes
+            if (p.name && p.name.toLowerCase().includes(q)) return true;
+            if (p.itemCode && p.itemCode.toLowerCase().includes(q)) return true;
+            if (p.units?.some(u => u.barcode && u.barcode.toLowerCase().includes(q))) return true;
+            return false;
+        }).slice(0, 20); // Limit to 20 results for performance
+        
+        setLocalSearchResults(results);
+    }, [search]);
+
+    const products = localSearchResults; // Remap for compatibility with existing UI code
+
+    const { data: customers } = useQuery({
+        queryKey: ['pos-customers', activeBranchId, customerSearchInput],
+        queryFn: async () => {
+            const res = await api.get('/customers', {
+                params: { search: customerSearchInput || undefined, limit: 50 }
+            });
+            return res.data.data;
+        },
+        enabled: canViewCustomers,
     });
 
     const { data: globalPaymentMethods } = useQuery<any[]>({
@@ -343,15 +386,6 @@ export default function POS() {
             const res = await api.get('/global-strings?group=SALE_PAYMENT_METHOD');
             return res.data.data;
         },
-    });
-
-    const { data: customers } = useQuery({
-        queryKey: ['pos-customers', activeBranchId],
-        queryFn: async () => {
-            const res = await api.get('/customers');
-            return res.data.data;
-        },
-        enabled: canViewCustomers,
     });
 
     const filteredCustomers = useMemo(() => {
@@ -789,7 +823,7 @@ export default function POS() {
             return;
         }
 
-        const productTaxRate = product.tax?.rate ?? product.taxRate ?? 0.15;
+        const productTaxRate = resolveEffectiveTaxRate([product.tax?.rate, product.taxRate], companyTax);
 
         setCart((prev) => {
             const existing = prev.find((c) => c.productId === product.id && c.unitCode === unit.unitCode);
@@ -1179,27 +1213,41 @@ export default function POS() {
         <div className="flex flex-col h-[calc(100vh-6rem)] -m-4">
             {/* Top Navigation */}
             <div className="flex items-center gap-2 px-6 py-4 bg-white border-b border-gray-200">
-                <div className="flex items-center gap-3 mr-6">
-                    <h1 className="text-xl font-black text-gray-900 tracking-tight">POS.TERMINAL</h1>
-                    <ModuleRefreshButton queryKeys={[['pos-products'], ['pos-customers'], ['pos-loyalty-customers'], ['branches'], ['pos-terminals']]} />
+                <div className="flex items-center gap-3 mr-4 min-w-0">
+                    <h1 className="text-xl font-black text-gray-900 tracking-tight whitespace-nowrap">POS.TERMINAL</h1>
+                    <ModuleRefreshButton onRefresh={handlePosRefresh} queryKeys={[["pos-products"], ["pos-customers"], ["pos-loyalty-customers"], ["branches"], ["pos-terminals"], ["pos-session-me"]]} />
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
                     <button
                         onClick={() => setViewMode('BILL')}
-                        className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all border-2 ${viewMode === 'BILL' ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-900'}`}
+                        className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all border ${viewMode === 'BILL' ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-900'}`}
                     >
                         Scan Barcode
                     </button>
                     <button
                         onClick={() => setViewMode('CATALOG')}
-                        className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all border-2 ${viewMode === 'CATALOG' ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-900'}`}
+                        className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all border ${viewMode === 'CATALOG' ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-900'}`}
                     >
                         Catalog
                     </button>
                 </div>
 
-                <div className="ml-auto flex items-center gap-3">
+                <div className="ml-auto flex items-center gap-2">
+                    {selectedTerminalId && (
+                        activeShiftId ? (
+                            <span className="hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold border border-emerald-200">
+                                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                                Shift Active
+                            </span>
+                        ) : (
+                            <span className="hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-xs font-bold border border-amber-200">
+                                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                                Shift Closed
+                            </span>
+                        )
+                    )}
+
                     <div className="relative">
                         <button
                             onClick={() => setShowMoreMenu((v) => !v)}
@@ -1209,7 +1257,57 @@ export default function POS() {
                             More
                         </button>
                         {showMoreMenu && (
-                            <div className="absolute right-0 mt-2 w-52 rounded-xl border border-gray-200 bg-white shadow-xl z-30 p-1">
+                            <div className="absolute right-0 mt-2 w-72 rounded-xl border border-gray-200 bg-white shadow-xl z-30 p-2 space-y-2">
+                                <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
+                                    <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">Terminal</div>
+                                    <div className="mt-1 text-sm font-bold text-gray-900 break-words">
+                                        {selectedTerminal ? `${selectedTerminal.code} — ${selectedTerminal.name}` : 'No POS Session'}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 flex items-start gap-2">
+                                    <MapPin size={14} className="text-gray-500 mt-0.5 shrink-0" />
+                                    <div className="min-w-0">
+                                        <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">Warehouse</div>
+                                        <div className="mt-1 text-sm font-bold text-gray-900 break-words">
+                                            {branches?.find((b: any) => b.id === branchId)?.name || 'Terminal Warehouse'}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {selectedTerminalId && (
+                                    activeShiftId ? (
+                                        <div className="grid grid-cols-1 gap-2">
+                                            <div className="inline-flex items-center justify-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold border border-emerald-200">
+                                                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                                                Shift Active
+                                            </div>
+                                            <button
+                                                onClick={() => {
+                                                    setShowCloseShift(true);
+                                                    setShowMoreMenu(false);
+                                                }}
+                                                className="w-full px-3 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold border border-red-200 hover:bg-red-100"
+                                            >
+                                                Close Shift
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={() => {
+                                                setOpeningCashInput(0);
+                                                setOpenShiftAuthEmail(currentUser?.email || '');
+                                                setOpenShiftAuthPassword('');
+                                                setShowOpenShiftModal(true);
+                                                setShowMoreMenu(false);
+                                            }}
+                                            className="w-full px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700"
+                                        >
+                                            Open Shift
+                                        </button>
+                                    )
+                                )}
+
                                 {canViewShifts && (
                                     <button
                                         onClick={() => {
@@ -1230,61 +1328,23 @@ export default function POS() {
                                 >
                                     Re-Print Receipt
                                 </button>
-                            </div>
-                        )}
-                    </div>
-                    <div className="px-3 py-1.5 bg-gray-100 border border-gray-200 rounded-lg text-xs font-bold text-gray-700">
-                        {selectedTerminal ? `${selectedTerminal.code} — ${selectedTerminal.name}` : 'No POS Session'}
-                    </div>
-                    <button
-                        onClick={() => {
-                            sessionStorage.removeItem('posSessionToken');
-                            setShowPosLogin(true);
-                            setPosLoginTerminalId('');
-                            setSelectedTerminalId('');
-                            setActiveShiftId(null);
-                            setPosPolicy(null);
-                            setTerminalPriceGroupId(null);
-                        }}
-                        className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-xs font-bold hover:bg-black"
-                    >
-                        POS Re-Login
-                    </button>
-
-                    {/* Shift Indicator */}
-                    {selectedTerminalId && (
-                        activeShiftId ? (
-                            <div className="flex items-center gap-2">
-                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold border border-emerald-200">
-                                    🟢 Shift Active
-                                </span>
                                 <button
-                                    onClick={() => setShowCloseShift(true)}
-                                    className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-xs font-bold border border-red-200 hover:bg-red-100"
+                                    onClick={() => {
+                                        sessionStorage.removeItem('posSessionToken');
+                                        setShowPosLogin(true);
+                                        setPosLoginTerminalId('');
+                                        setSelectedTerminalId('');
+                                        setActiveShiftId(null);
+                                        setPosPolicy(null);
+                                        setTerminalPriceGroupId(null);
+                                        setShowMoreMenu(false);
+                                    }}
+                                    className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
                                 >
-                                    Close Shift
+                                    POS Re-Login
                                 </button>
                             </div>
-                        ) : (
-                            <button
-                                onClick={() => {
-                                    setOpeningCashInput(0);
-                                    setOpenShiftAuthEmail(currentUser?.email || '');
-                                    setOpenShiftAuthPassword('');
-                                    setShowOpenShiftModal(true);
-                                }}
-                                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700"
-                            >
-                                Open Shift
-                            </button>
-                        )
-                    )}
-
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg">
-                        <MapPin size={14} className="text-gray-500" />
-                        <span className="text-xs font-bold text-gray-700">
-                            {branches?.find((b: any) => b.id === branchId)?.name || 'Terminal Warehouse'}
-                        </span>
+                        )}
                     </div>
                 </div>
             </div>
@@ -1383,38 +1443,85 @@ export default function POS() {
                                                 : 'bg-white border border-gray-100 hover:border-blue-200'
                                                 }`}
                                         >
-                                            <div className="flex items-center gap-4">
-                                                {/* Product Info */}
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <span className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">#{idx + 1}</span>
-                                                        <h4 className="text-base font-bold text-gray-900 truncate">{item.name}</h4>
+                                            <div className="space-y-4">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                                            <span className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">#{idx + 1}</span>
+                                                            <h4 className="text-base font-bold text-gray-900 break-words leading-tight">{item.name}</h4>
+                                                        </div>
+                                                        <span className="text-[11px] font-mono text-gray-400 uppercase tracking-wider break-all">{item.itemCode}</span>
                                                     </div>
-                                                    <div className="flex items-center gap-3">
-                                                        <span className="text-[11px] font-mono text-gray-400 uppercase tracking-wider">{item.itemCode}</span>
-                                                        <div className="h-3 w-[1px] bg-gray-200" />
-                                                        <AppDropdown
-                                                            value={item.unitCode}
-                                                            onChange={(v) => updateUnit(idx, v)}
-                                                            options={[...(item.product.units || []).map((u: any) => ({ value: u.unitCode, label: `${u.unitCode} - ${u.unitName} (${formatUnitFactor(u.qtyInBaseUnit)})` }))]}
-                                                            placeholder='Select'
-                                                            searchable
-                                                        />
+                                                    <button
+                                                        onClick={() => removeItem(idx)}
+                                                        className="shrink-0 p-2 rounded-xl text-gray-300 hover:text-rose-500 hover:bg-rose-50 transition-colors"
+                                                        title="Remove item"
+                                                    >
+                                                        <Trash2 size={18} />
+                                                    </button>
+                                                </div>
+
+                                                <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)] gap-4">
+                                                    <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Selected Unit</p>
+                                                        <div className="space-y-2">
+                                                            <div className="min-w-0">
+                                                                <AppDropdown
+                                                                    value={item.unitCode}
+                                                                    onChange={(v) => updateUnit(idx, v)}
+                                                                    options={[...(item.product.units || []).map((u: any) => ({ value: u.unitCode, label: `${u.unitCode} - ${u.unitName} (${formatUnitFactor(u.qtyInBaseUnit)})` }))]}
+                                                                    placeholder='Select'
+                                                                    searchable
+                                                                />
+                                                            </div>
+                                                            <p className="text-[11px] text-gray-500">
+                                                                Change the selling unit here. Prices and totals update immediately.
+                                                            </p>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                        <div className="rounded-xl border border-gray-100 bg-white p-3">
+                                                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Quantity</p>
+                                                            <div className="flex items-center justify-between gap-3 bg-gray-50 p-1.5 rounded-xl border border-gray-100">
+                                                                <button onClick={() => updateQty(idx, -1)} className="w-9 h-9 rounded-lg flex items-center justify-center bg-white border border-gray-200 text-gray-600 shadow-sm hover:bg-gray-50">
+                                                                    <Minus size={14} />
+                                                                </button>
+                                                                <span className="text-base font-black min-w-[2.5rem] text-center text-gray-900">{item.qty}</span>
+                                                                <button onClick={() => updateQty(idx, 1)} className="w-9 h-9 rounded-lg flex items-center justify-center bg-gray-900 text-white shadow-lg hover:bg-black transition-transform active:scale-90">
+                                                                    <Plus size={14} />
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="rounded-xl border border-gray-100 bg-white p-3">
+                                                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-2">Subtotal</p>
+                                                            <div className="grid grid-cols-2 gap-3">
+                                                                <div>
+                                                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Excl VAT</p>
+                                                                    <p className="text-sm font-black text-gray-900 mt-1">{item.lineTotal.toFixed(2)}</p>
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Incl VAT</p>
+                                                                    <p className="text-sm font-black text-emerald-700 mt-1">{(item.lineTotal + item.taxAmount).toFixed(2)}</p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 </div>
 
-                                                {/* Price & Quantity Controls */}
-                                                <div className="flex items-center gap-8">
-                                                    <div className="text-right">
-                                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none mb-1">Unit Price</p>
-                                                        <div className="flex flex-col items-end gap-1">
-                                                            <div className="flex items-center gap-1 justify-end">
+                                                <div className="rounded-xl border border-gray-100 bg-white p-3">
+                                                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                                                        <div>
+                                                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Unit Price</p>
+                                                            <div className="flex items-center gap-2 flex-wrap">
                                                                 <span className="text-xs font-bold text-gray-400">{currency}</span>
                                                                 <input
                                                                     type="number"
                                                                     min={0}
                                                                     step="0.01"
                                                                     value={item.unitPrice === 0 ? '' : Number(item.unitPrice).toString()}
+                                                                    disabled={!canChangeSellPrice}
                                                                     onChange={(e) => {
                                                                         const val = e.target.value;
                                                                         setCart(cart.map((c, i) => {
@@ -1445,7 +1552,7 @@ export default function POS() {
                                                                             }));
                                                                         }
                                                                     }}
-                                                                    className={`w-20 text-sm font-bold text-gray-900 bg-gray-50 border rounded-md px-2 py-1 outline-none text-right transition-colors ${
+                                                                    className={`w-full sm:w-32 text-sm font-bold text-gray-900 bg-gray-50 border rounded-md px-3 py-2 outline-none text-right transition-colors disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed ${
                                                                         resolveMinPrice(item.product, item.unitCode) != null && item.unitPrice < (resolveMinPrice(item.product, item.unitCode) || 0) && !(currentUser?.role?.name?.toLowerCase().includes('admin') || currentUser?.role?.name?.toLowerCase().includes('manager'))
                                                                             ? 'border-red-500 ring-1 ring-red-500'
                                                                             : 'border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
@@ -1455,42 +1562,31 @@ export default function POS() {
                                                                     const baseUnit = item.product?.units?.find((u: any) => u.unitCode === item.unitCode);
                                                                     const isChannelPrice = selectedPriceGroupId && baseUnit && item.unitPrice !== Number(baseUnit.salePrice || 0);
                                                                     return isChannelPrice ? (
-                                                                        <span className="text-[9px] font-black bg-emerald-500 text-white px-1 py-0.5 rounded-full">CH</span>
+                                                                        <span className="text-[9px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded-full">CH</span>
                                                                     ) : null;
                                                                 })()}
                                                             </div>
+                                                        </div>
+                                                        <div className="lg:text-right">
                                                             {(() => {
                                                                 const minPrice = resolveMinPrice(item.product, item.unitCode);
-                                                                return minPrice != null ? (
-                                                                    <span className="text-[9px] font-bold text-gray-500">Min: {minPrice} {currency}</span>
-                                                                ) : null;
+                                                                return !canChangeSellPrice ? (
+                                                                    <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-[11px] font-bold text-gray-500">
+                                                                        <span>Price change locked for this POS terminal</span>
+                                                                    </div>
+                                                                ) : minPrice != null ? (
+                                                                    <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-700">
+                                                                        <span>Minimum Price</span>
+                                                                        <span>{minPrice} {currency}</span>
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-[11px] font-bold text-gray-500">
+                                                                        <span>No minimum price restriction</span>
+                                                                    </div>
+                                                                );
                                                             })()}
                                                         </div>
                                                     </div>
-
-                                                    <div className="flex items-center gap-3 bg-gray-50 p-1.5 rounded-xl border border-gray-100">
-                                                        <button onClick={() => updateQty(idx, -1)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white border border-gray-200 text-gray-600 shadow-sm hover:bg-gray-50"><Minus size={14} /></button>
-                                                        <span className="text-sm font-black w-8 text-center text-gray-900">{item.qty}</span>
-                                                        <button onClick={() => updateQty(idx, 1)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-gray-900 text-white shadow-lg hover:bg-black transition-transform active:scale-90"><Plus size={14} /></button>
-                                                    </div>
-
-                                                    <div className="text-right min-w-[220px]">
-                                                        <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest leading-none mb-1">Subtotal</p>
-                                                        <div className="grid grid-cols-2 gap-3">
-                                                            <div className="text-right">
-                                                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Excl VAT</p>
-                                                                <p className="text-sm font-black text-gray-900">{(item.lineTotal).toFixed(2)}</p>
-                                                            </div>
-                                                            <div className="text-right">
-                                                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Incl VAT</p>
-                                                                <p className="text-sm font-black text-emerald-700">{(item.lineTotal + item.taxAmount).toFixed(2)}</p>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    <button onClick={() => removeItem(idx)} className="p-2 text-gray-300 hover:text-rose-500 transition-colors">
-                                                        <Trash2 size={18} />
-                                                    </button>
                                                 </div>
                                             </div>
                                         </div>
@@ -1620,7 +1716,7 @@ export default function POS() {
                                     <span>{subtotal.toFixed(2)}</span>
                                 </div>
                                 <div className="flex justify-between text-xs font-bold text-gray-500">
-                                    <span>VAT (15%)</span>
+                                    <span>{formatTaxLabel(companyTax)}</span>
                                     <span>{taxTotal.toFixed(2)}</span>
                                 </div>
                                 {discountTotal > 0 && (

@@ -14,6 +14,11 @@ import {
     sanitizeStringArray,
     containsXSSPatterns,
 } from '../utils/sanitizer.js';
+import {
+    POS_PAYMENT_METHODS,
+    PURCHASE_PAYMENT_METHODS,
+    SALES_INVOICE_PAYMENT_METHODS,
+} from './paymentMethods.js';
 
 // ─────────────────────────────────────────────────────────────
 // CUSTOM SCHEMA TYPES
@@ -405,7 +410,7 @@ export const salesInvoiceCreateSchema = z.object({
     dueDate: dateString,
     branchId: z.string().uuid().optional(),
     items: z.array(salesInvoiceItemSchema).min(1, { message: 'At least one item is required' }),
-    paymentMethod: z.enum(['CASH', 'CARD', 'BANK_TRANSFER', 'CREDIT', 'MIXED']).optional(),
+    paymentMethod: z.enum(SALES_INVOICE_PAYMENT_METHODS).optional(),
     notes: optionalSanitizedString({ maxLength: 1000 }),
     terms: optionalSanitizedString({ maxLength: 2000 }),
     discountTotal: nonNegativeNumber.default(0),
@@ -432,7 +437,7 @@ export const purchaseInvoiceCreateSchema = z.object({
     dueDate: dateString,
     branchId: z.string().uuid().optional(),
     items: z.array(purchaseInvoiceItemSchema).min(1, { message: 'At least one item is required' }),
-    paymentMethod: z.enum(['CASH', 'CARD', 'BANK_TRANSFER', 'CREDIT']).optional(),
+    paymentMethod: z.enum(PURCHASE_PAYMENT_METHODS).optional(),
     notes: optionalSanitizedString({ maxLength: 1000 }),
 });
 
@@ -457,7 +462,10 @@ export const posInvoiceCreateSchema = z.object({
     branchId: z.string().uuid().optional(),
     posTerminalId: z.string().uuid().optional().nullable(),
     items: z.array(posInvoiceItemSchema).min(1, { message: 'At least one item is required' }),
-    paymentMethod: sanitizedString({ minLength: 1, maxLength: 50, fieldName: 'Payment method' }),
+    paymentMethod: z.preprocess(
+        (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
+        z.enum(POS_PAYMENT_METHODS)
+    ),
     cashReceived: nonNegativeNumber.optional().default(0),
     cardReceived: nonNegativeNumber.optional().default(0),
     changeGiven: nonNegativeNumber.optional().default(0),

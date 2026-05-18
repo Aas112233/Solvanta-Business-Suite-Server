@@ -31,6 +31,14 @@ export const toast = {
 };
 
 function addToast(toastData: Omit<Toast, 'id'>) {
+    // Prevent duplicate toasts (same type, title, and message)
+    const isDuplicate = currentToasts.some(
+        (t) => t.type === toastData.type && t.title === toastData.title && t.message === toastData.message
+    );
+    if (isDuplicate) {
+        return '';
+    }
+
     const id = Math.random().toString(36).slice(2);
     const newToast: Toast = {
         id,

@@ -13,7 +13,7 @@ import {
     BadgeDollarSign, Boxes, Landmark, ShieldCheck, Briefcase, Globe, Wrench
 } from 'lucide-react';
 import LanguageSwitcher from './ui/LanguageSwitcher';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import SupportSessionPanel from './support/SupportSessionPanel';
 import SidebarProfileModal from './profile/SidebarProfileModal';
 

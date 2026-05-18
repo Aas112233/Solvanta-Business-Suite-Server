@@ -1,10 +1,13 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { format } from 'date-fns';
+import { PDF_BASE_FONT_FAMILY, ensurePdfFontsRegistered, getPdfTextStyle } from '../../lib/pdfFonts';
+
+ensurePdfFontsRegistered();
 
 const styles = StyleSheet.create({
     page: {
         padding: 30,
-        fontFamily: 'Helvetica',
+        fontFamily: PDF_BASE_FONT_FAMILY,
         fontSize: 8,
         color: '#1e293b',
         backgroundColor: '#ffffff',
@@ -185,7 +188,7 @@ export const SalesOrderPdfTemplate = ({ order, companyName, currency }: SalesOrd
             <Page size="A4" style={styles.page}>
                 <View style={styles.header} fixed>
                     <View>
-                        <Text style={styles.companyName}>{companyName}</Text>
+                        <Text style={[styles.companyName, getPdfTextStyle(companyName)]}>{companyName}</Text>
                         <Text style={styles.docLabel}>Sales Order</Text>
                     </View>
                     <View style={styles.headerRight}>
@@ -200,7 +203,7 @@ export const SalesOrderPdfTemplate = ({ order, companyName, currency }: SalesOrd
                     <View style={styles.addressBox}>
                         <Text style={styles.addressLabel}>Bill To</Text>
                         <View style={{ lineHeight: 1.4 }}>
-                            <Text style={styles.addressBold}>{order.customer?.name || order.customerName || 'Walk-in Customer'}</Text>
+                            <Text style={[styles.addressBold, getPdfTextStyle(order.customer?.name || order.customerName || 'Walk-in Customer')]}>{order.customer?.name || order.customerName || 'Walk-in Customer'}</Text>
                             {order.customer?.phone && <Text>T: {order.customer.phone}</Text>}
                             {order.customer?.email && <Text>E: {order.customer.email}</Text>}
                         </View>
@@ -209,7 +212,7 @@ export const SalesOrderPdfTemplate = ({ order, companyName, currency }: SalesOrd
                         <View style={styles.addressBox}>
                             <Text style={styles.addressLabel}>From Branch</Text>
                             <View style={{ lineHeight: 1.4 }}>
-                                <Text style={styles.addressBold}>{order.branch.name}</Text>
+                                <Text style={[styles.addressBold, getPdfTextStyle(order.branch.name)]}>{order.branch.name}</Text>
                                 {order.branch.code && <Text>Code: {order.branch.code}</Text>}
                             </View>
                         </View>
@@ -229,8 +232,8 @@ export const SalesOrderPdfTemplate = ({ order, companyName, currency }: SalesOrd
                         <View key={idx} style={styles.tableRow} wrap={false}>
                             <View style={[styles.cell, styles.colSN]}><Text style={{ textAlign: 'center', fontSize: 7 }}>{idx + 1}</Text></View>
                             <View style={[styles.cell, styles.colItem]}>
-                                <Text style={styles.itemMain}>{item.description}</Text>
-                                {item.unitCode && <Text style={styles.itemSmall}>{item.unitCode}</Text>}
+                                <Text style={[styles.itemMain, getPdfTextStyle(item.description)]}>{item.description}</Text>
+                                {item.unitCode && <Text style={[styles.itemSmall, getPdfTextStyle(item.unitCode)]}>{item.unitCode}</Text>}
                             </View>
                             <View style={[styles.cell, styles.colQty]}><Text style={{ textAlign: 'center', fontSize: 7 }}>{item.qty}</Text></View>
                             <View style={[styles.cell, styles.colPrice]}><Text style={{ textAlign: 'right', fontSize: 7 }}>{Number(item.unitPrice).toFixed(2)}</Text></View>
@@ -242,10 +245,10 @@ export const SalesOrderPdfTemplate = ({ order, companyName, currency }: SalesOrd
                 <View style={styles.footerGrid}>
                     <View style={styles.salesmanBox}>
                         <Text style={styles.addressLabel}>Notes</Text>
-                        <Text style={{ fontSize: 8, color: '#334155', marginTop: 2 }}>{order.notes || 'No notes'}</Text>
+                        <Text style={[{ fontSize: 8, color: '#334155', marginTop: 2 }, getPdfTextStyle(order.notes || 'No notes')]}>{order.notes || 'No notes'}</Text>
 
                         <Text style={[styles.addressLabel, { marginTop: 15 }]}>Terms & Conditions</Text>
-                        <Text style={{ fontSize: 8, color: '#334155', marginTop: 2 }}>{order.terms || 'Standard terms apply.'}</Text>
+                        <Text style={[{ fontSize: 8, color: '#334155', marginTop: 2 }, getPdfTextStyle(order.terms || 'Standard terms apply.')]}>{order.terms || 'Standard terms apply.'}</Text>
                     </View>
 
                     <View style={styles.summaryBox}>
@@ -271,7 +274,7 @@ export const SalesOrderPdfTemplate = ({ order, companyName, currency }: SalesOrd
                 </View>
 
                 <Text style={{ position: 'absolute', bottom: 20, left: 30, right: 30, textAlign: 'center', fontSize: 6, color: '#cbd5e1' }}>
-                    {companyName} - Sales Order #{order.orderNo}
+                    <Text style={getPdfTextStyle(companyName)}>{companyName}</Text> - Sales Order #{order.orderNo}
                 </Text>
             </Page>
         </Document>

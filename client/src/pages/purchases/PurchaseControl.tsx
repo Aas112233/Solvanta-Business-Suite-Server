@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { CheckCircle2, Clock3, Filter, History, Loader2, Search, Truck } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import api from '@/lib/api';
+import { formatCompanyDate, formatCurrencyAmount, resolveCompanyCurrency } from '@/lib/companySettings';
 import { useAuthStore } from '@/stores/authStore';
 import ModuleRefreshButton from '@/components/ModuleRefreshButton';
 import AppDropdown from '../../components/ui/AppDropdown';
@@ -12,6 +13,8 @@ export default function PurchaseControl() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const hasPermission = useAuthStore((s) => s.hasPermission);
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
     const canApprove = hasPermission('purchase.create');
 
     const [productSearch, setProductSearch] = useState('');
@@ -97,7 +100,7 @@ export default function PurchaseControl() {
                 </div>
                 <div className="bg-white border border-gray-200 rounded-xl p-4">
                     <p className="text-[11px] uppercase tracking-wider text-gray-500">Pending Value</p>
-                    <p className="mt-1 text-2xl font-bold text-gray-900">{Number(summary.pendingReceiptValue || 0).toLocaleString()} SAR</p>
+                    <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrencyAmount(Number(summary.pendingReceiptValue || 0), currency)}</p>
                 </div>
             </div>
 
@@ -164,7 +167,7 @@ export default function PurchaseControl() {
                                         <td className="px-4 py-3 text-right text-gray-700">{Number(row.qty || 0).toLocaleString()}</td>
                                         <td className="px-4 py-3 text-right font-semibold text-gray-900">{Number(row.unitCost || 0).toLocaleString()}</td>
                                         <td className="px-4 py-3 text-gray-700">{row.supplier?.name || '-'}</td>
-                                        <td className="px-4 py-3 text-gray-500">{row.createdAt ? new Date(row.createdAt).toLocaleDateString() : '-'}</td>
+                                        <td className="px-4 py-3 text-gray-500">{row.createdAt ? formatCompanyDate(row.createdAt, company) : '-'}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -232,7 +235,7 @@ export default function PurchaseControl() {
                                     <tr key={row.id}>
                                         <td className="px-4 py-3">
                                             <p className="font-semibold text-gray-900">{row.poNo}</p>
-                                            <p className="text-[11px] text-gray-500">{new Date(row.createdAt).toLocaleDateString()}</p>
+                                            <p className="text-[11px] text-gray-500">{formatCompanyDate(row.createdAt, company)}</p>
                                         </td>
                                         <td className="px-4 py-3 text-gray-700">{row.supplier?.name || '-'}</td>
                                         <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700">{row.status}</span></td>
@@ -293,7 +296,7 @@ export default function PurchaseControl() {
                                         <td className="px-4 py-3 text-gray-600">
                                             <div className="flex items-center gap-1">
                                                 <Clock3 size={13} />
-                                                <span>{row.expectedDate ? new Date(row.expectedDate).toLocaleDateString() : '-'}</span>
+                                                <span>{row.expectedDate ? formatCompanyDate(row.expectedDate, company) : '-'}</span>
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 text-right">

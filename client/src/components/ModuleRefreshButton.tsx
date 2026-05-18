@@ -6,9 +6,10 @@ import Button from './ui/Button';
 interface ModuleRefreshButtonProps {
     queryKeys?: QueryKey[];
     className?: string;
+    onRefresh?: () => Promise<void> | void;
 }
 
-export default function ModuleRefreshButton({ queryKeys, className }: ModuleRefreshButtonProps) {
+export default function ModuleRefreshButton({ queryKeys, className, onRefresh }: ModuleRefreshButtonProps) {
     const queryClient = useQueryClient();
     const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -16,6 +17,7 @@ export default function ModuleRefreshButton({ queryKeys, className }: ModuleRefr
         if (isRefreshing) return;
         setIsRefreshing(true);
         try {
+            if (onRefresh) await onRefresh();
             if (queryKeys && queryKeys.length > 0) {
                 await Promise.all(
                     queryKeys.map((key) => queryClient.invalidateQueries({ queryKey: key }))

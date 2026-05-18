@@ -1,11 +1,14 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { format } from 'date-fns';
 import { getSalesCustomerDisplay } from '../../lib/salesCustomerDisplay';
+import { PDF_BASE_FONT_FAMILY, ensurePdfFontsRegistered, getPdfTextStyle } from '../../lib/pdfFonts';
+
+ensurePdfFontsRegistered();
 
 const styles = StyleSheet.create({
     page: {
         padding: 30,
-        fontFamily: 'Helvetica',
+        fontFamily: PDF_BASE_FONT_FAMILY,
         fontSize: 8,
         color: '#1e293b',
         backgroundColor: '#ffffff',
@@ -203,7 +206,7 @@ export const InvoicePdfTemplate = ({ invoice, companyName, currency }: InvoicePd
             <Page size="A4" style={styles.page}>
                 <View style={styles.header} fixed>
                     <View>
-                        <Text style={styles.companyName}>{companyName}</Text>
+                        <Text style={[styles.companyName, getPdfTextStyle(companyName)]}>{companyName}</Text>
                         <Text style={styles.taxInvoiceLabel}>Final Tax Invoice / Sales Invoice</Text>
                     </View>
                     <View style={styles.headerRight}>
@@ -218,17 +221,17 @@ export const InvoicePdfTemplate = ({ invoice, companyName, currency }: InvoicePd
                     <View style={styles.addressBox}>
                         <Text style={styles.addressLabel}>FROM SERVICE PROVIDER</Text>
                         <View style={{ lineHeight: 1.4 }}>
-                            <Text style={styles.addressBold}>{companyName}</Text>
-                            <Text>Branch: {invoice.branch?.name || '-'}</Text>
-                            {invoice.branch?.address && <Text>{invoice.branch.address}</Text>}
+                            <Text style={[styles.addressBold, getPdfTextStyle(companyName)]}>{companyName}</Text>
+                            <Text>Branch: <Text style={getPdfTextStyle(invoice.branch?.name)}>{invoice.branch?.name || '-'}</Text></Text>
+                            {invoice.branch?.address && <Text style={getPdfTextStyle(invoice.branch.address)}>{invoice.branch.address}</Text>}
                             {invoice.branch?.phone && <Text>T: {invoice.branch.phone}</Text>}
                         </View>
                     </View>
                     <View style={styles.addressBox}>
                         <Text style={styles.addressLabel}>TO CUSTOMER</Text>
                         <View style={{ lineHeight: 1.4 }}>
-                            <Text style={styles.addressBold}>{customerDisplay.title}</Text>
-                            {customerDisplay.isWalkInLoyalty && <Text>{customerDisplay.detail}</Text>}
+                            <Text style={[styles.addressBold, getPdfTextStyle(customerDisplay.title)]}>{customerDisplay.title}</Text>
+                            {customerDisplay.isWalkInLoyalty && <Text style={getPdfTextStyle(customerDisplay.detail)}>{customerDisplay.detail}</Text>}
                             {invoice.customer?.customerCode && <Text>Code: {invoice.customer.customerCode}</Text>}
                             {invoice.customer?.phone && <Text>T: {invoice.customer.phone}</Text>}
                             {invoice.customer?.email && <Text>E: {invoice.customer.email}</Text>}
@@ -268,13 +271,13 @@ export const InvoicePdfTemplate = ({ invoice, companyName, currency }: InvoicePd
                             <View key={idx} style={styles.tableRow} wrap={false}>
                                 <View style={[styles.cell, styles.colSN]}><Text style={{ textAlign: 'center', fontSize: 7 }}>{idx + 1}</Text></View>
                                 <View style={[styles.cell, styles.colItem]}>
-                                    <Text style={styles.itemMain}>{item.product?.name || item.description}</Text>
-                                    {item.product?.nameArabic && <Text style={styles.itemArabic}>{item.product.nameArabic}</Text>}
+                                    <Text style={[styles.itemMain, getPdfTextStyle(item.product?.name || item.description)]}>{item.product?.name || item.description}</Text>
+                                    {item.product?.nameArabic && <Text style={[styles.itemArabic, getPdfTextStyle(item.product.nameArabic)]}>{item.product.nameArabic}</Text>}
                                     <Text style={styles.itemCode}>{item.product?.itemCode || '-'}</Text>
                                 </View>
                                 <View style={[styles.cell, styles.colQty]}><Text style={{ textAlign: 'center', fontSize: 7 }}>{qty}</Text></View>
                                 <View style={[styles.cell, styles.colUnitName]}>
-                                    <Text style={{ textAlign: 'center', fontSize: 7, fontWeight: 'bold' }}>
+                                    <Text style={[{ textAlign: 'center', fontSize: 7, fontWeight: 'bold' }, getPdfTextStyle(unitName)]}>
                                         {unitName} x{fraction}
                                     </Text>
                                     <Text style={{ textAlign: 'center', fontSize: 6, color: '#64748b', marginTop: 2 }}>{item.unitCode}</Text>
@@ -292,8 +295,8 @@ export const InvoicePdfTemplate = ({ invoice, companyName, currency }: InvoicePd
                 <View style={styles.footerGrid}>
                     <View style={styles.salesmanBox}>
                         <Text style={styles.addressLabel}>Sales attribution</Text>
-                        <Text style={{ fontSize: 9, color: '#334155' }}>Issued by: <Text style={{ fontWeight: 'bold' }}>{invoice.createdBy?.name || '-'}</Text></Text>
-                        <Text style={{ marginTop: 2, fontSize: 7, color: '#94a3b8' }}>Processed at {invoice.branch?.name || '-'}</Text>
+                        <Text style={{ fontSize: 9, color: '#334155' }}>Issued by: <Text style={[{ fontWeight: 'bold' }, getPdfTextStyle(invoice.createdBy?.name)]}>{invoice.createdBy?.name || '-'}</Text></Text>
+                        <Text style={{ marginTop: 2, fontSize: 7, color: '#94a3b8' }}>Processed at <Text style={getPdfTextStyle(invoice.branch?.name)}>{invoice.branch?.name || '-'}</Text></Text>
                         <View style={{ marginTop: 15, width: 40, height: 40, backgroundColor: '#f8fafc', border: '0.5pt solid #e2e8f0', borderRadius: 4, justifyContent: 'center', alignItems: 'center' }}>
                             <Text style={{ fontSize: 4, color: '#cbd5e1' }}>QR</Text>
                         </View>
@@ -339,7 +342,7 @@ export const InvoicePdfTemplate = ({ invoice, companyName, currency }: InvoicePd
                 </View>
 
                 <Text style={{ position: 'absolute', bottom: 20, left: 30, right: 30, textAlign: 'center', fontSize: 6, color: '#cbd5e1' }}>
-                    System generated document. No signature required. {companyName} ERP.
+                    System generated document. No signature required. <Text style={getPdfTextStyle(companyName)}>{companyName}</Text> ERP.
                 </Text>
             </Page>
         </Document>

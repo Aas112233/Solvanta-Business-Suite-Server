@@ -26,7 +26,7 @@ import {
     RotateCcw,
     AlertTriangle
 } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import DateRangeFilter from '../../components/ui/DateRangeFilter';
 import Pagination from '../../components/ui/Pagination';

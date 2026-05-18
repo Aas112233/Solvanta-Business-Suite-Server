@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, RefreshCw, RotateCcw, Search } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import api from '../../lib/api';
 import Pagination from '../../components/ui/Pagination';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { formatCompanyDate, formatCurrencyAmount, resolveCompanyCurrency } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 export default function SalesReturn() {
     const queryClient = useQueryClient();
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
     const [invoiceSearch, setInvoiceSearch] = useState('');
     const [selectedInvoiceId, setSelectedInvoiceId] = useState('');
     const [qtyByItem, setQtyByItem] = useState<Record<string, number>>({});
@@ -166,7 +170,7 @@ export default function SalesReturn() {
                         <div className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm text-gray-700">
                             <div className="font-medium">Invoice: {candidates?.invoice?.invoiceNo || '-'}</div>
                             <div>Customer: {candidates?.invoice?.customer?.name || 'Walk-in'}</div>
-                            <div>Total: {Number(candidates?.invoice?.grandTotal || 0).toLocaleString()} SAR</div>
+                            <div>Total: {formatCurrencyAmount(Number(candidates?.invoice?.grandTotal || 0), currency)}</div>
                         </div>
                     )}
 
@@ -284,13 +288,13 @@ export default function SalesReturn() {
                                     {returnRows.map((row: any) => (
                                         <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                                             <td className="px-4 py-3 font-medium text-gray-900">{row.returnNo}</td>
-                                            <td className="px-4 py-3 text-gray-600">{new Date(row.createdAt).toLocaleDateString()}</td>
+                                            <td className="px-4 py-3 text-gray-600">{formatCompanyDate(row.createdAt, company)}</td>
                                             <td className="px-4 py-3 text-gray-600">
                                                 <div className="font-medium text-gray-800">Invoice: {row.invoice?.invoiceNo || '-'}</div>
                                                 <div className="text-xs">{row.customer?.name || 'Walk-in'}</div>
                                             </td>
                                             <td className="px-4 py-3 text-right font-bold text-gray-900">
-                                                {Number(row.grandTotal || 0).toLocaleString()} SAR
+                                                {formatCurrencyAmount(Number(row.grandTotal || 0), currency)}
                                             </td>
                                         </tr>
                                     ))}

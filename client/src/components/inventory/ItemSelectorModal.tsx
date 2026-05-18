@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, X, Plus, Package, Calendar, Hash, Check, CornerDownRight, Eye } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { format } from 'date-fns';
 import AppDropdown from '../ui/AppDropdown';
 import { calculateTotalBaseQty, formatDecomposedQty } from '../../lib/inventoryUtils';
+import { formatTaxLabel, resolveEffectiveTaxRate, useCompanyTaxSettings } from '../../lib/tax';
 
 interface ItemSelectorModalProps {
     isOpen: boolean;
@@ -18,7 +19,65 @@ interface ItemSelectorModalProps {
     allowAddNext?: boolean;
 }
 
+function normalizeSearchValue(value: unknown): string {
+    return String(value ?? '').trim().toUpperCase();
+}
+
+function getSearchTokens(value: string): string[] {
+    return normalizeSearchValue(value).split(/\s+/).filter(Boolean);
+}
+
+function getProductMatchScore(product: any, query: string): number {
+    const normalizedQuery = normalizeSearchValue(query);
+    if (!normalizedQuery) return 0;
+
+    const exactCodes = new Set<string>([
+        normalizeSearchValue(product?.itemCode),
+        ...((product?.barcodes || []) as string[]).map(normalizeSearchValue),
+        ...((product?.units || []) as any[]).flatMap((unit) => [
+            normalizeSearchValue(unit?.unitCode),
+            ...((unit?.barcodes || []) as string[]).map(normalizeSearchValue),
+        ]),
+    ]);
+
+    const names = [
+        normalizeSearchValue(product?.name),
+        normalizeSearchValue(product?.nameArabic),
+    ].filter(Boolean);
+
+    const words = names.flatMap((name) => name.split(/\s+/).filter(Boolean));
+    const tokens = getSearchTokens(query);
+
+    let score = 0;
+
+    if (exactCodes.has(normalizedQuery)) score += 1400;
+    if (names.some((name) => name === normalizedQuery)) score += 1200;
+    if (normalizeSearchValue(product?.itemCode).startsWith(normalizedQuery)) score += 1000;
+    if ([...(product?.barcodes || []), ...((product?.units || []) as any[]).flatMap((unit) => [unit?.unitCode, ...(unit?.barcodes || [])])]
+        .some((code) => normalizeSearchValue(code).startsWith(normalizedQuery))) {
+        score += 950;
+    }
+    if (names.some((name) => name.startsWith(normalizedQuery))) score += 860;
+    if (words.some((word) => word.startsWith(normalizedQuery))) score += 720;
+    if (names.some((name) => name.includes(normalizedQuery))) score += 520;
+    if (normalizeSearchValue(product?.itemCode).includes(normalizedQuery)) score += 420;
+
+    if (tokens.length > 1) {
+        const matchedTokens = tokens.filter((token) =>
+            names.some((name) => name.includes(token)) ||
+            exactCodes.has(token) ||
+            normalizeSearchValue(product?.itemCode).includes(token)
+        ).length;
+        score += matchedTokens * 90;
+    }
+
+    score -= Math.min(String(product?.name || '').length, 80);
+    return score;
+}
+
 export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branchId, priceGroupId, initialItem, confirmLabel, allowAddNext = true }: ItemSelectorModalProps) {
+    const companyTax = useCompanyTaxSettings();
+    const defaultTaxRate = companyTax.defaultRate;
 
     /** Resolve effective sale price for a unit:
      *  1. Check priceGroupPrices for a matching override
@@ -42,25 +101,38 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
         qty: 1,
         unitCode: '',
         unitCost: 0,
-        taxRate: 0.15
+        taxRate: defaultTaxRate
     });
     const [error, setError] = useState<string | null>(null);
     const [showAllBranchesStock, setShowAllBranchesStock] = useState(false);
 
     const searchInputRef = useRef<HTMLInputElement>(null);
     const normalizeCode = (value: unknown) => String(value ?? '').trim().toUpperCase();
+    const trimmedSearch = search.trim();
 
     const { data: productResults, isLoading: isSearching } = useQuery({
-        queryKey: ['product-search-modal', search, priceGroupId],
+        queryKey: ['product-search-modal', trimmedSearch, priceGroupId],
         queryFn: () => api.get('/products', {
             params: {
-                search,
-                limit: 5,
+                search: trimmedSearch,
+                limit: 12,
+                selectorMode: true,
                 ...(priceGroupId ? { includePricing: true, priceGroupId } : {}),
             }
         }).then((r: any) => r.data.data),
-        enabled: search.length >= 2,
+        enabled: trimmedSearch.length >= 1,
     });
+
+    const rankedProductResults = useMemo(() => {
+        if (!Array.isArray(productResults)) return [];
+        if (!trimmedSearch) return productResults;
+
+        return [...productResults].sort((left, right) => {
+            const scoreDiff = getProductMatchScore(right, trimmedSearch) - getProductMatchScore(left, trimmedSearch);
+            if (scoreDiff !== 0) return scoreDiff;
+            return String(left?.name || '').localeCompare(String(right?.name || ''));
+        });
+    }, [productResults, trimmedSearch]);
 
     const { data: purchaseInsights, isLoading: isLoadingInsights } = useQuery({
         queryKey: ['purchase-product-insights', selectedProduct?.id, formData.unitCode, branchId],
@@ -85,7 +157,7 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
                 qty: Number(initialItem?.qty ?? 1),
                 unitCode: String(initialItem?.unitCode || ''),
                 unitCost: Number(initialItem?.unitPrice ?? initialItem?.unitCost ?? 0),
-                taxRate: Number(initialItem?.taxRate ?? initialItem?.product?.tax?.rate ?? initialItem?.product?.taxRate ?? 0.15),
+                taxRate: resolveEffectiveTaxRate([initialItem?.taxRate, initialItem?.product?.tax?.rate, initialItem?.product?.taxRate], companyTax),
             });
             setError(null);
             setShowAllBranchesStock(false);
@@ -130,7 +202,7 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
             qty: 1,
             unitCode: matchedUnit?.unitCode || 'PCS',
             unitCost: price,
-            taxRate: product.tax?.rate ?? product.taxRate ?? 0.15
+            taxRate: resolveEffectiveTaxRate([product.tax?.rate, product.taxRate], companyTax),
         });
     };
 
@@ -229,7 +301,7 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
         if (keepOpen) {
             setSelectedProduct(null);
             setSearch('');
-            setFormData({ qty: 1, unitCode: '', unitCost: 0, taxRate: 0.15 });
+            setFormData({ qty: 1, unitCode: '', unitCost: 0, taxRate: defaultTaxRate });
             setTimeout(() => searchInputRef.current?.focus(), 50);
         } else {
             onClose();
@@ -283,15 +355,29 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
 
                             {productResults && productResults.length > 0 && (
                                 <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
-                                    {productResults.map((p: any) => (
+                                    {rankedProductResults.map((p: any, index: number) => (
                                         <div
                                             key={p.id}
                                             onClick={() => handleSelectProduct(p)}
-                                            className="flex items-center justify-between p-3 rounded-lg border border-transparent hover:border-gray-200 hover:bg-gray-50 cursor-pointer transition-all"
+                                            className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
+                                                index === 0
+                                                    ? 'border-blue-200 bg-blue-50/60 hover:border-blue-300'
+                                                    : 'border-transparent hover:border-gray-200 hover:bg-gray-50'
+                                            }`}
                                         >
                                             <div className="flex flex-col">
-                                                <span className="text-sm font-medium text-gray-900">{p.name}</span>
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className="text-sm font-medium text-gray-900">{p.name}</span>
+                                                    {index === 0 && (
+                                                        <span className="text-[10px] font-bold uppercase tracking-wide text-blue-700 bg-blue-100 border border-blue-200 px-1.5 py-0.5 rounded-full">
+                                                            Top Match
+                                                        </span>
+                                                    )}
+                                                </div>
                                                 <span className="text-[11px] text-gray-500 font-mono">{p.itemCode}</span>
+                                                {p.nameArabic && (
+                                                    <span dir="rtl" className="text-[11px] text-gray-500 mt-0.5">{p.nameArabic}</span>
+                                                )}
                                                 <div className="flex gap-1 mt-1 flex-wrap">
                                                     {p.units?.map((u: any) => (
                                                         <span key={u.id || u.unitCode} className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100 flex items-center gap-1">
@@ -306,6 +392,12 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
                                             </span>
                                         </div>
                                     ))}
+                                </div>
+                            )}
+                            {trimmedSearch && !isSearching && rankedProductResults.length === 0 && !error && (
+                                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center">
+                                    <div className="text-sm font-semibold text-gray-700">No close item match found</div>
+                                    <div className="text-xs text-gray-500 mt-1">Try item code, barcode, unit code, Arabic name, or fewer words.</div>
                                 </div>
                             )}
                         </div>
@@ -442,7 +534,7 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
                                             <div className="text-base font-black text-gray-900 mt-1">{lineSubtotal.toFixed(2)}</div>
                                         </div>
                                         <div className="p-3 rounded-lg border border-gray-200 bg-gray-50">
-                                            <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Tax ({(Number(formData.taxRate || 0) * 100).toFixed(0)}%)</div>
+                                            <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{formatTaxLabel(companyTax, Number(formData.taxRate || 0))}</div>
                                             <div className="text-base font-black text-amber-600 mt-1">{lineTaxAmount.toFixed(2)}</div>
                                         </div>
                                         <div className="p-3 rounded-lg border border-gray-200 bg-blue-50">

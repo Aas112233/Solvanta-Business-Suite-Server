@@ -3,19 +3,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../../lib/api';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import PurchaseReturnDeleteDialog from '../../components/purchases/PurchaseReturnDeleteDialog';
 import { printPdfFromComponent } from '../../lib/fileExport';
 import { PurchaseReturnPdf } from '../../components/purchases/PurchaseReturnPdf';
 import { useAuthStore } from '../../stores/authStore';
 import { Printer } from 'lucide-react';
 import AppLoader from '../../components/ui/AppLoader';
+import { useCompanyCurrency } from '../../lib/companySettings';
 
 export default function PurchaseReturnDetail() {
     const { id } = useParams();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const user = useAuthStore((s: any) => s.user);
+    const currency = useCompanyCurrency();
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
     const { data, isLoading } = useQuery({
@@ -50,8 +52,8 @@ export default function PurchaseReturnDetail() {
         await printPdfFromComponent(
             <PurchaseReturnPdf
                 data={data}
-                companyName={user?.company?.name || 'SOLVANTA ERP'}
-                currency="SAR"
+                companyName={user?.company?.name || 'Company'}
+                currency={currency}
             />
         );
     };

@@ -3,11 +3,15 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { ArrowLeft, Edit, Trash2, FileText } from 'lucide-react';
 import AppLoader from '../../components/ui/AppLoader';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
+import { formatCompanyDate, formatCurrencyAmount, resolveCompanyCurrency } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 export default function ExpensePurchaseDetail() {
    const navigate = useNavigate();
    const { id} = useParams<{ id: string }>();
+   const company = useAuthStore((s) => s.user?.company);
+   const currency = resolveCompanyCurrency(company);
 
   const { data: expense, isLoading, error } = useQuery({
         queryKey: ['expense-purchase', id],
@@ -99,7 +103,7 @@ export default function ExpensePurchaseDetail() {
                         <div>
                             <dt className="text-sm font-medium text-gray-500">Date</dt>
                             <dd className="mt-1 text-base text-gray-900">
-                                {new Date(expense.date).toLocaleDateString()}
+                                {formatCompanyDate(expense.date, company)}
                             </dd>
                         </div>
                         <div>
@@ -147,13 +151,13 @@ export default function ExpensePurchaseDetail() {
                                             {item.expenseAccount?.name || 'Account ID: ' + item.expenseAccountId}
                                         </td>
                                         <td className="px-4 py-3 text-sm text-right text-gray-900">
-                                            SAR {Number(item.amount).toFixed(2)}
+                                            {formatCurrencyAmount(Number(item.amount || 0), currency)}
                                         </td>
                                         <td className="px-4 py-3 text-sm text-right text-gray-900">
                                             {item.quantity}
                                         </td>
                                         <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">
-                                            SAR {Number(item.amount* item.quantity).toFixed(2)}
+                                            {formatCurrencyAmount(Number(item.amount * item.quantity || 0), currency)}
                                         </td>
                                     </tr>
                                 ))}
@@ -164,7 +168,7 @@ export default function ExpensePurchaseDetail() {
                                         Total Amount:
                                     </td>
                                     <td className="px-4 py-3 text-right text-lg font-bold text-gray-900">
-                                        SAR {Number(expense.totalAmount).toFixed(2)}
+                                        {formatCurrencyAmount(Number(expense.totalAmount || 0), currency)}
                                     </td>
                                 </tr>
                             </tfoot>

@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import api from '../../lib/api';
 import ItemSelectorModal from '../../components/inventory/ItemSelectorModal';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import AppDropdown from '../../components/ui/AppDropdown';
 import { calculateTotalBaseQty } from '../../lib/inventoryUtils';
 import AppItemTable, { AppItemTableColumn } from '../../components/shared/AppItemTable';

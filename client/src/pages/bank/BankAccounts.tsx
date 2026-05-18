@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Building2, Wallet, RefreshCcw, ArrowRightLeft, Trash2, Edit2, Landmark } from 'lucide-react';
 import { clsx } from 'clsx';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 
 // Unified Component System
 import {
@@ -21,6 +21,7 @@ import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
 import api, { getApiErrorMessage } from '@/lib/api';
+import { useCompanyCurrency } from '@/lib/companySettings';
 
 // Types
 interface BankAccount {
@@ -60,6 +61,7 @@ const currencyOptions = [
 export default function BankAccounts() {
   const navigate = useNavigate();
   const notify = useNotification();
+  const companyCurrency = useCompanyCurrency();
   
   // State
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
@@ -72,7 +74,7 @@ export default function BankAccounts() {
     bankName: '',
     branchName: '',
     accountType: 'CHECKING',
-    currency: 'SAR',
+    currency: companyCurrency,
     openingBalance: '',
     notes: '',
     isDefault: false,
@@ -317,7 +319,7 @@ export default function BankAccounts() {
       bankName: '',
       branchName: '',
       accountType: 'CHECKING',
-      currency: 'SAR',
+      currency: companyCurrency,
       openingBalance: '',
       notes: '',
       isDefault: false,
@@ -334,7 +336,7 @@ export default function BankAccounts() {
       label: 'Total Balance',
       value: stats.totalBalance.toLocaleString('en-US', {
         style: 'currency',
-        currency: 'SAR',
+        currency: companyCurrency,
       }),
       icon: Wallet,
       color: 'blue',

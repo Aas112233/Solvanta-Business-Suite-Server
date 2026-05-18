@@ -73,11 +73,21 @@ export default function AppDropdown({
             // rough estimate of dropdown height is ~280px max
             const needsFlip = spaceBelow < 280 && spaceAbove > spaceBelow;
 
+            // We set a minimum width for the dropdown to ensure controls like Search/Refresh fit perfectly
+            const minWidth = 240;
+            const dropdownWidth = Math.max(minWidth, rect.width);
+
+            // Ensure the dropdown does not overflow the right edge of the viewport
+            let left = rect.left;
+            if (left + dropdownWidth > window.innerWidth) {
+                left = Math.max(8, window.innerWidth - dropdownWidth - 8);
+            }
+
             setDropdownStyle({
                 position: 'fixed',
                 top: needsFlip ? `${rect.top - 4}px` : `${rect.bottom + 4}px`,
-                left: `${rect.left}px`,
-                width: `${rect.width}px`,
+                left: `${left}px`,
+                width: `${dropdownWidth}px`,
                 transform: needsFlip ? 'translateY(-100%)' : 'none',
                 zIndex: 99999,
             });
@@ -98,7 +108,7 @@ export default function AppDropdown({
 
     return (
         <div ref={containerRef} className={clsx('relative', className)}>
-            <div className="flex items-stretch gap-2">
+            <div className="flex items-stretch">
                 <button
                     type="button"
                     disabled={disabled}
@@ -119,30 +129,6 @@ export default function AppDropdown({
                     </span>
                     <ChevronDown size={16} className={clsx('text-text-secondary transition-transform', open ? 'rotate-180' : '')} />
                 </button>
-
-                {onRefresh && (
-                    <button
-                        type="button"
-                        disabled={disabled || refreshing}
-                        onClick={async (event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            await onRefresh();
-                        }}
-                        title={refreshLabel}
-                        aria-label={refreshLabel}
-                        className={clsx(
-                            'inline-flex shrink-0 items-center justify-center rounded-lg border px-3',
-                            'transition-colors duration-200',
-                            disabled
-                                ? 'cursor-not-allowed border-border bg-background-subtle text-text-tertiary'
-                                : 'border-border bg-background-card text-text-secondary hover:border-brand-300 hover:text-brand',
-                            refreshing && 'cursor-wait'
-                        )}
-                    >
-                        <RefreshCw size={16} className={clsx(refreshing && 'animate-spin')} />
-                    </button>
-                )}
             </div>
 
             {open && createPortal(

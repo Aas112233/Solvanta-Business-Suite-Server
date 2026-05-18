@@ -19,6 +19,7 @@ import {
     X,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
+import { formatCompanyDate, resolveCompanyCurrency, toDateInputValue } from '../../lib/companySettings';
 import AppDropdown from '../ui/AppDropdown';
 
 type FilterPanel = 'branch' | 'supplier' | 'date' | 'invoice' | 'method' | 'status' | 'search' | 'columns' | null;
@@ -89,10 +90,6 @@ type PurchasePaymentsFilterOptions = {
     statuses: string[];
 };
 
-function toISODate(date: Date): string {
-    return date.toISOString().slice(0, 10);
-}
-
 function money(value: number, currency: string) {
     return `${currency} ${Number(value || 0).toLocaleString()}`;
 }
@@ -111,7 +108,8 @@ function statusLabel(value: string) {
 }
 
 export default function PurchasePaymentsReport() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
 
     const [panel, setPanel] = useState<FilterPanel>(null);
     const [branchId, setBranchId] = useState('');
@@ -232,12 +230,13 @@ export default function PurchasePaymentsReport() {
     const supplierName = suppliers.find((s) => s.id === supplierId)?.name || 'All Suppliers';
     const invoiceName = invoiceOptions.find((o) => o.value === purchaseInvoiceId)?.label || 'All Purchase Invoices';
     const methodName = paymentMethodOptions.find((o) => o.value === paymentMethod)?.label || 'All Methods';
-    const dateLabel = dateFrom || dateTo ? `${dateFrom || 'Any'} to ${dateTo || 'Any'}` : 'All Time';
+    const formatRangeDate = (value: string) => (value ? formatCompanyDate(value, company) : 'Any');
+    const dateLabel = dateFrom || dateTo ? `${formatRangeDate(dateFrom)} to ${formatRangeDate(dateTo)}` : 'All Time';
     const statusName = statusLabel(status || 'POSTED');
 
     const applyPreset = (preset: DatePreset) => {
         const now = new Date();
-        const today = toISODate(now);
+        const today = toDateInputValue(now, company);
         setDatePreset(preset);
         if (preset === 'all') {
             setDateFrom('');
@@ -252,18 +251,18 @@ export default function PurchasePaymentsReport() {
         if (preset === 'last7') {
             const start = new Date(now);
             start.setDate(start.getDate() - 6);
-            setDateFrom(toISODate(start));
+            setDateFrom(toDateInputValue(start, company));
             setDateTo(today);
             return;
         }
         if (preset === 'thisMonth') {
-            setDateFrom(toISODate(new Date(now.getFullYear(), now.getMonth(), 1)));
+            setDateFrom(toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1), company));
             setDateTo(today);
             return;
         }
         if (preset === 'lastMonth') {
-            setDateFrom(toISODate(new Date(now.getFullYear(), now.getMonth() - 1, 1)));
-            setDateTo(toISODate(new Date(now.getFullYear(), now.getMonth(), 0)));
+            setDateFrom(toDateInputValue(new Date(now.getFullYear(), now.getMonth() - 1, 1), company));
+            setDateTo(toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 0), company));
             return;
         }
     };
@@ -297,7 +296,7 @@ export default function PurchasePaymentsReport() {
             const exportRows = rows.map((p) => {
                 const row: Record<string, any> = {};
                 if (selectedColumns.paymentNo) row.paymentNo = p.paymentNo || '';
-                if (selectedColumns.paymentDate) row.paymentDate = p.paymentDate ? new Date(p.paymentDate).toLocaleDateString() : '';
+                if (selectedColumns.paymentDate) row.paymentDate = p.paymentDate ? formatCompanyDate(p.paymentDate, company) : '';
                 if (selectedColumns.supplier) row.supplier = p.supplier?.name || '';
                 if (selectedColumns.invoiceNo) row.invoiceNo = p.purchaseInvoice?.purchaseNo || '';
                 if (selectedColumns.warehouse) row.warehouse = p.branch?.name || '';
@@ -310,7 +309,7 @@ export default function PurchasePaymentsReport() {
             });
 
             await exportExcel({
-                fileName: `purchase-payments-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                fileName: `purchase-payments-${toDateInputValue(undefined, company)}.xlsx`,
                 sheetName: 'Purchase Payments',
                 title: 'Purchase Payments Report',
                 filters: {
@@ -526,7 +525,7 @@ export default function PurchasePaymentsReport() {
                                     {previewRows.map((p) => (
                                         <tr key={p.id} className="hover:bg-slate-50">
                                             <td className="px-4 py-3 font-semibold text-slate-800">{p.paymentNo || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-600">{p.paymentDate ? new Date(p.paymentDate).toLocaleDateString() : '-'}</td>
+                                            <td className="px-4 py-3 text-slate-600">{p.paymentDate ? formatCompanyDate(p.paymentDate, company) : '-'}</td>
                                             <td className="px-4 py-3 text-slate-700">{p.supplier?.name || '-'}</td>
                                             <td className="px-4 py-3 text-slate-700">{p.purchaseInvoice?.purchaseNo || '-'}</td>
                                             <td className="px-4 py-3 text-slate-700">{p.branch?.name || '-'}</td>

@@ -13,7 +13,7 @@ import {
     Loader2,
     BarChart3
 } from 'lucide-react';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import WarehouseFormModal from '../../../components/inventory/WarehouseFormModal';
 import ModuleRefreshButton from '../../../components/ModuleRefreshButton';
 

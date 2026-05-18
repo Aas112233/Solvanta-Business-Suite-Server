@@ -29,6 +29,7 @@ import {
     buildPaymentMethodOptions,
     DEFAULT_SALE_PAYMENT_METHOD_OPTIONS,
     GLOBAL_STRING_GROUPS,
+    SALE_INVOICE_PAYMENT_METHOD_KEYS,
 } from '../../lib/globalStrings';
 
 export default function SalesOrderConvert() {
@@ -64,7 +65,7 @@ export default function SalesOrderConvert() {
     const paymentMethodOptions = useMemo(
         () =>
             buildPaymentMethodOptions(globalPaymentMethods, DEFAULT_SALE_PAYMENT_METHOD_OPTIONS, {
-                allowedKeys: ['CASH', 'CARD', 'BANK_TRANSFER', 'CREDIT'],
+                allowedKeys: SALE_INVOICE_PAYMENT_METHOD_KEYS,
             }).filter((option) => option.value !== 'CREDIT' || canUseCredit),
         [globalPaymentMethods, canUseCredit]
     );

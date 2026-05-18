@@ -8,10 +8,11 @@ import DateRangeFilter from '@/components/ui/DateRangeFilter';
 import ModuleRefreshButton from '@/components/ModuleRefreshButton';
 import { getSalesCustomerDisplay } from '@/lib/salesCustomerDisplay';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { toDateInputValue } from '@/lib/companySettings';
 
 export default function SalesSummaryReport() {
     const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = toDateInputValue();
 
     const [branchId, setBranchId] = useState('');
     const [searchInput, setSearchInput] = useState('');

@@ -55,7 +55,29 @@ export interface User {
         startedAt: string;
         sessionId: string;
     } | null;
-    company: { id: string; name: string; currency: string; logoUrl: string | null; setupCompleted: boolean };
+    company: {
+        id: string;
+        name: string;
+        currency: string;
+        logoUrl: string | null;
+        setupCompleted: boolean;
+        regionalSettings?: {
+            timezone: string;
+            dateFormat: string;
+            timeFormat: '12H' | '24H';
+            language: string;
+        };
+        documentSettings?: {
+            invoicePrefix: string;
+            quotationPrefix: string;
+            salesOrderPrefix: string;
+        };
+        taxSettings?: {
+            label: string;
+            defaultRate: number;
+            inclusivePricing: boolean;
+        };
+    };
     role: { id: string; name: string; permissions: string[] };
     branches: { id: string; name: string; code: string }[];
 }

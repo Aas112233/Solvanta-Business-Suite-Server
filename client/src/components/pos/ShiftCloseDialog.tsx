@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { AlertTriangle, CheckCircle, DollarSign, Loader2, X } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { printHtmlDocument } from '../../lib/fileExport';

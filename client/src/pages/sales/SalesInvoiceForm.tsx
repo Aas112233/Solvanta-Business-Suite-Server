@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { ArrowLeft, Plus, Save, Trash, Pencil } from 'lucide-react';
 import api from '@/lib/api';
 import ItemSelectorModal from '@/components/inventory/ItemSelectorModal';
@@ -12,7 +12,9 @@ import {
     buildPaymentMethodOptions,
     DEFAULT_SALE_PAYMENT_METHOD_OPTIONS,
     GLOBAL_STRING_GROUPS,
+    SALE_INVOICE_PAYMENT_METHOD_KEYS,
 } from '../../lib/globalStrings';
+import { resolveEffectiveTaxRate, useCompanyTaxSettings } from '../../lib/tax';
 
 type SalesItem = {
     productId: string;
@@ -34,6 +36,7 @@ export default function SalesInvoiceForm() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
+    const companyTax = useCompanyTaxSettings();
 
     const [customerId, setCustomerId] = useState('');
     const [branchId, setBranchId] = useState(activeBranchId || '');
@@ -73,7 +76,7 @@ export default function SalesInvoiceForm() {
 
     const paymentOptions = useMemo(() => {
         const base = buildPaymentMethodOptions(globalPaymentMethods, DEFAULT_SALE_PAYMENT_METHOD_OPTIONS, {
-            allowedKeys: ['CASH', 'CARD', 'CREDIT'],
+            allowedKeys: SALE_INVOICE_PAYMENT_METHOD_KEYS,
         });
         return base.filter((opt) => opt.value !== 'CREDIT' || creditAllowedForCustomer);
     }, [globalPaymentMethods, creditAllowedForCustomer]);
@@ -100,7 +103,7 @@ export default function SalesInvoiceForm() {
         // Also try the unitPrice already resolved by the modal (already channel-aware)
         if (item.unitPrice && item.unitPrice !== unitMeta?.salePrice) unitPrice = Number(item.unitPrice);
         const qty = Number(item.qty || 1);
-        const taxRate = Number(item?.taxRate ?? item?.product?.tax?.rate ?? item?.product?.taxRate ?? 0.15);
+        const taxRate = resolveEffectiveTaxRate([item?.taxRate, item?.product?.tax?.rate, item?.product?.taxRate], companyTax);
         const existing = editingIndex !== null ? items[editingIndex] : null;
         const discount = Number(existing?.discount || 0);
         const lineTotal = qty * unitPrice - discount;

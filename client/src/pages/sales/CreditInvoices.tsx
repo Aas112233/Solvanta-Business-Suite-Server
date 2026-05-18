@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CreditCard, Eye, FileSpreadsheet, Plus, Printer, Users } from 'lucide-react';
 import { format } from 'date-fns';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import api from '../../lib/api';

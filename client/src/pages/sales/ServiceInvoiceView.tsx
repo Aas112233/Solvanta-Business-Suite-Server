@@ -15,6 +15,8 @@ import {
     StatusBadge,
 } from '@/components/ui';
 import { ServiceInvoicePdfTemplate } from './ServiceInvoicePdfTemplate';
+import { formatCompanyDate, formatCurrencyAmount, resolveCompanyCurrency } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 export interface ServiceInvoice {
     id: string;
@@ -51,6 +53,8 @@ export interface ServiceInvoice {
 export default function ServiceInvoiceView() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
+    const company = useAuthStore((s) => s.user?.company);
+    const currency = resolveCompanyCurrency(company);
     const [isPrinting, setIsPrinting] = useState(false);
 
     const { data: invoice, isLoading } = useQuery({
@@ -146,7 +150,7 @@ export default function ServiceInvoiceView() {
 
             <PageHeader
                 title={`Service Invoice: ${invoice.invoiceNo}`}
-                subtitle={`Created on ${new Date(invoice.createdAt).toLocaleDateString()}`}
+                subtitle={`Created on ${formatCompanyDate(invoice.createdAt, company)}`}
                 action={
                     <div className="flex gap-2 print:hidden">
                         <Button
@@ -230,7 +234,7 @@ export default function ServiceInvoiceView() {
                                         <div>
                                             <span className="text-text-tertiary">Date:</span>{' '}
                                             <span className="font-medium">
-                                                {new Date(invoice.createdAt).toLocaleDateString()}
+                                                {formatCompanyDate(invoice.createdAt, company)}
                                             </span>
                                         </div>
                                         <div>
@@ -287,16 +291,16 @@ export default function ServiceInvoiceView() {
                                                 </td>
                                                 <td className="py-3 px-4 text-right">{item.qty}</td>
                                                 <td className="py-3 px-4 text-right">
-                                                    ${item.unitPrice.toFixed(2)}
+                                                    {formatCurrencyAmount(Number(item.unitPrice || 0), currency)}
                                                 </td>
                                                 <td className="py-3 px-4 text-right text-text-tertiary">
-                                                    ${item.discount.toFixed(2)}
+                                                    {formatCurrencyAmount(Number(item.discount || 0), currency)}
                                                 </td>
                                                 <td className="py-3 px-4 text-right text-text-tertiary">
-                                                    ${item.taxAmount.toFixed(2)}
+                                                    {formatCurrencyAmount(Number(item.taxAmount || 0), currency)}
                                                 </td>
                                                 <td className="py-3 px-4 text-right font-medium">
-                                                    ${item.lineTotal.toFixed(2)}
+                                                    {formatCurrencyAmount(Number(item.lineTotal || 0), currency)}
                                                 </td>
                                             </tr>
                                         ))}
@@ -316,24 +320,24 @@ export default function ServiceInvoiceView() {
                         <CardContent className="space-y-3">
                             <div className="flex justify-between text-sm">
                                 <span className="text-text-tertiary">Subtotal</span>
-                                <span className="font-medium">${invoice.subtotal.toFixed(2)}</span>
+                                <span className="font-medium">{formatCurrencyAmount(Number(invoice.subtotal || 0), currency)}</span>
                             </div>
                             {invoice.discountTotal > 0 && (
                                 <div className="flex justify-between text-sm">
                                     <span className="text-text-tertiary">Discount</span>
                                     <span className="font-medium text-danger">
-                                        -${invoice.discountTotal.toFixed(2)}
+                                        -{formatCurrencyAmount(Number(invoice.discountTotal || 0), currency)}
                                     </span>
                                 </div>
                             )}
                             <div className="flex justify-between text-sm">
                                 <span className="text-text-tertiary">Tax</span>
-                                <span className="font-medium">${invoice.taxTotal.toFixed(2)}</span>
+                                <span className="font-medium">{formatCurrencyAmount(Number(invoice.taxTotal || 0), currency)}</span>
                             </div>
                             <div className="border-t border-border pt-3">
                                 <div className="flex justify-between text-base font-bold">
                                     <span>Grand Total</span>
-                                    <span className="text-brand">${invoice.grandTotal.toFixed(2)}</span>
+                                    <span className="text-brand">{formatCurrencyAmount(Number(invoice.grandTotal || 0), currency)}</span>
                                 </div>
                             </div>
                             {invoice.paymentMethod === 'CASH' && (
@@ -341,13 +345,13 @@ export default function ServiceInvoiceView() {
                                     <div className="flex justify-between text-sm">
                                         <span className="text-text-tertiary">Cash Received</span>
                                         <span className="font-medium">
-                                            ${invoice.cashReceived?.toFixed(2) || '0.00'}
+                                            {formatCurrencyAmount(Number(invoice.cashReceived || 0), currency)}
                                         </span>
                                     </div>
                                     <div className="flex justify-between text-sm">
                                         <span className="text-text-tertiary">Change</span>
                                         <span className="font-medium">
-                                            ${invoice.changeGiven?.toFixed(2) || '0.00'}
+                                            {formatCurrencyAmount(Number(invoice.changeGiven || 0), currency)}
                                         </span>
                                     </div>
                                 </>

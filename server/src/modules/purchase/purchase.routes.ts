@@ -11,6 +11,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { z } from 'zod';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { InventoryService } from '../inventory/InventoryService.js';
+import { EXPENSE_PURCHASE_PAYMENT_METHODS, normalizePaymentMethodKey } from '../../utils/paymentMethods.js';
 export const purchaseRoutes = Router();
 purchaseRoutes.use(authenticate);
 
@@ -2015,7 +2016,10 @@ const expensePurchaseSchema = z.object({
     branchId: z.string().min(1),
     invoiceNo: z.string().optional(),
     date: z.string().optional(),
-    paymentMethod: z.enum(['CASH', 'BANK', 'BANK_TRANSFER', 'CREDIT']),
+    paymentMethod: z.preprocess(
+        (value) => normalizePaymentMethodKey(value),
+        z.enum(EXPENSE_PURCHASE_PAYMENT_METHODS)
+    ),
     items: z.array(expensePurchaseItemSchema).min(1),
     notes: z.string().optional(),
 });
@@ -2087,9 +2091,7 @@ purchaseRoutes.post('/expense-purchases', requirePermission(PERMISSIONS.PURCHASE
         const companyId = req.user!.companyId;
         const userId = req.user!.id;
         await assertBranchAccessible(req, branchId);
-        const normalizedPaymentMethod = String(paymentMethod || '').trim().toUpperCase() === 'BANK'
-            ? 'BANK_TRANSFER'
-            : String(paymentMethod || '').trim().toUpperCase();
+        const normalizedPaymentMethod = normalizePaymentMethodKey(paymentMethod);
 
         const result = await prisma.$transaction(async (tx) => {
             // Calculate total amount

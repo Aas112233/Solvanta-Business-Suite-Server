@@ -9,11 +9,13 @@ import {
     TrendingUp, MapPin, Box, Calendar
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { formatTaxLabel, useCompanyTaxSettings } from '../../lib/tax';
 
 export default function ItemDetail() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('overview');
+    const companyTax = useCompanyTaxSettings();
 
     // Fetch Item Details
     const { data: item, isLoading, isError } = useQuery({
@@ -294,7 +296,7 @@ export default function ItemDetail() {
                         <div className="flex items-center justify-between mb-8">
                             <h2 className="text-xl font-bold text-gray-900">Unit Pricing Matrix</h2>
                             <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 text-amber-700 rounded-lg text-xs font-bold ring-1 ring-amber-100">
-                                <AlertCircle size={14} /> VAT 15% Inclusive
+                                <AlertCircle size={14} /> {formatTaxLabel(companyTax)} {companyTax.inclusivePricing ? 'Inclusive' : 'Configured'}
                             </div>
                         </div>
 

@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { Edit2, Loader2, Monitor, Plus, Power, PowerOff, RefreshCw, Save, Trash2, UserRound, X } from 'lucide-react';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { POS_PAYMENT_METHOD_KEYS } from '../../lib/globalStrings';
 
 type TerminalPolicy = {
     allowedPaymentMethods?: string[];
     allowCreditSales?: boolean;
+    allowPriceChange?: boolean;
     maxDiscountPct?: number;
     returnWindowDays?: number;
     allowPosReturns?: boolean;
@@ -66,6 +68,7 @@ type TerminalForm = {
     receiptFooter: string;
     allowedPaymentMethods: string[];
     allowCreditSales: boolean;
+    allowPriceChange: boolean;
     maxDiscountPct: number;
     returnWindowDays: number;
     allowPosReturns: boolean;
@@ -73,8 +76,6 @@ type TerminalForm = {
     pricePriority: 'CUSTOMER_FIRST' | 'TERMINAL_FIRST';
     requireShiftForSale: boolean;
 };
-
-const PAYMENT_OPTIONS = ['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER'] as const;
 
 const emptyForm: TerminalForm = {
     code: '',
@@ -84,8 +85,9 @@ const emptyForm: TerminalForm = {
     priceGroupId: '',
     receiptHeader: '',
     receiptFooter: '',
-    allowedPaymentMethods: [...PAYMENT_OPTIONS],
+    allowedPaymentMethods: [...POS_PAYMENT_METHOD_KEYS],
     allowCreditSales: true,
+    allowPriceChange: true,
     maxDiscountPct: 100,
     returnWindowDays: 30,
     allowPosReturns: true,
@@ -253,8 +255,9 @@ export default function POSTerminals() {
             priceGroupId: t.priceGroupId || '',
             receiptHeader: t.receiptHeader || '',
             receiptFooter: t.receiptFooter || '',
-            allowedPaymentMethods: t.policy?.allowedPaymentMethods?.length ? t.policy.allowedPaymentMethods : [...PAYMENT_OPTIONS],
+            allowedPaymentMethods: t.policy?.allowedPaymentMethods?.length ? t.policy.allowedPaymentMethods : [...POS_PAYMENT_METHOD_KEYS],
             allowCreditSales: t.policy?.allowCreditSales !== false,
+            allowPriceChange: t.policy?.allowPriceChange !== false,
             maxDiscountPct: Number(t.policy?.maxDiscountPct ?? 100),
             returnWindowDays: Number(t.policy?.returnWindowDays ?? 30),
             allowPosReturns: t.policy?.allowPosReturns !== false,
@@ -298,6 +301,7 @@ export default function POSTerminals() {
             policy: {
                 allowedPaymentMethods: form.allowedPaymentMethods,
                 allowCreditSales: form.allowCreditSales,
+                allowPriceChange: form.allowPriceChange,
                 maxDiscountPct: Number(form.maxDiscountPct || 0),
                 returnWindowDays: Number(form.returnWindowDays || 0),
                 allowPosReturns: form.allowPosReturns,
@@ -485,6 +489,9 @@ export default function POSTerminals() {
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
                                     <button type="button" disabled={quickPolicyMut.isPending} onClick={() => patchQuickPolicy('allowPosReturns', !(terminalDetail.policy?.allowPosReturns !== false))} className="px-3 py-2 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">{terminalDetail.policy?.allowPosReturns !== false ? 'Disable' : 'Enable'} Returns</button>
+                                    <button type="button" disabled={quickPolicyMut.isPending} onClick={() => patchQuickPolicy('allowPriceChange', !(terminalDetail.policy?.allowPriceChange !== false))} className="px-3 py-2 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">{terminalDetail.policy?.allowPriceChange !== false ? 'Lock' : 'Allow'} Price Change</button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
                                     <button type="button" disabled={quickPolicyMut.isPending} onClick={() => patchQuickPolicy('pricePriority', terminalDetail.policy?.pricePriority === 'TERMINAL_FIRST' ? 'CUSTOMER_FIRST' : 'TERMINAL_FIRST')} className="px-3 py-2 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">Price: {terminalDetail.policy?.pricePriority === 'TERMINAL_FIRST' ? 'Terminal First' : 'Customer First'}</button>
                                 </div>
                             </div>
@@ -557,6 +564,7 @@ export default function POSTerminals() {
                                 <label className="text-xs text-gray-700 flex items-center gap-2"><input type="checkbox" checked={form.allowPosReturns} onChange={(e) => setForm((p) => ({ ...p, allowPosReturns: e.target.checked }))} />Allow Returns</label>
                                 <label className="text-xs text-gray-700 flex items-center gap-2"><input type="checkbox" checked={form.requireSameShiftForReturns} onChange={(e) => setForm((p) => ({ ...p, requireSameShiftForReturns: e.target.checked }))} />Same Shift Return</label>
                                 <label className="text-xs text-gray-700 flex items-center gap-2"><input type="checkbox" checked={form.requireShiftForSale} onChange={(e) => setForm((p) => ({ ...p, requireShiftForSale: e.target.checked }))} />Require Open Shift</label>
+                                <label className="text-xs text-gray-700 flex items-center gap-2"><input type="checkbox" checked={form.allowPriceChange} onChange={(e) => setForm((p) => ({ ...p, allowPriceChange: e.target.checked }))} />Allow Price Change</label>
                             </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <div><label className="block text-xs font-medium text-gray-600 mb-1">Max Discount %</label><input type="number" min={0} max={100} value={form.maxDiscountPct} onChange={(e) => setForm((p) => ({ ...p, maxDiscountPct: Number(e.target.value) }))} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" /></div>
@@ -574,7 +582,7 @@ export default function POSTerminals() {
                             <div>
                                 <label className="block text-xs font-medium text-gray-600 mb-1">Allowed Payment Methods</label>
                                 <div className="grid grid-cols-3 gap-2">
-                                    {PAYMENT_OPTIONS.map((pm) => (
+                                    {POS_PAYMENT_METHOD_KEYS.map((pm) => (
                                         <label key={pm} className="text-xs text-gray-700 flex items-center gap-2">
                                             <input type="checkbox" checked={form.allowedPaymentMethods.includes(pm)} onChange={(e) => setForm((p) => ({ ...p, allowedPaymentMethods: e.target.checked ? Array.from(new Set([...p.allowedPaymentMethods, pm])) : p.allowedPaymentMethods.filter((x) => x !== pm), }))} />
                                             {pm}

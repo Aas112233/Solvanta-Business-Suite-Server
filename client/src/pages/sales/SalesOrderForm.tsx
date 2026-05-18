@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import toast from 'react-hot-toast';
+import toast from '@/lib/toast';
 import { ArrowLeft, Pencil, Plus, Save, Trash, X, Package } from 'lucide-react';
 import { z } from 'zod';
 import api from '@/lib/api';
@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/authStore';
 import ItemSelectorModal from '@/components/inventory/ItemSelectorModal';
 import Modal from '@/components/ui/Modal';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { toDateInputValue } from '../../lib/companySettings';
 
 type OrderItem = {
     productId: string;
@@ -127,11 +128,12 @@ export default function SalesOrderForm() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const activeBranchId = useAuthStore(s => s.activeBranchId);
+    const company = useAuthStore(s => s.user?.company);
     const currency = useAuthStore(s => s.user?.company?.currency) || 'SAR';
 
     const [customerId, setCustomerId] = useState('');
     const [customerName, setCustomerName] = useState('');
-    const [date, setDate] = useState(new Date().toLocaleDateString('en-CA'));
+    const [date, setDate] = useState(() => toDateInputValue(undefined, company));
     const [deliveryDate, setDeliveryDate] = useState('');
     const [notes, setNotes] = useState('');
     const [terms, setTerms] = useState('');
@@ -165,8 +167,8 @@ export default function SalesOrderForm() {
         if (existingOrder) {
             setCustomerId(existingOrder.customerId || '');
             setCustomerName(existingOrder.customerName || '');
-            setDate(existingOrder.date ? new Date(existingOrder.date).toLocaleDateString('en-CA') : new Date().toLocaleDateString('en-CA'));
-            setDeliveryDate(existingOrder.deliveryDate ? new Date(existingOrder.deliveryDate).toLocaleDateString('en-CA') : '');
+            setDate(existingOrder.date ? toDateInputValue(existingOrder.date, company) : toDateInputValue(undefined, company));
+            setDeliveryDate(existingOrder.deliveryDate ? toDateInputValue(existingOrder.deliveryDate, company) : '');
             setNotes(existingOrder.notes || '');
             setTerms(existingOrder.terms || '');
             setItems(existingOrder.items?.map((i: any) => ({
@@ -179,7 +181,7 @@ export default function SalesOrderForm() {
                 taxAmount: Number(i.taxAmount || 0),
             })) || []);
         }
-    }, [existingOrder]);
+    }, [company, existingOrder]);
 
     const totals = useMemo(() => {
         const subtotal = items.reduce((sum, i) => sum + (Number(i.qty || 0) * Number(i.unitPrice || 0) - Number(i.discount || 0)), 0);

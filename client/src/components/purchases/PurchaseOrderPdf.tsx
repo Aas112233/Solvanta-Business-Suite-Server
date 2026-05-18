@@ -1,10 +1,14 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { format } from 'date-fns';
+import { formatTaxLabel, resolveEffectiveTaxRate, useCompanyTaxSettings } from '../../lib/tax';
+import { PDF_BASE_FONT_FAMILY, ensurePdfFontsRegistered, getPdfTextStyle } from '../../lib/pdfFonts';
+
+ensurePdfFontsRegistered();
 
 const styles = StyleSheet.create({
     page: {
         padding: 30,
-        fontFamily: 'Helvetica',
+        fontFamily: PDF_BASE_FONT_FAMILY,
         fontSize: 8,
         color: '#1e293b',
         backgroundColor: '#ffffff',
@@ -192,6 +196,7 @@ interface PurchaseOrderPdfProps {
 }
 
 export const PurchaseOrderPdf = ({ order, companyName, currency }: PurchaseOrderPdfProps) => {
+    const companyTax = useCompanyTaxSettings();
     const items = order.items || [];
     const totalQty = items.reduce((sum: number, item: any) => sum + Number(item.qty || 0), 0);
 
@@ -200,7 +205,7 @@ export const PurchaseOrderPdf = ({ order, companyName, currency }: PurchaseOrder
             <Page size="A4" style={styles.page}>
                 <View style={styles.header} fixed>
                     <View>
-                        <Text style={styles.companyName}>{companyName}</Text>
+                        <Text style={[styles.companyName, getPdfTextStyle(companyName)]}>{companyName}</Text>
                         <Text style={styles.documentType}>Purchase Order</Text>
                     </View>
                     <View style={styles.headerRight}>
@@ -215,18 +220,18 @@ export const PurchaseOrderPdf = ({ order, companyName, currency }: PurchaseOrder
                     <View style={styles.addressBox}>
                         <Text style={styles.addressLabel}>SUPPLIER</Text>
                         <View style={{ lineHeight: 1.4 }}>
-                            <Text style={styles.addressBold}>{order.supplier?.name || 'N/A'}</Text>
+                            <Text style={[styles.addressBold, getPdfTextStyle(order.supplier?.name || 'N/A')]}>{order.supplier?.name || 'N/A'}</Text>
                             {order.supplier?.supplierCode && <Text>Code: {order.supplier.supplierCode}</Text>}
-                            {order.supplier?.address && <Text>{order.supplier.address}</Text>}
+                            {order.supplier?.address && <Text style={getPdfTextStyle(order.supplier.address)}>{order.supplier.address}</Text>}
                             {order.supplier?.phone && <Text>T: {order.supplier.phone}</Text>}
                         </View>
                     </View>
                     <View style={styles.addressBox}>
                         <Text style={styles.addressLabel}>DELIVER TO</Text>
                         <View style={{ lineHeight: 1.4 }}>
-                            <Text style={styles.addressBold}>{companyName}</Text>
-                            <Text>Branch: {order.branch?.name || '-'}</Text>
-                            {order.branch?.address && <Text>{order.branch.address}</Text>}
+                            <Text style={[styles.addressBold, getPdfTextStyle(companyName)]}>{companyName}</Text>
+                            <Text>Branch: <Text style={getPdfTextStyle(order.branch?.name)}>{order.branch?.name || '-'}</Text></Text>
+                            {order.branch?.address && <Text style={getPdfTextStyle(order.branch.address)}>{order.branch.address}</Text>}
                             {order.expectedDate && (
                                 <View style={{ marginTop: 5 }}>
                                     <Text style={{ fontSize: 7, color: '#64748b' }}>EXPECTED DELIVERY</Text>
@@ -254,7 +259,7 @@ export const PurchaseOrderPdf = ({ order, companyName, currency }: PurchaseOrder
                         const qty = Number(item.qty || 0);
                         const unitExVat = Number(item.unitCost || 0);
                         const taxAmount = Number(item.taxAmount || 0);
-                        const taxRate = Number(item.taxRate ?? item.product?.tax?.rate ?? item.product?.taxRate ?? 0.15);
+                        const taxRate = resolveEffectiveTaxRate([item.taxRate, item.product?.tax?.rate, item.product?.taxRate], companyTax);
 
                         const unitIncVat = unitExVat * (1 + taxRate);
                         const lineGrossExVat = qty * unitExVat;
@@ -268,13 +273,13 @@ export const PurchaseOrderPdf = ({ order, companyName, currency }: PurchaseOrder
                             <View key={idx} style={styles.tableRow} wrap={false}>
                                 <View style={[styles.cell, styles.colSN]}><Text style={{ textAlign: 'center', fontSize: 7 }}>{idx + 1}</Text></View>
                                 <View style={[styles.cell, styles.colItem]}>
-                                    <Text style={styles.itemMain}>{item.product?.name || item.description}</Text>
-                                    {item.product?.nameArabic && <Text style={styles.itemArabic}>{item.product.nameArabic}</Text>}
+                                    <Text style={[styles.itemMain, getPdfTextStyle(item.product?.name || item.description)]}>{item.product?.name || item.description}</Text>
+                                    {item.product?.nameArabic && <Text style={[styles.itemArabic, getPdfTextStyle(item.product.nameArabic)]}>{item.product.nameArabic}</Text>}
                                     <Text style={styles.itemCode}>{item.product?.itemCode || '-'}</Text>
                                 </View>
                                 <View style={[styles.cell, styles.colQty]}><Text style={{ textAlign: 'center', fontSize: 7 }}>{qty}</Text></View>
                                 <View style={[styles.cell, styles.colUnitName]}>
-                                    <Text style={{ textAlign: 'center', fontSize: 7, fontWeight: 'bold' }}>
+                                    <Text style={[{ textAlign: 'center', fontSize: 7, fontWeight: 'bold' }, getPdfTextStyle(unitName)]}>
                                         {unitName} x{fraction}
                                     </Text>
                                     <Text style={{ textAlign: 'center', fontSize: 6, color: '#64748b', marginTop: 2 }}>{item.unitCode}</Text>
@@ -294,12 +299,12 @@ export const PurchaseOrderPdf = ({ order, companyName, currency }: PurchaseOrder
                         {order.notes && (
                             <>
                                 <Text style={styles.addressLabel}>INSTRUCTION NOTES</Text>
-                                <Text style={{ fontSize: 7, color: '#475569', fontStyle: 'italic', marginBottom: 15 }}>{order.notes}</Text>
+                                <Text style={[{ fontSize: 7, color: '#475569', fontStyle: 'italic', marginBottom: 15 }, getPdfTextStyle(order.notes)]}>{order.notes}</Text>
                             </>
                         )}
                         <Text style={styles.addressLabel}>AUTHORIZATION</Text>
-                        <Text style={{ fontSize: 9, color: '#334155' }}>Issued by: <Text style={{ fontWeight: 'bold' }}>{order.createdBy?.name || '-'}</Text></Text>
-                        <Text style={{ marginTop: 2, fontSize: 7, color: '#94a3b8' }}>Processed at {order.branch?.name || '-'}</Text>
+                        <Text style={{ fontSize: 9, color: '#334155' }}>Issued by: <Text style={[{ fontWeight: 'bold' }, getPdfTextStyle(order.createdBy?.name)]}>{order.createdBy?.name || '-'}</Text></Text>
+                        <Text style={{ marginTop: 2, fontSize: 7, color: '#94a3b8' }}>Processed at <Text style={getPdfTextStyle(order.branch?.name)}>{order.branch?.name || '-'}</Text></Text>
                     </View>
 
                     <View style={styles.summaryBox}>
@@ -313,7 +318,7 @@ export const PurchaseOrderPdf = ({ order, companyName, currency }: PurchaseOrder
                             <Text style={styles.summaryValue}>{Number(order.subtotal).toFixed(2)} {currency}</Text>
                         </View>
                         <View style={styles.summaryRow}>
-                            <Text style={styles.summaryLabel}>Tax Amount (15%)</Text>
+                            <Text style={styles.summaryLabel}>{formatTaxLabel(companyTax)}</Text>
                             <Text style={styles.summaryValue}>{Number(order.taxTotal).toFixed(2)} {currency}</Text>
                         </View>
                         <View style={styles.netTotalRow}>
@@ -337,7 +342,7 @@ export const PurchaseOrderPdf = ({ order, companyName, currency }: PurchaseOrder
                 </View>
 
                 <Text style={styles.footerNote} fixed>
-                    Official Purchase Order. System generated, no physical signature required. {companyName} ERP.
+                    Official Purchase Order. System generated, no physical signature required. <Text style={getPdfTextStyle(companyName)}>{companyName}</Text> ERP.
                 </Text>
             </Page>
         </Document>

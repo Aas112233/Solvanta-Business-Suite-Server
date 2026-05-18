@@ -7,6 +7,8 @@ import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
 import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
 import { formatDocNo, nextCounter } from '../../utils/documentCounter.js';
+import { resolveCompanyDocumentSettings } from '../../utils/companySettings.js';
+import { SALES_INVOICE_PAYMENT_METHODS, SALES_RECEIPT_PAYMENT_METHODS } from '../../utils/paymentMethods.js';
 import { z } from 'zod';
 import { getPosTerminalPolicy } from '../pos/pos-policy.js';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
@@ -16,9 +18,6 @@ export const salesRoutes = Router();
 salesRoutes.use(authenticate);
 
 const objectIdRegex = /^[a-f\d]{24}$/i;
-const SALES_PAYMENT_METHODS = ['CASH', 'CARD', 'MIXED', 'CREDIT', 'BANK_TRANSFER'] as const;
-const SALES_RECEIPT_PAYMENT_METHODS = ['CASH', 'CARD', 'BANK_TRANSFER', 'STC_PAY'] as const;
-
 function normalizeOptionalString(value: unknown) {
     if (typeof value !== 'string') return value;
     const trimmed = value.trim();
@@ -28,6 +27,15 @@ function normalizeOptionalString(value: unknown) {
 function isValidDateInput(value: string) {
     const normalized = value.includes('T') ? value : `${value}T00:00:00.000`;
     return !Number.isNaN(new Date(normalized).getTime());
+}
+
+async function loadCompanyDocumentSettings(db: any, companyId: string) {
+    const company = await db.company.findUnique({
+        where: { id: companyId },
+        select: { settings: true },
+    });
+
+    return resolveCompanyDocumentSettings(company?.settings);
 }
 
 function toComparableDate(value?: string) {
@@ -71,7 +79,7 @@ const optionalDateStringSchema = z.preprocess(
 );
 const salesPaymentMethodSchema = z.preprocess(
     (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
-    z.enum(SALES_PAYMENT_METHODS)
+    z.enum(SALES_INVOICE_PAYMENT_METHODS)
 );
 const salesReceiptPaymentMethodSchema = z.preprocess(
     (value) => typeof value === 'string' ? value.trim().toUpperCase() : value,
@@ -690,8 +698,11 @@ salesRoutes.post('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_CR
         const body = req.body as z.infer<typeof salesQuotationCreateSchema>;
 
         const { preparedItems, subtotal, taxTotal, discountTotal } = await validateAndCalculateTaxes(companyId, body.items);
-
-        const quotationNo = formatDocNo('SQ', await nextCounter(prisma as any, companyId, 'SALES_QUOTATION', branchId));
+        const documentSettings = await loadCompanyDocumentSettings(prisma as any, companyId);
+        const quotationNo = formatDocNo(
+            documentSettings.quotationPrefix,
+            await nextCounter(prisma as any, companyId, 'SALES_QUOTATION', branchId)
+        );
 
         const row = await (prisma as any).salesQuotation.create({
             data: {
@@ -758,9 +769,13 @@ salesRoutes.post('/quotations/:id/convert', requirePermission(PERMISSIONS.SALES_
             let invoiceNo: string;
             let retryCount = 0;
             const maxRetries = 5;
+            const documentSettings = await loadCompanyDocumentSettings(tx as any, companyId);
 
             while (retryCount < maxRetries) {
-                invoiceNo = formatDocNo('SI', await nextCounter(tx as any, companyId, 'SALES_INVOICE', quoteBranchId));
+                invoiceNo = formatDocNo(
+                    documentSettings.invoicePrefix,
+                    await nextCounter(tx as any, companyId, 'SALES_INVOICE', quoteBranchId)
+                );
 
                 // Check if this invoice number already exists
                 const existingInvoice = await (tx as any).pOSInvoice.findFirst({
@@ -2460,8 +2475,11 @@ salesRoutes.post('/orders', requirePermission(PERMISSIONS.SALES_ORDER_CREATE), r
         const body = req.body as z.infer<typeof salesOrderCreateSchema>;
 
         const { preparedItems, subtotal, taxTotal, discountTotal } = await validateAndCalculateTaxes(companyId, body.items);
-
-        const orderNo = formatDocNo('SO', await nextCounter(prisma as any, companyId, 'SALES_ORDER', branchId));
+        const documentSettings = await loadCompanyDocumentSettings(prisma as any, companyId);
+        const orderNo = formatDocNo(
+            documentSettings.salesOrderPrefix,
+            await nextCounter(prisma as any, companyId, 'SALES_ORDER', branchId)
+        );
 
         const row = await (prisma as any).salesOrder.create({
             data: {
@@ -2571,7 +2589,11 @@ salesRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.SALES_QUOT
             }
 
             // Create Invoice
-            const invoiceNo = formatDocNo('SI', await nextCounter(tx as any, companyId, 'SALES_INVOICE', String(order.branchId)));
+            const documentSettings = await loadCompanyDocumentSettings(tx as any, companyId);
+            const invoiceNo = formatDocNo(
+                documentSettings.invoicePrefix,
+                await nextCounter(tx as any, companyId, 'SALES_INVOICE', String(order.branchId))
+            );
             const invoice = await (tx as any).pOSInvoice.create({
                 data: {
                     companyId,

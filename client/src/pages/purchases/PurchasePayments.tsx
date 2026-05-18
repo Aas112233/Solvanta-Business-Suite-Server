@@ -4,8 +4,11 @@ import { Link } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import api from '../../lib/api';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
+import { formatCompanyDate } from '../../lib/companySettings';
+import { useAuthStore } from '../../stores/authStore';
 
 export default function PurchasePayments() {
+    const company = useAuthStore((s) => s.user?.company);
     const [page, setPage] = useState(1);
     const [search, setSearch] = useState('');
 
@@ -63,7 +66,7 @@ export default function PurchasePayments() {
                         ) : rows.map((row: any) => (
                             <tr key={row.id} className="border-t border-gray-100">
                                 <td className="px-4 py-3 text-sm font-semibold text-gray-900">{row.paymentNo}</td>
-                                <td className="px-4 py-3 text-sm text-gray-600">{new Date(row.paymentDate).toLocaleDateString()}</td>
+                                <td className="px-4 py-3 text-sm text-gray-600">{formatCompanyDate(row.paymentDate, company)}</td>
                                 <td className="px-4 py-3 text-sm text-gray-700">{row.purchaseInvoice?.purchaseNo}</td>
                                 <td className="px-4 py-3 text-sm text-gray-700">{row.supplier?.name}</td>
                                 <td className="px-4 py-3 text-sm text-gray-700">{row.paymentMethod}</td>
