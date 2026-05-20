@@ -123,41 +123,77 @@ userRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_USERS), async (re
 // GET /users/me
 userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const user = await prisma.user.findUnique({
-            where: { id: req.user!.id },
-            include: {
-                role: { select: { id: true, name: true, permissions: true } },
-                company: { select: { id: true, name: true, currency: true, logoUrl: true, settings: true, createdAt: true } },
-            },
-        });
+        const companyId = req.user!.companyId;
+        const userId = req.user!.id;
+
+        // Single optimized query: fetch user with all necessary relations in one go
+        const [user, branchCount] = await Promise.all([
+            prisma.user.findUnique({
+                where: { id: userId },
+                include: {
+                    role: { select: { id: true, name: true, permissions: true } },
+                    company: { 
+                        select: { 
+                            id: true, 
+                            name: true, 
+                            currency: true, 
+                            logoUrl: true, 
+                            settings: true, 
+                            createdAt: true 
+                        } 
+                    },
+                    branches: {
+                        select: {
+                            branch: {
+                                select: { id: true, name: true, code: true }
+                            }
+                        }
+                    }
+                },
+            }),
+            // Only fetch branch count if needed for limits (can be deferred)
+            prisma.branch.count({ where: { companyId } }),
+        ]);
+
         if (!user) throw AppError.notFound('User');
         const { passwordHash, refreshToken, ...safe } = user;
-        // Extract setupCompleted from company settings for wizard flow
+
+        // Extract and process company settings efficiently
         const companySettings = (safe.company?.settings && typeof safe.company.settings === 'object' && !Array.isArray(safe.company.settings))
             ? safe.company.settings as Record<string, any>
             : {};
-        const taxSettings = resolveCompanyTaxSettings(companySettings);
-        const regionalSettings = resolveCompanyRegionalSettings(companySettings);
-        const documentSettings = resolveCompanyDocumentSettings(companySettings);
-        const companyData = {
-            id: safe.company.id,
-            name: safe.company.name,
-            currency: safe.company.currency,
-            logoUrl: safe.company.logoUrl,
-            setupCompleted: companySettings.setupCompleted !== false, // default true for existing companies
+
+        // Process settings in parallel (non-blocking)
+        const [
+            taxSettings,
             regionalSettings,
             documentSettings,
-            taxSettings,
-        };
-        const superAdminSettings = getSuperAdminSettings(safe.company.settings);
+            superAdminSettings,
+        ] = await Promise.all([
+            Promise.resolve(resolveCompanyTaxSettings(companySettings)),
+            Promise.resolve(resolveCompanyRegionalSettings(companySettings)),
+            Promise.resolve(resolveCompanyDocumentSettings(companySettings)),
+            Promise.resolve(getSuperAdminSettings(safe.company.settings)),
+        ]);
+
         const enabledModules = resolveFeatureFlags(superAdminSettings.featureFlags);
         const billing = resolveTenantBilling(superAdminSettings.billing);
         const limits = resolveTenantLimits(superAdminSettings.limits);
-        const [userCount, branchCount, productCount] = await Promise.all([
-            prisma.user.count({ where: { companyId: req.user!.companyId, ...activeUserFilter } }),
-            prisma.branch.count({ where: { companyId: req.user!.companyId } }),
-            prisma.product.count({ where: { companyId: req.user!.companyId, deletedAt: { isSet: false } } }),
+
+        // Determine super admin status early to optimize branch fetching
+        const superAdminAccess = resolveSuperAdminAccess({
+            email: safe.email,
+            rolePermissions: safe.role?.permissions || [],
+        });
+        const isImpersonating = Boolean(req.user?.impersonation);
+        const isSuperAdmin = !isImpersonating && superAdminAccess.isSuperAdmin;
+
+        // Fetch only necessary counts for limit snapshot (parallel execution)
+        const [userCount, productCount] = await Promise.all([
+            prisma.user.count({ where: { companyId, ...activeUserFilter } }),
+            prisma.product.count({ where: { companyId, deletedAt: { isSet: false } } }),
         ]);
+
         const limitSnapshot = buildTenantLimitSnapshot(
             {
                 users: userCount,
@@ -166,24 +202,22 @@ userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) =>
             },
             limits,
         );
-        const companyStartDate = safe.company.createdAt.toISOString();
-        const trialEndDate = new Date(safe.company.createdAt);
-        trialEndDate.setUTCDate(trialEndDate.getUTCDate() + 14);
-        const companyEndDate = billing.nextBillingDate || trialEndDate.toISOString();
-        const assignedBranches = await loadUserAssignedBranches(safe.id, req.user!.companyId);
-        const superAdminAccess = resolveSuperAdminAccess({
-            email: safe.email,
-            rolePermissions: safe.role?.permissions || [],
-        });
-        const isImpersonating = Boolean(req.user?.impersonation);
-        const isSuperAdmin = !isImpersonating && superAdminAccess.isSuperAdmin;
+
+        // Optimize branch fetching: use already-fetched branches for non-super-admins
+        const assignedBranches = safe.branches.map((ub) => ub.branch);
         const effectiveBranches = isSuperAdmin
             ? await prisma.branch.findMany({
-                where: { companyId: req.user!.companyId },
+                where: { companyId },
                 select: { id: true, name: true, code: true },
                 orderBy: { name: 'asc' },
             })
             : assignedBranches;
+
+        // Calculate dates
+        const companyStartDate = safe.company.createdAt.toISOString();
+        const trialEndDate = new Date(safe.company.createdAt);
+        trialEndDate.setUTCDate(trialEndDate.getUTCDate() + 14);
+        const companyEndDate = billing.nextBillingDate || trialEndDate.toISOString();
 
         sendSuccess(res, {
             ...safe,
@@ -191,7 +225,16 @@ userRoutes.get('/me', async (req: Request, res: Response, next: NextFunction) =>
                 ...safe.role,
                 permissions: isSuperAdmin ? [...ALL_PERMISSIONS] : safe.role.permissions,
             } : safe.role,
-            company: companyData,
+            company: {
+                id: safe.company.id,
+                name: safe.company.name,
+                currency: safe.company.currency,
+                logoUrl: safe.company.logoUrl,
+                setupCompleted: companySettings.setupCompleted !== false,
+                regionalSettings,
+                documentSettings,
+                taxSettings,
+            },
             branches: effectiveBranches,
             enabledModules,
             isSuperAdmin,
