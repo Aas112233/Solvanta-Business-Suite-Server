@@ -3,6 +3,38 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 
+function getNodeModulePackageName(id: string) {
+    const normalizedId = id.replaceAll('\\', '/');
+    const nodeModulesIndex = normalizedId.lastIndexOf('/node_modules/');
+    if (nodeModulesIndex === -1) return null;
+
+    const packagePath = normalizedId.slice(nodeModulesIndex + '/node_modules/'.length);
+    const [scopeOrName, maybeName] = packagePath.split('/');
+
+    if (!scopeOrName) return null;
+    return scopeOrName.startsWith('@') && maybeName ? `${scopeOrName}/${maybeName}` : scopeOrName;
+}
+
+function getVendorChunkName(packageName: string) {
+    if (packageName === 'react' || packageName === 'react-dom' || packageName === 'scheduler') {
+        return 'vendor-react-core';
+    }
+
+    if (packageName.startsWith('@react-pdf/')) {
+        return 'vendor-react-pdf';
+    }
+
+    if (packageName.startsWith('@tanstack/')) {
+        return 'vendor-tanstack';
+    }
+
+    if (packageName.startsWith('d3-')) {
+        return 'vendor-d3';
+    }
+
+    return `vendor-${packageName.replace('@', '').replaceAll('/', '-')}`;
+}
+
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, __dirname, '');
     const configuredPort = Number(env.VITE_DEV_SERVER_PORT || '3001');
@@ -24,15 +56,9 @@ export default defineConfig(({ mode }) => {
             rollupOptions: {
                 output: {
                     manualChunks(id) {
-                        if (!id.includes('node_modules')) return undefined;
-                        if (id.includes('react') || id.includes('scheduler')) return 'vendor-react';
-                        if (id.includes('@tanstack')) return 'vendor-query';
-                        if (id.includes('@react-pdf') || id.includes('jspdf') || id.includes('exceljs') || id.includes('html2canvas') || id.includes('jsbarcode')) {
-                            return 'vendor-export';
-                        }
-                        if (id.includes('recharts')) return 'vendor-charts';
-                        if (id.includes('lucide-react') || id.includes('react-icons')) return 'vendor-icons';
-                        return 'vendor';
+                        const packageName = getNodeModulePackageName(id);
+                        if (!packageName) return undefined;
+                        return getVendorChunkName(packageName);
                     },
                 },
             },

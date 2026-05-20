@@ -346,7 +346,6 @@ model Branch {
   productionCompletions ProductionCompletion[]
 
   @@unique([companyId, code])
-  @@index([companyId])
   @@map("branches")
 }
 
@@ -366,7 +365,6 @@ model Role {
   users   User[]
 
   @@unique([companyId, name])
-  @@index([companyId])
   @@map("roles")
 }
 
@@ -446,7 +444,6 @@ model UserBranch {
   branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
   @@unique([userId, branchId])
-  @@index([userId])
   @@index([branchId])
   @@map("user_branches")
 }
@@ -529,7 +526,6 @@ model Tax {
   products Product[]
 
   @@unique([companyId, name])
-  @@index([companyId])
   @@map("taxes")
 }
 
@@ -549,7 +545,6 @@ model Category {
   products Product[]
 
   @@unique([companyId, name])
-  @@index([companyId])
   @@map("categories")
 }
 
@@ -565,7 +560,6 @@ model ItemGroup {
   products Product[]
 
   @@unique([companyId, name])
-  @@index([companyId])
   @@map("item_groups")
 }
 
@@ -580,7 +574,6 @@ model Brand {
   products Product[]
 
   @@unique([companyId, name])
-  @@index([companyId])
   @@map("brands")
 }
 
@@ -595,7 +588,6 @@ model UnitMaster {
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, name])
-  @@index([companyId])
   @@map("unit_masters")
 }
 
@@ -645,7 +637,6 @@ model Product {
 
   @@unique([companyId, itemCode])
   @@index([companyId, deletedAt])
-  @@index([companyId, status])
   @@index([companyId, status, deletedAt])
   @@index([companyId, kind])
   @@index([companyId, categoryId, status])
@@ -872,9 +863,9 @@ model InventoryStock {
   product Product @relation(fields: [productId], references: [id])
 
   @@unique([branchId, productId])
-  @@index([companyId])
   @@index([companyId, productId])
   @@index([companyId, branchId])
+  @@index([companyId, branchId, productId])
   @@map("inventory_stocks")
 }
 
@@ -1060,7 +1051,6 @@ model POSTerminal {
   invoices    POSInvoice[]
 
   @@unique([companyId, code])
-  @@index([companyId])
   @@map("pos_terminals")
 }
 
@@ -1089,9 +1079,10 @@ model POSShift {
   user     User         @relation("ShiftUser", fields: [userId], references: [id])
   invoices POSInvoice[]
 
-  @@index([companyId, terminalId])
+  @@index([companyId, terminalId, status])
   @@index([companyId, userId])
   @@index([openedAt])
+  @@index([companyId, createdAt])
   @@map("pos_shifts")
 }
 
@@ -1767,7 +1758,7 @@ model Expense {
   branch    Branch  @relation(fields: [branchId], references: [id])
   createdBy User    @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
 
-  @@index([companyId, date])
+  @@index([companyId, branchId, date])
   @@index([branchId, date])
   @@map("expenses")
 }
@@ -1811,6 +1802,7 @@ model AuditLog {
   user    User    @relation(fields: [userId], references: [id])
 
   @@index([companyId, createdAt])
+  @@index([companyId, entity, createdAt])
   @@map("audit_logs")
 }
 
@@ -1928,7 +1920,7 @@ model Employee {
   payrollPayments PayrollPayment[]
 
   @@unique([companyId, employeeNo])
-  @@index([companyId, status])
+  @@index([companyId, branchId, status])
   @@index([companyId, departmentId])
   @@map("hr_employees")
 }
@@ -1948,7 +1940,7 @@ model EmployeeDocument {
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  @@index([companyId])
+  @@index([companyId, employeeId])
   @@index([employeeId])
   @@map("hr_employee_documents")
 }
@@ -2283,7 +2275,7 @@ model BankTransaction {
   journalEntry        JournalEntry?       @relation(fields: [journalEntryId], references: [id])
   createdBy           User                @relation("BankTransactionCreatedBy", fields: [createdById], references: [id])
 
-  @@index([companyId, bankAccountId])
+  @@index([companyId, bankAccountId, isReconciled, transactionDate])
   @@index([bankAccountId, transactionDate])
   @@index([isReconciled])
   @@index([sourceType, sourceId])

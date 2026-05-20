@@ -18,6 +18,10 @@ Options -Indexes -MultiViews
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
 
+  # Never rewrite hashed frontend assets to index.html. If an asset is missing,
+  # return the real 404 so deployment issues are visible immediately.
+  RewriteRule ^assets(?:/|$) - [L]
+
   # React Router fallback for direct URL visits and refreshes.
   RewriteRule ^ index.html [L]
 </IfModule>

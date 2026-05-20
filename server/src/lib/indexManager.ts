@@ -56,37 +56,24 @@ export async function ensureDatabaseIndexes(options: { throwOnError?: boolean } 
         await safeCreateIndex(db, 'products', 'idx_product_company_deleted_status_name',
             { companyId: 1, deletedAt: 1, status: 1, name: 1 });
 
-        // 5b. Product - name search
+        // 5b. Product - name search (Active items only)
         await safeCreateIndex(db, 'products', 'idx_product_company_name_ci',
-            { companyId: 1, name: 1 }, { collation: { locale: 'en', strength: 2 } });
+            { companyId: 1, name: 1 }, 
+            { collation: { locale: 'en', strength: 2 }, partialFilterExpression: { deletedAt: null } });
 
-        // 5c. Product - itemCode search
+        // 5c. Product - itemCode search (Active items only)
         await safeCreateIndex(db, 'products', 'idx_product_company_itemcode_ci',
-            { companyId: 1, itemCode: 1 }, { collation: { locale: 'en', strength: 2 } });
+            { companyId: 1, itemCode: 1 }, 
+            { collation: { locale: 'en', strength: 2 }, partialFilterExpression: { deletedAt: null } });
 
-        // 5d. Product - barcode search
+        // 5d. Product - barcode search (Active items only)
         await safeCreateIndex(db, 'products', 'idx_product_company_barcodes_ci',
-            { companyId: 1, barcodes: 1 }, { collation: { locale: 'en', strength: 2 } });
+            { companyId: 1, barcodes: 1 }, 
+            { collation: { locale: 'en', strength: 2 }, partialFilterExpression: { deletedAt: null } });
 
-        // 5. AuditLog - Module usage analysis
-        await safeCreateIndex(db, 'audit_logs', 'idx_auditlog_company_entity_createdat',
-            { companyId: 1, entity: 1, createdAt: 1 });
-
-        // 6. InventoryStock - Stock lookups
-        await safeCreateIndex(db, 'inventory_stocks', 'idx_inventorystock_company_branch_product',
-            { companyId: 1, branchId: 1, productId: 1 });
-
-        // 7. Attendance - Daily attendance check
-        await safeCreateIndex(db, 'hr_attendance', 'idx_attendance_company_employee_date',
-            { companyId: 1, employeeId: 1, date: 1 });
-
-        // 8. POSShift - Active shift lookup
-        await safeCreateIndex(db, 'pos_shifts', 'idx_posshift_company_terminal_status',
-            { companyId: 1, terminalId: 1, status: 1 });
-
-        // 9. BankTransaction - Reconciliation queries
-        await safeCreateIndex(db, 'bank_transactions', 'idx_banktransaction_company_account_reconciled_date',
-            { companyId: 1, bankAccountId: 1, isReconciled: 1, transactionDate: 1 });
+        // 5e. AuditLog - TTL index for 180 days auto-expiration
+        await safeCreateIndex(db, 'audit_logs', 'idx_auditlog_ttl_180d',
+            { createdAt: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 });
 
         // ═══════════════════════════════════════════════════════════
         // DASHBOARD & ANALYTICS INDEXES (Time series and aggregations)
@@ -101,10 +88,6 @@ export async function ensureDatabaseIndexes(options: { throwOnError?: boolean } 
         // POS Invoices - Dashboard time range aggregations and sort
         await safeCreateIndex(db, 'pos_invoices', 'idx_pos_invoice_company_createdat_status',
             { companyId: 1, createdAt: -1, status: 1 });
-
-        // POS Shifts - Dashboard time range aggregations
-        await safeCreateIndex(db, 'pos_shifts', 'idx_posshift_company_createdat',
-            { companyId: 1, createdAt: -1 });
 
         // Inventory Stocks - Dashboard low stock alerts
         await safeCreateIndex(db, 'inventory_stocks', 'idx_inventorystock_company_qtyonhand',
@@ -140,10 +123,6 @@ export async function ensureDatabaseIndexes(options: { throwOnError?: boolean } 
         await safeCreateIndex(db, 'suppliers', 'idx_supplier_company_deleted_name',
             { companyId: 1, deletedAt: 1, name: 1 });
 
-        // 14. Employee - Branch-level listing
-        await safeCreateIndex(db, 'hr_employees', 'idx_employee_company_branch_status',
-            { companyId: 1, branchId: 1, status: 1 });
-
         // 15. JournalEntryLine - Journal lookups
         await safeCreateIndex(db, 'journal_entry_lines', 'idx_journalentryline_journal',
             { journalEntryId: 1 });
@@ -151,14 +130,6 @@ export async function ensureDatabaseIndexes(options: { throwOnError?: boolean } 
         // 16. GlobalString - Policy lookups
         await safeCreateIndex(db, 'global_strings', 'idx_globalstring_company_group_systemkey',
             { companyId: 1, group: 1, systemKey: 1 });
-
-        // 17. Expense - Branch-filtered reports
-        await safeCreateIndex(db, 'expenses', 'idx_expense_company_branch_date',
-            { companyId: 1, branchId: 1, date: 1 });
-
-        // 18. EmployeeDocument - Employee documents
-        await safeCreateIndex(db, 'hr_employee_documents', 'idx_employeedocument_company_employee',
-            { companyId: 1, employeeId: 1 });
 
         // 19. PurchaseInvoice - Branch listing
         await safeCreateIndex(db, 'purchase_invoices', 'idx_purchaseinvoice_company_branch_createdat',
@@ -183,6 +154,22 @@ export async function ensureDatabaseIndexes(options: { throwOnError?: boolean } 
         // 24. BankReconciliation - Status listing
         await safeCreateIndex(db, 'bank_reconciliations', 'idx_bankreconciliation_company_status_createdat',
             { companyId: 1, status: 1, createdAt: 1 });
+
+        // ═══════════════════════════════════════════════════════════
+        // FULL-TEXT SEARCH INDEXES (MongoDB Native Text Search)
+        // ═══════════════════════════════════════════════════════════
+
+        logger.info('Creating FULL-TEXT SEARCH indexes...');
+
+        // Product text search index
+        await safeCreateIndex(db, 'products', 'idx_product_text_search',
+            { name: 'text', itemCode: 'text', barcodes: 'text' },
+            { weights: { name: 10, itemCode: 5, barcodes: 2 } });
+
+        // Customer text search index
+        await safeCreateIndex(db, 'customers', 'idx_customer_text_search',
+            { name: 'text', customerCode: 'text', phone: 'text', email: 'text' },
+            { weights: { name: 10, customerCode: 5, phone: 3, email: 2 } });
 
         // ═══════════════════════════════════════════════════════════
         // EXISTING INDEXES (Already in schema, ensure they exist)
@@ -319,7 +306,7 @@ async function safeCreateIndex(
     db: Db,
     collectionName: string,
     indexName: string,
-    keys: Record<string, 1 | -1>,
+    keys: Record<string, any>,
     options: Record<string, any> = {}
 ) {
     try {
