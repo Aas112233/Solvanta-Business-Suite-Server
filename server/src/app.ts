@@ -122,7 +122,19 @@ app.get('/', (_req, res) => {
     });
 });
 
-app.get('/health', async (_req, res) => {
+// Lightweight health check - no database query for fast response
+app.get('/health', (_req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        version: process.env.npm_package_version || '1.0.0',
+        region: process.env.VERCEL_REGION || 'unknown',
+    });
+});
+
+// Detailed health check with database status (optional, use /health/detailed)
+app.get('/health/detailed', async (_req, res) => {
     const startTime = Date.now();
     const healthStatus: {
         status: 'ok' | 'degraded' | 'unhealthy';
@@ -146,12 +158,9 @@ app.get('/health', async (_req, res) => {
         await basePrisma.$runCommandRaw({ ping: 1 });
         healthStatus.database.status = 'connected';
         healthStatus.database.responseTime = Date.now() - startTime;
-        logger.info(`Health check: OK (db=${healthStatus.database.status}, responseTime=${healthStatus.database.responseTime}ms)`);
     } catch (error: any) {
         healthStatus.database.status = 'disconnected';
         healthStatus.status = 'degraded';
-        const errorMessage = error?.message || error?.toString() || 'Unknown error';
-        logger.warn(`Health check: DEGRADED (db=${healthStatus.database.status}, error=${errorMessage})`);
     }
 
     const httpStatus = healthStatus.status === 'unhealthy' ? 503 : 200;

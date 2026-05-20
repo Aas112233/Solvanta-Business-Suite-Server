@@ -1,11 +1,87 @@
+# Solvanta Business Suite - Apache Configuration
+# Optimized for production deployment with performance and security
+
+# Enable directory index and disable directory listing
 DirectoryIndex index.html
 Options -Indexes -MultiViews
 
+# ============================================
+# COMPRESSION - Gzip/Brotli
+# ============================================
+<IfModule mod_deflate.c>
+    # Compress text, HTML, JavaScript, CSS, XML, JSON, SVG
+    AddOutputFilterByType DEFLATE text/html
+    AddOutputFilterByType DEFLATE text/css
+    AddOutputFilterByType DEFLATE text/plain
+    AddOutputFilterByType DEFLATE text/xml
+    AddOutputFilterByType DEFLATE text/javascript
+    AddOutputFilterByType DEFLATE application/javascript
+    AddOutputFilterByType DEFLATE application/x-javascript
+    AddOutputFilterByType DEFLATE application/json
+    AddOutputFilterByType DEFLATE application/xml
+    AddOutputFilterByType DEFLATE application/rss+xml
+    AddOutputFilterByType DEFLATE image/svg+xml
+    AddOutputFilterByType DEFLATE font/ttf
+    AddOutputFilterByType DEFLATE font/otf
+    AddOutputFilterByType DEFLATE font/woff
+    AddOutputFilterByType DEFLATE font/woff2
+    
+    # Don't compress already compressed files
+    SetEnvIfNoCase Request_URI \.(?:gif|jpe?g|png|ico|webp|woff2?)$ no-gzip dont-vary
+</IfModule>
+
+# ============================================
+# BROWSER CACHING
+# ============================================
+<IfModule mod_expires.c>
+    ExpiresActive On
+    
+    # Default expiration
+    ExpiresDefault "access plus 1 month"
+    
+    # HTML documents - no cache
+    ExpiresByType text/html "access plus 0 seconds"
+    
+    # Data files
+    ExpiresByType application/json "access plus 0 seconds"
+    ExpiresByType application/xml "access plus 0 seconds"
+    ExpiresByType text/xml "access plus 0 seconds"
+    
+    # Favicon
+    ExpiresByType image/x-icon "access plus 1 week"
+    ExpiresByType image/vnd.microsoft.icon "access plus 1 week"
+    
+    # Images
+    ExpiresByType image/gif "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
+    ExpiresByType image/jpg "access plus 1 year"
+    ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType image/webp "access plus 1 year"
+    ExpiresByType image/svg+xml "access plus 1 year"
+    
+    # CSS and JavaScript
+    ExpiresByType text/css "access plus 1 year"
+    ExpiresByType application/javascript "access plus 1 year"
+    ExpiresByType application/x-javascript "access plus 1 year"
+    
+    # Fonts
+    ExpiresByType font/ttf "access plus 1 year"
+    ExpiresByType font/otf "access plus 1 year"
+    ExpiresByType font/woff "access plus 1 year"
+    ExpiresByType font/woff2 "access plus 1 year"
+    ExpiresByType application/font-woff "access plus 1 year"
+    ExpiresByType application/font-woff2 "access plus 1 year"
+    ExpiresByType application/vnd.ms-fontobject "access plus 1 year"
+</IfModule>
+
+# ============================================
+# URL REWRITING (React Router Support)
+# ============================================
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
 
-  # Block direct access to sensitive files and folders if they are uploaded by mistake.
+  # Block direct access to sensitive files and folders
   RewriteRule "(^|/)\.(?!well-known/)" - [F,L]
   RewriteRule "(^|/)(?:src|scripts|node_modules|config|tests?)(/|$)" - [F,L,NC]
   RewriteRule "(^|/)(?:package|package-lock|tsconfig|vite\.config|vercel)(?:\.[^/]+)?$" - [F,L,NC]
@@ -13,33 +89,83 @@ Options -Indexes -MultiViews
   RewriteRule "(^|/).+\.(?:log|md|markdown|ya?ml|toml|ini|sql|bak|old|orig|dist-info)$" - [F,L,NC]
   RewriteRule "(^|/).+\.(?:map)$" - [F,L,NC]
 
-  # Serve existing files and directories directly.
+  # Serve existing files and directories directly
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
 
-  # Never rewrite hashed frontend assets to index.html. If an asset is missing,
-  # return the real 404 so deployment issues are visible immediately.
+  # Never rewrite hashed frontend assets to index.html
   RewriteRule ^assets(?:/|$) - [L]
 
-  # React Router fallback for direct URL visits and refreshes.
+  # React Router fallback for SPA routing
   RewriteRule ^ index.html [L]
 </IfModule>
 
+# ============================================
+# SECURITY HEADERS
+# ============================================
 <IfModule mod_headers.c>
-  Header always unset X-Powered-By
+    # Remove server signature
+    Header always unset X-Powered-By
+    ServerTokens Prod
+    ServerSignature Off
 
-  <FilesMatch "\.(html)$">
-    Header set Cache-Control "no-cache, no-store, must-revalidate"
-    Header set Pragma "no-cache"
-    Header set Expires "0"
-  </FilesMatch>
+    # Security headers
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    
+    # Content Security Policy (adjust as needed)
+    # Note: blob: added for Chrome extensions compatibility
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://solvanta-business-suite-server.vercel.app;"
 
-  <FilesMatch "\.(css|js|mjs|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2)$">
-    Header set Cache-Control "public, max-age=31536000, immutable"
-  </FilesMatch>
+    # Cache-Control headers
+    <FilesMatch "\.(html)$">
+        Header set Cache-Control "no-cache, no-store, must-revalidate"
+        Header set Pragma "no-cache"
+        Header set Expires "0"
+    </FilesMatch>
 
-  Header always set X-Content-Type-Options "nosniff"
-  Header always set Referrer-Policy "strict-origin-when-cross-origin"
-  Header always set X-Frame-Options "SAMEORIGIN"
+    <FilesMatch "\.(css|js|mjs)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+
+    <FilesMatch "\.(png|jpg|jpeg|gif|svg|ico|webp)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+
+    <FilesMatch "\.(woff|woff2|ttf|otf)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+        Header set Access-Control-Allow-Origin "*"
+    </FilesMatch>
 </IfModule>
+
+# ============================================
+# MIME TYPES
+# ============================================
+<IfModule mod_mime.c>
+    AddType application/javascript js mjs
+    AddType text/css css
+    AddType image/webp webp
+    AddType font/woff woff
+    AddType font/woff2 woff2
+    AddType application/json json
+    AddType application/manifest+json webmanifest
+</IfModule>
+
+# ============================================
+# PERFORMANCE
+# ============================================
+<IfModule mod_filter.c>
+    # Enable ETag for caching validation
+    FileETag MTime Size
+</IfModule>
+
+# Prevent hotlinking (optional - uncomment if needed)
+# <IfModule mod_rewrite.c>
+#     RewriteCond %{HTTP_REFERER} !^$
+#     RewriteCond %{HTTP_REFERER} !^https?://(www\.)?yourdomain\.com [NC]
+#     RewriteRule \.(jpg|jpeg|png|gif|webp)$ - [F,NC,L]
+# </IfModule>

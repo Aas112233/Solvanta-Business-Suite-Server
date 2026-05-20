@@ -10,7 +10,7 @@
   <title>Solvanta Business Suite</title>
   
   <!-- Preconnect to API server for faster initial requests -->
-  <link rel="preconnect" href="https://solvanta-business-suite-server.vercel.app" />
+  <link rel="preconnect" href="https://solvanta-business-suite-server.vercel.app" crossorigin />
   
   <!-- Preload critical fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -18,6 +18,10 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Montserrat:wght@400;500;600;700;800&display=swap"
     rel="stylesheet" />
+  
+  <!-- DNS prefetch for external resources -->
+  <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+  <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
 </head>
 
 <body class="font-sans antialiased bg-slate-50">
