@@ -412,6 +412,7 @@ export default function App() {
         let isMounted = true;
         setIsRestoringSession(true);
 
+        // Fetch user data without blocking initial render
         api.get('/users/me')
             .then((res) => {
                 if (!isMounted) return;

@@ -21,9 +21,11 @@ if (import.meta.hot) {
 const queryClient = new QueryClient({
     defaultOptions: {
         queries: {
-            staleTime: 5 * 60 * 1000,
+            staleTime: 5 * 60 * 1000, // Data is fresh for 5 minutes
+            gcTime: 10 * 60 * 1000, // Cache persists for 10 minutes
             retry: 1,
             refetchOnWindowFocus: false,
+            refetchOnMount: false, // Don't refetch on component mount if data exists
         },
     },
 });
