@@ -6,6 +6,23 @@ const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 
 import { tenantStorage } from './tenantContext.js';
 
+// Production-optimized Prisma configuration
+const isProduction = env.NODE_ENV === 'production';
+const isVercel = !!process.env.VERCEL;
+
+// Optimize MongoDB connection pool for serverless
+// Vercel: max 5 connections (limited memory)
+// Other production: max 10 connections
+const getDatabaseUrl = () => {
+    const base = env.DATABASE_URL;
+    if (!isProduction) return base;
+    
+    // Add connection pool parameters for production
+    const separator = base.includes('?') ? '&' : '?';
+    const poolSize = isVercel ? 5 : 10;
+    return `${base}${separator}maxPoolSize=${poolSize}&minPoolSize=1`;
+};
+
 export const basePrisma =
     globalForPrisma.prisma ??
     new PrismaClient({
@@ -227,6 +244,13 @@ if (env.NODE_ENV === 'development') {
         if (e.duration > 100) {
             logger.warn(`Slow query (${e.duration}ms): ${e.query}`);
         }
+    });
+}
+
+// Graceful shutdown for production
+if (isProduction) {
+    process.on('beforeExit', async () => {
+        await basePrisma.$disconnect();
     });
 }
 
