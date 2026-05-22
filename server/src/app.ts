@@ -33,8 +33,8 @@ function lazyRouter(importer: () => Promise<Router>): RequestHandler {
 
 function parseCorsOrigins(raw: string) {
     return raw
-        .split(',')
-        .map((origin) => origin.trim())
+        .split(/[\s,]+/) // Split by commas, newlines, or spaces
+        .map((origin) => origin.trim().replace(/\/$/, '')) // Trim whitespace and strip trailing slashes
         .filter(Boolean);
 }
 
