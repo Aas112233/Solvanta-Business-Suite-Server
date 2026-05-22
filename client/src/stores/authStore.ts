@@ -175,7 +175,8 @@ export const useAuthStore = create<AuthState>()(
 
             // Branch context is controlled by user assignment only (no manual switching).
             setActiveBranch: () => {
-                const assignedBranchId = get().user?.branches?.[0]?.id || null;
+                const user = get().user;
+                const assignedBranchId = user?.branches?.[0]?.id || null;
                 set({ activeBranchId: assignedBranchId });
             },
             setAuthenticated: (isAuthenticated) => set({ isAuthenticated }),
@@ -220,7 +221,7 @@ export const useAuthStore = create<AuthState>()(
                     return user.enabledModules[moduleKey] !== false;
                 }
 
-                // Fallback: if no enabledModules from backend, check if user has ANY permission 
+                // Fallback: if no enabledModules from backend, check if user has ANY permission
                 // related to this module. This ensures users without module permissions don't see it.
                 const perms = user?.role?.permissions || [];
                 if (perms.includes('*')) return true;
@@ -256,18 +257,16 @@ export const useAuthStore = create<AuthState>()(
         }),
         {
             name: 'erp-auth',
-            onRehydrateStorage: (initialState) => (state, error) => {
-                const currentState = state || initialState;
-                if (!currentState) return;
-
-                if (error) {
-                    currentState.setAuthenticated(false);
-                    currentState.setHydrated(true);
+            onRehydrateStorage: () => (state, error) => {
+                if (error || !state) {
                     return;
                 }
-                currentState.setAuthenticated(Boolean(currentState.token));
-                currentState.setActiveBranch();
-                currentState.setHydrated(true);
+                // Set hydrated state
+                state.setHydrated(true);
+                // Only set authenticated if we have a token
+                if (state.token) {
+                    state.setAuthenticated(true);
+                }
             },
             partialize: (state) => ({
                 token: state.token,

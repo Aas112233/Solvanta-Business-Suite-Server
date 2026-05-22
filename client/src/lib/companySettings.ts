@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useAuthStore } from '../stores/authStore';
 
 export interface CompanyRegionalSettings {
@@ -210,9 +211,12 @@ export function useCompanyCurrency() {
 }
 
 export function useCompanyRegionalSettings() {
-    return useAuthStore((state) => resolveCompanyRegionalSettings(state.user?.company));
+    const company = useAuthStore((state) => state.user?.company);
+    return useMemo(() => resolveCompanyRegionalSettings(company), [company]);
 }
 
 export function useCompanyDocumentSettings() {
-    return useAuthStore((state) => resolveCompanyDocumentSettings(state.user?.company));
+    const company = useAuthStore((state) => state.user?.company);
+    return useMemo(() => resolveCompanyDocumentSettings(company), [company]);
 }
+

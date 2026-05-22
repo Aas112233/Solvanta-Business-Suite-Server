@@ -255,6 +255,7 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
         enabled: !!selectedProduct && showAllBranchesStock,
     });
 
+
     const totalBaseStock = calculateTotalBaseQty(Array.isArray(stockRecords) ? stockRecords : []);
     const currentStock = (() => {
         const u = selectedProduct?.units?.find((u: any) => u.unitCode === formData.unitCode);
@@ -276,7 +277,7 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
     const handleAdd = (keepOpen: boolean) => {
         if (!selectedProduct || formData.qty < 0) return;
 
-        if ((mode === 'TRANSFER' || mode === 'SALE') && branchId && formData.qty > currentStock) {
+        if (mode === 'TRANSFER' && branchId && formData.qty > currentStock) {
             setError(`Insufficient stock. Available: ${currentStock}`);
             return;
         }

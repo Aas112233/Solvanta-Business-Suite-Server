@@ -54,10 +54,16 @@ export default function Modal({
         'full': 'max-w-full m-4'
     };
 
+    const handleBackdropClick = () => {
+        if (closeOnOutsideClick) {
+            onClose();
+        }
+    };
+
     return (
         <div
             className="fixed inset-0 z-[999] flex items-center justify-center p-4 sm:p-6 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"
-            onClick={closeOnOutsideClick ? onClose : undefined}
+            onClick={handleBackdropClick}
             aria-modal="true"
             role="dialog"
         >

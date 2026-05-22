@@ -225,6 +225,7 @@ const navItems: NavItem[] = [
             { to: '/accounting/coa', label: 'Accounting Chart of Accounts', category: 'Setup', permission: 'accounting.view' },
             { to: '/accounting/mappings', label: 'Accounting Mappings', category: 'Setup', permission: 'accounting.view' },
             { to: '/accounting/journals', label: 'Accounting General Journal', category: 'Ledger', permission: 'accounting.view' },
+            { to: '/accounting/fixed-assets', label: 'Fixed Assets Register', category: 'Ledger', permission: 'accounting.view' },
             { to: '/accounting/reports/general-ledger', label: 'General Ledger', category: 'Reports', permission: 'accounting.view' },
             { to: '/accounting/reports/trial-balance', label: 'Trial Balance', category: 'Reports', permission: 'accounting.view' },
             { to: '/accounting/reports/pl', label: 'Profit & Loss', category: 'Reports', permission: 'accounting.view' },
@@ -411,7 +412,7 @@ export default function Layout() {
 
     const canAccessSuperAdmin = useAuthStore((s) => Boolean(s.user?.isSuperAdmin));
     const hasSuperAdminPermission = useAuthStore((s) => s.hasSuperAdminPermission);
-    const isImpersonating = useAuthStore((s) => s.isImpersonating());
+    const isImpersonating = useAuthStore((s) => Boolean(s.user?.impersonation?.isActive));
 
     const handleExitImpersonation = async () => {
         try {

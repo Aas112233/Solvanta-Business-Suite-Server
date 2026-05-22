@@ -27,6 +27,13 @@ import {
     Legend,
     Pie,
     PieChart,
+    PolarAngleAxis,
+    PolarGrid,
+    PolarRadiusAxis,
+    Radar,
+    RadarChart,
+    RadialBar,
+    RadialBarChart,
     ResponsiveContainer,
     Tooltip,
     XAxis,
@@ -402,6 +409,42 @@ export default function Dashboard() {
         inventoryMode === 'value' ? dashboard.inventory.topByValue : dashboard.inventory.topByQty;
     const inventoryBarDataKey = inventoryMode === 'value' ? 'value' : 'qty';
     const inventoryBarName = inventoryMode === 'value' ? 'Value' : 'Units';
+
+    const radarData = useMemo(() => {
+        if (!dashboard?.inventory?.categoryValuation) return [];
+        return dashboard.inventory.categoryValuation.slice(0, 6).map((item) => ({
+            subject: item.name,
+            value: item.value,
+        }));
+    }, [dashboard]);
+
+    const radialData = useMemo(() => {
+        const netSales = dashboard.finance.netSales || 0;
+        const totalPurchases = dashboard.finance.totalPurchases || 0;
+        const totalExpenses = dashboard.expenseCategories.reduce((sum, item) => sum + item.value, 0);
+        
+        const grossMargin = netSales > 0 ? Math.max(0, Math.min(100, ((netSales - totalPurchases) / netSales) * 100)) : 0;
+        const customerRetention = dashboard.insights.returningCustomerRate || 0;
+        const netMargin = netSales > 0 ? Math.max(0, Math.min(100, ((netSales - totalPurchases - totalExpenses) / netSales) * 100)) : 0;
+        
+        return [
+            {
+                name: 'Gross Margin',
+                value: grossMargin,
+                fill: '#0f766e',
+            },
+            {
+                name: 'Customer Retention',
+                value: customerRetention,
+                fill: '#1d4ed8',
+            },
+            {
+                name: 'Net Margin',
+                value: netMargin,
+                fill: '#7c3aed',
+            },
+        ];
+    }, [dashboard]);
 
     const statCards: StatCard[] = useMemo(
         () => [
@@ -803,7 +846,7 @@ export default function Dashboard() {
                                 </button>
                             </div>
                         </div>
-                        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+                        <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
                             <div className="h-[260px] w-full">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={inventoryBars} margin={{ top: 0, right: 0, left: -10, bottom: 0 }} layout="vertical">
@@ -854,6 +897,43 @@ export default function Dashboard() {
                                         </Bar>
                                     </BarChart>
                                 </ResponsiveContainer>
+                            </div>
+                            <div>
+                                <h4 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
+                                    Valuation Balance
+                                </h4>
+                                {radarData.length > 0 ? (
+                                    <div className="h-[260px] w-full">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
+                                                <PolarGrid stroke="var(--color-border)" opacity={0.4} />
+                                                <PolarAngleAxis
+                                                    dataKey="subject"
+                                                    tick={{
+                                                        fill: 'var(--color-text-secondary)',
+                                                        fontSize: 10,
+                                                        fontWeight: 500,
+                                                    }}
+                                                    tickFormatter={(val) => truncateLabel(val, 12)}
+                                                />
+                                                <Radar
+                                                    name="Valuation"
+                                                    dataKey="value"
+                                                    stroke="#0284c7"
+                                                    fill="#0284c7"
+                                                    fillOpacity={0.25}
+                                                />
+                                                <Tooltip
+                                                    content={
+                                                        <DashboardTooltip formatter={formatMoney} />
+                                                    }
+                                                />
+                                            </RadarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                ) : (
+                                    <EmptyState message="No category data" className="h-[260px]" />
+                                )}
                             </div>
                             <div>
                                 <h4 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
@@ -923,6 +1003,50 @@ export default function Dashboard() {
                                     {formatMoney(Math.abs(dashboard.finance.netVAT))}
                                 </div>
                             </div>
+                        </div>
+                    </DashboardPanel>
+                    <DashboardPanel>
+                        <div className="mb-4">
+                            <h3 className="text-lg font-bold text-slate-900 dark:text-white">Efficiency Matrix</h3>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">
+                                Key performance indicators
+                            </p>
+                        </div>
+                        <div className="flex h-[240px] items-center justify-center">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <RadialBarChart
+                                    cx="50%"
+                                    cy="50%"
+                                    innerRadius="30%"
+                                    outerRadius="90%"
+                                    barSize={12}
+                                    data={radialData}
+                                    startAngle={90}
+                                    endAngle={-270}
+                                >
+                                    <RadialBar
+                                        background={{ fill: 'var(--color-bg-subtle)', opacity: 0.15 }}
+                                        dataKey="value"
+                                        cornerRadius={6}
+                                    />
+                                    <Tooltip
+                                        content={<DashboardTooltip formatter={(val) => `${Number(val).toFixed(1)}%`} />}
+                                    />
+                                </RadialBarChart>
+                            </ResponsiveContainer>
+                        </div>
+                        <div className="mt-4 space-y-2">
+                            {radialData.map((item) => (
+                                <div key={item.name} className="flex items-center justify-between text-xs">
+                                    <div className="flex items-center gap-2">
+                                        <div className="h-3 w-3 rounded-full" style={{ backgroundColor: item.fill }} />
+                                        <span className="text-slate-600 dark:text-slate-400 font-medium">{item.name}</span>
+                                    </div>
+                                    <span className="font-bold text-slate-900 dark:text-white">
+                                        {item.value.toFixed(1)}%
+                                    </span>
+                                </div>
+                            ))}
                         </div>
                     </DashboardPanel>
                 </div>

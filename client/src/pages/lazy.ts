@@ -7,6 +7,7 @@ export const Dashboard = lazy(() => import('./Dashboard'));
 export const Customers = lazy(() => import('./Customers'));
 export const CustomerForm = lazy(() => import('./customers/CustomerForm'));
 export const CustomerLedger = lazy(() => import('./customers/CustomerLedger'));
+export const ArchivedCustomers = lazy(() => import('./customers/ArchivedCustomers'));
 export const CreditLimitsTerms = lazy(() => import('./customers/CreditLimitsTerms'));
 export const Suppliers = lazy(() => import('./Suppliers'));
 export const ItemsList = lazy(() => import('./items/ItemsList'));
@@ -131,5 +132,9 @@ export const BankReconciliation = lazy(() => import('./bank/BankReconciliation')
 // Aging Module
 export const ARAging = lazy(() => import('./aging/ARAging'));
 export const APAging = lazy(() => import('./aging/APAging'));
+
+// Fixed Assets Module
+export const FixedAssetsList = lazy(() => import('./accounting/fixed-assets/FixedAssetsList'));
+export const FixedAssetDetail = lazy(() => import('./accounting/fixed-assets/FixedAssetDetail'));
 
 // Setup Wizard

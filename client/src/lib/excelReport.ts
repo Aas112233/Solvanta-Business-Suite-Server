@@ -1,4 +1,5 @@
-import ExcelJS from 'exceljs';
+// Lazy-loaded ExcelJS - only imported when export is triggered
+// This saves 931 KB from initial bundle load
 
 type CellType = 'text' | 'number' | 'currency' | 'date' | 'datetime';
 
@@ -37,7 +38,10 @@ const COLORS = {
 };
 
 export async function downloadExcelReport(options: ExcelReportOptions): Promise<void> {
-    const workbook = new ExcelJS.Workbook();
+    // Dynamic import - loads exceljs (931 KB) only when this function is called
+    const ExcelJS = await import('exceljs');
+    
+    const workbook = new ExcelJS.default.Workbook();
     workbook.creator = options.creatorName || 'SOLVANTA ERP';
     workbook.lastModifiedBy = options.creatorName || 'SOLVANTA ERP';
     workbook.created = new Date();

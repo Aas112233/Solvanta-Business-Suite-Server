@@ -5,6 +5,7 @@ import api, { refreshSessionTokens } from './lib/api';
 import Layout from './components/Layout';
 import {
     AccountMappings,
+    ArchivedCustomers,
     BalanceSheet,
     Brands,
     CashInvoices,
@@ -130,6 +131,8 @@ import {
     BankReconciliation,
     ARAging,
     APAging,
+    FixedAssetsList,
+    FixedAssetDetail,
 } from './pages/lazy';
 import SetupWizard from './pages/SetupWizard';
 import ModulePlaceholder from './pages/placeholders/ModulePlaceholder';
@@ -285,6 +288,7 @@ function DynamicTitle() {
         else if (path.startsWith('/items/price-channels')) suffix = 'Price Channels';
         else if (path.startsWith('/items')) suffix = 'Items';
         else if (path.startsWith('/customers/new')) suffix = 'Create Customer';
+        else if (path.startsWith('/customers/archived')) suffix = 'Archived Customers';
         else if (path.startsWith('/customers/ledger')) suffix = 'Customer Ledger';
         else if (path.startsWith('/customers/credit-terms')) suffix = 'Credit Terms';
         else if (path.startsWith('/customers')) suffix = 'Customers';
@@ -505,6 +509,7 @@ export default function App() {
                         <Route path="customers" element={<PermissionRoute permission="crm.view" moduleKey="crm" title="Customer List"><Customers /></PermissionRoute>} />
                         <Route path="customers/new" element={<PermissionRoute permission="crm.create" moduleKey="crm" title="Create Customer"><CustomerForm /></PermissionRoute>} />
                         <Route path="customers/:id" element={<PermissionRoute permission="crm.view" moduleKey="crm" title="Customer Profile"><CustomerForm /></PermissionRoute>} />
+                        <Route path="customers/archived" element={<PermissionRoute permission="crm.view" moduleKey="crm" title="Archived Customers"><ArchivedCustomers /></PermissionRoute>} />
                         <Route path="suppliers" element={<PermissionRoute permission="supplier.view" moduleKey="suppliers" title="Supplier List"><Suppliers /></PermissionRoute>} />
                         <Route path="suppliers/ledger" element={<PermissionRoute permission="supplier.view" moduleKey="suppliers" title="Supplier Ledger"><SupplierLedger /></PermissionRoute>} />
                         <Route path="suppliers/:id" element={<PermissionRoute permission="supplier.view" moduleKey="suppliers" title="Supplier Profile"><Suppliers /></PermissionRoute>} />
@@ -561,6 +566,8 @@ export default function App() {
                         <Route path="accounting/reports/trial-balance" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Trial Balance"><TrialBalance /></PermissionRoute>} />
                         <Route path="accounting/reports/pl" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Profit & Loss"><ProfitAndLoss /></PermissionRoute>} />
                         <Route path="accounting/reports/balance-sheet" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Balance Sheet"><BalanceSheet /></PermissionRoute>} />
+                        <Route path="accounting/fixed-assets" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Fixed Assets Register"><FixedAssetsList /></PermissionRoute>} />
+                        <Route path="accounting/fixed-assets/:id" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Fixed Asset Details"><FixedAssetDetail /></PermissionRoute>} />
 
                         {/* Banking */}
                         <Route path="bank" element={<Navigate to="/bank/accounts" replace />} />

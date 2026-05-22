@@ -194,6 +194,7 @@ v1.use('/sales', lazyRouter(() => import('./modules/sales/sales.routes.js').then
 v1.use('/pos-terminals', lazyRouter(() => import('./modules/pos-terminal/pos-terminal.routes.js').then((m) => m.posTerminalRoutes)));
 v1.use('/super-admin', lazyRouter(() => import('./modules/super-admin/super-admin.routes.js').then((m) => m.superAdminRoutes)));
 v1.use('/accounting', lazyRouter(() => import('./modules/accounting/accounting.routes.js').then((m) => m.accountingRoutes)));
+v1.use('/fixed-assets', lazyRouter(() => import('./modules/fixed-assets/fixed-assets.routes.js').then((m) => m.fixedAssetRoutes)));
 v1.use('/taxes', lazyRouter(() => import('./modules/tax/tax.routes.js').then((m) => m.taxRoutes)));
 v1.use('/unit-management', lazyRouter(() => import('./modules/unit-management/unit-management.routes.js').then((m) => m.unitManagementRoutes)));
 v1.use('/hr', lazyRouter(() => import('./modules/hr/hr.routes.js').then((m) => m.hrRoutes)));

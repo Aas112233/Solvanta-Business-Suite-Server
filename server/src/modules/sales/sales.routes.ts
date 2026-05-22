@@ -1764,7 +1764,7 @@ salesRoutes.get('/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), 
                 skip,
                 take,
                 include: {
-                    customer: { select: { id: true, name: true, phone: true } },
+                    customer: { select: { id: true, name: true, phone: true, creditBalance: true, savingBalance: true } },
                     loyaltyCustomer: { select: { id: true, name: true, phone: true } },
                     createdBy: { select: { id: true, name: true } },
                 },
@@ -1838,7 +1838,7 @@ salesRoutes.get('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PA
                 grandTotal: true,
                 cashReceived: true,
                 customerId: true,
-                customer: { select: { id: true, name: true, phone: true } },
+                customer: { select: { id: true, name: true, phone: true, creditBalance: true, savingBalance: true } },
             },
         });
         if (!invoice) throw AppError.notFound('Invoice');
@@ -1940,14 +1940,15 @@ salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_P
             const alreadyPaid = Number(invoice.cashReceived || 0);
             const outstanding = Math.max(0, totalAmount - alreadyPaid);
             if (outstanding <= 0) throw AppError.badRequest('Invoice has no outstanding balance');
-            if (Number(amount) > outstanding) {
-                throw AppError.badRequest(`Payment exceeds outstanding balance. Outstanding: ${outstanding.toFixed(2)}`);
-            }
 
             const postedAt = paymentDate ? new Date(paymentDate) : new Date();
             if (Number.isNaN(postedAt.getTime())) throw AppError.badRequest('Invalid payment date');
 
-            const newPaid = alreadyPaid + Number(amount);
+            const paymentAmount = Number(amount);
+            const excessAmount = Math.max(0, paymentAmount - outstanding);
+            const appliedAmount = Math.min(paymentAmount, outstanding);
+
+            const newPaid = alreadyPaid + appliedAmount;
             const newOutstanding = Math.max(0, totalAmount - newPaid);
             const newStatus = newOutstanding <= 0.000001 ? 'PAID' : 'PARTIAL';
 
@@ -1959,13 +1960,23 @@ salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_P
                 },
             });
 
+            if (excessAmount > 0) {
+                await (tx as any).customer.update({
+                    where: { id: String(invoice.customerId) },
+                    data: {
+                        creditBalance: { increment: excessAmount },
+                        savingBalance: { increment: excessAmount },
+                    },
+                });
+            }
+
             const journalEntry = await CoreAccountingService.recordSalesPayment(tx as any, {
                 companyId,
                 branchId: invoice.branchId,
                 invoiceId: invoice.id,
                 invoiceNo: invoice.invoiceNo,
                 customerId: String(invoice.customerId),
-                amount: Number(amount),
+                amount: paymentAmount,
                 paymentMethod: normalizedPaymentMethod,
                 postedAt,
                 postedById: userId,
@@ -1977,7 +1988,7 @@ salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_P
                 invoiceId: invoice.id,
                 invoiceNo: invoice.invoiceNo,
                 paymentDate: postedAt,
-                amount: Number(amount),
+                amount: paymentAmount,
                 paymentMethod: normalizedPaymentMethod,
                 referenceNo: referenceNo || null,
                 notes: notes || null,
@@ -1985,6 +1996,7 @@ salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_P
                     totalAmount,
                     paidAmount: newPaid,
                     outstandingAmount: newOutstanding,
+                    excessAmount,
                 },
                 status: newStatus,
                 journalEntryNo: journalEntry.entryNo,

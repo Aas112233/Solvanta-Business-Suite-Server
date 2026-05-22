@@ -851,14 +851,18 @@ purchaseRoutes.get('/control/overview', requirePermission(PERMISSIONS.PURCHASE_V
 });
 
 // POST /purchases — TRANSACTIONAL: create invoice + update stock + stock movements + journal entry
-purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), validate({ body: purchaseSchema }), async (req, res, next) => {
+purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), async (req, res, next) => {
     try {
-        const { supplierId, branchId, invoiceNoSupplier, items, notes, paymentMethod } = req.body;
+        // VALIDATE FIRST - before starting any database operations
+        const validatedData = purchaseSchema.parse(req.body);
+        const { supplierId, branchId, invoiceNoSupplier, items, notes, paymentMethod } = validatedData;
+        
         const companyId = req.user!.companyId;
         const userId = req.user!.id;
+        
+        console.log(`[Purchase] Start creation - Branch: ${branchId}, Supplier: ${supplierId}, Items: ${items.length}`);
+        
         await assertBranchAccessible(req, branchId);
-
-        console.log(`[Purchase] Start creation - Branch: ${branchId}, Supplier: ${supplierId}`);
 
         const result = await prisma.$transaction(async (tx) => {            // Generate Purchase No
             const purchaseNo = formatDocNo('PUR', await nextCounter(tx as any, companyId, 'PURCHASE_INVOICE'));
@@ -959,8 +963,18 @@ purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), validat
 
         sendSuccess(res, result, undefined, 201);
     } catch (error) {
-        console.error('[Purchase POST Error]:', error);
-        next(error);
+        // Provide detailed validation errors
+        if (error instanceof z.ZodError) {
+            const issues = error.errors.map(e => ({
+                field: e.path.join('.'),
+                message: e.message,
+            }));
+            console.error('[Purchase] Validation Error:', JSON.stringify(issues, null, 2));
+            next(AppError.badRequest(`Invalid purchase data: ${issues.map(i => i.message).join(', ')}`));
+        } else {
+            console.error('[Purchase POST Error]:', error);
+            next(error);
+        }
     }
 });
 

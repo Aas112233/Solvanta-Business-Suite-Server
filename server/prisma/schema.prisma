@@ -278,6 +278,9 @@ model Company {
   productionOrders     ProductionOrder[]
   productionConsumptions ProductionMaterialConsumption[]
   productionCompletions ProductionCompletion[]
+  customerInteractions CustomerInteraction[]
+  fixedAssets          FixedAsset[]
+  depreciationLogs     DepreciationLog[]
 
   defaultTaxAccountId String?      @db.ObjectId
   shifts              Shift[]
@@ -342,6 +345,7 @@ model Branch {
   bankAccounts         BankAccount[]
   payrollPayments      PayrollPayment[]
   productionOrders     ProductionOrder[]
+  fixedAssets          FixedAsset[]
   productionConsumptions ProductionMaterialConsumption[]
   productionCompletions ProductionCompletion[]
 
@@ -464,6 +468,8 @@ model Customer {
   creditLimit      Float     @default(0)
   allowCreditSales Boolean   @default(true)
   openingBalance   Float     @default(0)
+  creditBalance    Float     @default(0)
+  savingBalance    Float     @default(0)
   priceGroupId     String?   @db.ObjectId
   tags             String[]
   notes            String?
@@ -477,10 +483,35 @@ model Customer {
   salesReturns    SalesReturn[]
   salesQuotations SalesQuotation[]
   salesOrders     SalesOrder[]
+  interactions    CustomerInteraction[]
 
   @@unique([companyId, customerCode])
   @@index([companyId, deletedAt])
   @@map("customers")
+}
+
+model CustomerInteraction {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  companyId      String    @db.ObjectId
+  customerId     String    @db.ObjectId
+  type           String    // CALL, EMAIL, MEETING, NOTE, FOLLOW_UP
+  subject        String?
+  description    String?
+  scheduledAt    DateTime?
+  completedAt    DateTime?
+  status         String    @default("PENDING") // PENDING, COMPLETED, CANCELLED
+  priority       String    @default("NORMAL")  // LOW, NORMAL, HIGH
+  assignedTo     String?   @db.ObjectId // User ID
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  company        Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, customerId])
+  @@index([companyId, type])
+  @@index([companyId, status])
+  @@map("customer_interactions")
 }
 
 model Supplier {
@@ -1670,6 +1701,9 @@ model Account {
   serviceIncomes ServiceMaster[] @relation("ServiceIncomeAccount")
   serviceExpenses ServiceMaster[] @relation("ServiceExpenseAccount")
   bankAccounts BankAccount[]
+  fixedAssetsAsset      FixedAsset[] @relation("AssetAccount")
+  fixedAssetsAccumDep   FixedAsset[] @relation("AccumDepAccount")
+  fixedAssetsDepExp     FixedAsset[] @relation("DepExpAccount")
 
   @@unique([companyId, code])
   @@map("accounts")
@@ -1716,6 +1750,7 @@ model JournalEntry {
   expensePurchase ExpensePurchase?
   bankTransactions BankTransaction[]
   payrollPayments  PayrollPayment[]
+  depreciationLogs DepreciationLog[]
 
   @@unique([companyId, entryNo])
   @@index([companyId, sourceType, sourceId])
@@ -2336,4 +2371,78 @@ model BankStatementImport {
   @@index([companyId, bankAccountId])
   @@index([importDate])
   @@map("bank_statement_imports")
+}
+
+// ══════════════════════════════════════════════════════════════
+// FIXED ASSETS
+// ══════════════════════════════════════════════════════════════
+
+enum FixedAssetStatus {
+  ACTIVE
+  FULLY_DEPRECIATED
+  DISPOSED
+}
+
+enum DepreciationMethod {
+  STRAIGHT_LINE
+  DOUBLE_DECLINING
+}
+
+model FixedAsset {
+  id                       String             @id @default(auto()) @map("_id") @db.ObjectId
+  companyId                String             @db.ObjectId
+  branchId                 String?            @db.ObjectId
+  assetCode                String
+  name                     String
+  description              String?
+  purchaseDate             DateTime
+  purchaseCost             Float
+  salvageValue             Float              @default(0)
+  usefulLifeMonths         Int
+  depreciationMethod       DepreciationMethod @default(STRAIGHT_LINE)
+  
+  assetAccountId           String             @db.ObjectId
+  accumDepAccountId        String             @db.ObjectId
+  depExpAccountId          String             @db.ObjectId
+  
+  status                   FixedAssetStatus   @default(ACTIVE)
+  currentAccumDepreciation Float              @default(0)
+  
+  disposalDate             DateTime?
+  disposalAmount           Float?
+  disposalMemo             String?
+  disposalJournalId        String?            @db.ObjectId
+  
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+
+  company                  Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch                   Branch?            @relation(fields: [branchId], references: [id])
+  assetAccount             Account            @relation("AssetAccount", fields: [assetAccountId], references: [id], onDelete: NoAction)
+  accumDepAccount          Account            @relation("AccumDepAccount", fields: [accumDepAccountId], references: [id], onDelete: NoAction)
+  depExpAccount            Account            @relation("DepExpAccount", fields: [depExpAccountId], references: [id], onDelete: NoAction)
+  
+  depreciationLogs         DepreciationLog[]
+
+  @@unique([companyId, assetCode])
+  @@index([companyId, status])
+  @@map("fixed_assets")
+}
+
+model DepreciationLog {
+  id               String       @id @default(auto()) @map("_id") @db.ObjectId
+  companyId        String       @db.ObjectId
+  fixedAssetId     String       @db.ObjectId
+  depreciationDate DateTime
+  amount           Float
+  journalEntryId   String?      @db.ObjectId
+  
+  createdAt        DateTime     @default(now())
+
+  company          Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fixedAsset       FixedAsset   @relation(fields: [fixedAssetId], references: [id], onDelete: Cascade)
+  journalEntry     JournalEntry? @relation(fields: [journalEntryId], references: [id])
+
+  @@index([companyId, fixedAssetId])
+  @@map("depreciation_logs")
 }

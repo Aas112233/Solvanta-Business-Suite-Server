@@ -64,7 +64,7 @@ export default function ReceiveSalesPayment() {
         [globalPaymentMethods]
     );
 
-    const { data: paymentData } = useQuery({
+    const { data: paymentData, isPending: isPendingPaymentData } = useQuery({
         queryKey: ['sales-invoice-payments-summary', invoiceId],
         queryFn: () => api.get(`/sales/invoices/${invoiceId}/payments`).then((r) => r.data.data),
         enabled: !!invoiceId,
@@ -92,6 +92,10 @@ export default function ReceiveSalesPayment() {
     }, [invoiceId, customerId, openInvoices]);
 
     const outstanding = useMemo(() => Number(paymentData?.totals?.outstandingAmount || 0), [paymentData]);
+    const selectedCustomer = useMemo(() => {
+        if (!customerId) return null;
+        return (customerOptions || []).find((c: any) => String(c.id) === String(customerId));
+    }, [customerId, customerOptions]);
     const selectedInvoiceStatus = String(paymentData?.invoice?.status || '').toUpperCase();
     const cannotPostPayment = selectedInvoiceStatus === 'UNPOSTED' || selectedInvoiceStatus === 'VOID' || selectedInvoiceStatus === 'REFUNDED';
     const blockedReason = selectedInvoiceStatus === 'UNPOSTED'
@@ -132,26 +136,37 @@ export default function ReceiveSalesPayment() {
     }, [paymentData, invoiceId, customerId, amount, outstanding, prefilledInvoiceId]);
 
     useEffect(() => {
-        if (!invoiceId || !Array.isArray(invoiceOptions)) return;
+        if (!invoiceId || !Array.isArray(invoiceOptions) || isPendingPaymentData) return;
         const exists = invoiceOptions.some((inv: any) => String(inv.id) === String(invoiceId));
         if (!exists) {
             setInvoiceId('');
             setAmount('');
             setPrefilledInvoiceId('');
         }
-    }, [invoiceOptions, invoiceId]);
+    }, [invoiceOptions, invoiceId, isPendingPaymentData]);
 
     const createMut = useMutation({
         mutationFn: (payload: any) => api.post(`/sales/invoices/${invoiceId}/payments`, payload),
-        onSuccess: () => {
+        onSuccess: async () => {
             toast.success('Sales payment received');
-            queryClient.invalidateQueries({ queryKey: ['sales-payments'] });
-            queryClient.invalidateQueries({ queryKey: ['sales-pending-payments'] });
-            queryClient.invalidateQueries({ queryKey: ['sales-overdue-invoices'] });
-            queryClient.invalidateQueries({ queryKey: ['sales-credit-control'] });
-            queryClient.invalidateQueries({ queryKey: ['sales-invoices'] });
-            queryClient.invalidateQueries({ queryKey: ['sales-summary'] });
-            queryClient.invalidateQueries({ queryKey: ['sales-invoice-payments-summary', invoiceId] });
+            
+            // Remove cache for sales payment lists so they fetch fresh data upon mount
+            queryClient.removeQueries({ queryKey: ['sales-payments'] });
+            queryClient.removeQueries({ queryKey: ['sales-payments-open-invoices-all'] });
+            queryClient.removeQueries({ queryKey: ['sales-payments-open-invoices'] });
+            
+            // Invalidate other related queries in parallel
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ['sales-payments-open-invoices-all'] }),
+                queryClient.invalidateQueries({ queryKey: ['sales-payments-open-invoices'] }),
+                queryClient.invalidateQueries({ queryKey: ['sales-pending-payments'] }),
+                queryClient.invalidateQueries({ queryKey: ['sales-overdue-invoices'] }),
+                queryClient.invalidateQueries({ queryKey: ['sales-credit-control'] }),
+                queryClient.invalidateQueries({ queryKey: ['sales-invoices'] }),
+                queryClient.invalidateQueries({ queryKey: ['sales-summary'] }),
+                queryClient.invalidateQueries({ queryKey: ['sales-invoice-payments-summary', invoiceId] }),
+            ]);
+            
             navigate('/sales/payments');
         },
         onError: (err: any) => {
@@ -164,7 +179,6 @@ export default function ReceiveSalesPayment() {
         if (!invoiceId) return toast.error('Select sales invoice');
         const value = Number(amount);
         if (!Number.isFinite(value) || value <= 0) return toast.error('Enter valid amount');
-        if (value > outstanding) return toast.error('Amount exceeds outstanding balance');
         if (!paymentMethod) return toast.error('Select payment method');
         if (cannotPostPayment) return toast.error(blockedReason || 'Cannot receive payment for selected invoice');
 
@@ -200,6 +214,16 @@ export default function ReceiveSalesPayment() {
                             refreshing={isFetchingOpenInvoices}
                             refreshLabel="Refresh customers"
                         />
+                        {selectedCustomer && (
+                            <div className="mt-2 flex space-x-4 text-xs font-medium">
+                                <span className="text-gray-500">
+                                    Credit Balance: <strong className="text-indigo-600">{(selectedCustomer.creditBalance || 0).toFixed(2)} {currency}</strong>
+                                </span>
+                                <span className="text-gray-500">
+                                    Saving Balance: <strong className="text-emerald-600">{(selectedCustomer.savingBalance || 0).toFixed(2)} {currency}</strong>
+                                </span>
+                            </div>
+                        )}
                         {(customerOptions || []).length === 0 && (
                             <p className="mt-1 text-xs text-amber-600">
                                 No posted open credit invoices available for customer list.
@@ -241,6 +265,16 @@ export default function ReceiveSalesPayment() {
                             className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
                         />
                         <p className="mt-1 text-xs text-gray-500">Outstanding: {outstanding.toFixed(2)} {currency}</p>
+                        {Number(amount) > outstanding && outstanding > 0 && (
+                            <div className="mt-2 rounded-lg bg-blue-50 p-3 text-xs text-blue-800 border border-blue-100 flex items-center space-x-2">
+                                <svg className="h-4 w-4 text-blue-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <span>
+                                    An excess amount of <strong>{(Number(amount) - outstanding).toFixed(2)} {currency}</strong> will be saved to the customer's credit/saving balance.
+                                </span>
+                            </div>
+                        )}
                         {cannotPostPayment && (
                             <p className="mt-1 text-xs text-rose-600">{blockedReason}</p>
                         )}
