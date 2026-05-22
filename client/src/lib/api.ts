@@ -21,10 +21,15 @@ const isLoggingEnabled = import.meta.env.DEV || String(import.meta.env.VITE_ENAB
 const apiBaseURL = (() => {
     // If explicitly configured in environment, use that
     if (configuredApiBaseURL) {
-        if (isLoggingEnabled) {
-            console.log('Using custom API URL:', configuredApiBaseURL);
+        let url = configuredApiBaseURL;
+        // If the configured URL is just the host and doesn't contain /api/v1 or /api/, append it
+        if (!url.includes('/api/v1') && !url.includes('/api/')) {
+            url = url.replace(/\/+$/, '') + '/api/v1';
         }
-        return configuredApiBaseURL;
+        if (isLoggingEnabled) {
+            console.log('Using custom API URL:', url);
+        }
+        return url;
     }
 
     // Otherwise, use environment-based default
