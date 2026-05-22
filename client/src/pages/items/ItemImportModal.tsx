@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
@@ -257,10 +257,36 @@ export default function ItemImportModal({ onClose }: Props) {
     const [fileName, setFileName] = useState('');
     const [fileWarning, setFileWarning] = useState('');
     const [dupStrategy, setDupStrategy] = useState<'skip' | 'overwrite'>('skip');
-    const [step, setStep] = useState<'upload' | 'preview' | 'done'>('upload');
+    const [step, setStep] = useState<'upload' | 'preview' | 'importing' | 'done'>('upload');
     const [result, setResult] = useState<any>(null);
     const [parseError, setParseError] = useState('');
     const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
+    
+    // Timeout Resilience states and refs
+    const [importStatus, setImportStatus] = useState<string>('Ready to start');
+    const [importLogs, setImportLogs] = useState<string[]>([]);
+    const [currentBatchSize, setCurrentBatchSize] = useState<number>(100);
+    const [paused, setPaused] = useState(false);
+    const isPausedRef = useRef(false);
+    const isCancelledRef = useRef(false);
+    const logEndRef = useRef<HTMLDivElement>(null);
+
+    const addLog = useCallback((msg: string) => {
+        const time = new Date().toLocaleTimeString();
+        setImportLogs(prev => [...prev, `[${time}] ${msg}`]);
+    }, []);
+
+    useEffect(() => {
+        if (logEndRef.current) {
+            logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [importLogs]);
+
+    const togglePause = useCallback(() => {
+        isPausedRef.current = !isPausedRef.current;
+        setPaused(isPausedRef.current);
+        addLog(isPausedRef.current ? 'Import paused by user.' : 'Import resumed.');
+    }, [addLog]);
 
     const validItems = items.filter(i => i.errors.length === 0);
     const invalidItems = items.filter(i => i.errors.length > 0);
@@ -336,6 +362,13 @@ export default function ItemImportModal({ onClose }: Props) {
     };
 
     const importMut = useMutation({
+        onMutate: () => {
+            setStep('importing');
+            isPausedRef.current = false;
+            isCancelledRef.current = false;
+            setPaused(false);
+            setImportLogs([]);
+        },
         mutationFn: async () => {
             if (validItems.length === 0) throw new Error('No valid items to import');
             
@@ -366,23 +399,184 @@ export default function ItemImportModal({ onClose }: Props) {
 
             const finalResult = { imported: 0, skipped: 0, overwritten: 0, total: 0, errors: [] as string[] };
             
-            // Send in batches of BATCH_SIZE
-            for (let i = 0; i < totalRows; i += BATCH_SIZE) {
-                const chunk = allRows.slice(i, i + BATCH_SIZE);
-                const res = await api.post('/products/import-excel', { rows: chunk, duplicateStrategy: dupStrategy });
-                const data = res.data.data;
-                
-                finalResult.imported += data.imported || 0;
-                finalResult.skipped += data.skipped || 0;
-                finalResult.overwritten += data.overwritten || 0;
-                finalResult.total += data.total || 0;
-                if (data.errors) {
-                    finalResult.errors.push(...data.errors);
+            let currentIndex = 0;
+            let batchSize = 100;
+            const MIN_BATCH = 10;
+            const MAX_BATCH = 300;
+            const MAX_RETRIES = 3;
+
+            addLog(`Starting Excel import of ${totalRows} rows...`);
+
+            while (currentIndex < totalRows) {
+                if (isCancelledRef.current) {
+                    addLog('Import cancelled by user. Finalizing imported items...');
+                    break;
                 }
-                
-                setImportProgress({ current: Math.min(i + BATCH_SIZE, totalRows), total: totalRows });
+
+                if (isPausedRef.current) {
+                    setImportStatus('Paused');
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    continue;
+                }
+
+                setImportStatus('Importing');
+                const batchEnd = Math.min(currentIndex + batchSize, totalRows);
+                const chunk = allRows.slice(currentIndex, batchEnd);
+
+                addLog(`Importing rows ${currentIndex + 1} to ${batchEnd} (Batch size: ${chunk.length})...`);
+                setCurrentBatchSize(chunk.length);
+
+                let success = false;
+                let retries = 0;
+
+                while (!success && retries < MAX_RETRIES) {
+                    if (isCancelledRef.current || isPausedRef.current) {
+                        break;
+                    }
+
+                    const startTime = Date.now();
+                    try {
+                        const res = await api.post('/products/import-excel', { 
+                            rows: chunk, 
+                            duplicateStrategy: dupStrategy 
+                        });
+                        const data = res.data.data;
+                        
+                        finalResult.imported += data.imported || 0;
+                        finalResult.skipped += data.skipped || 0;
+                        finalResult.overwritten += data.overwritten || 0;
+                        finalResult.total += data.total || 0;
+                        if (data.errors) {
+                            finalResult.errors.push(...data.errors);
+                            if (data.errors.length > 0) {
+                                addLog(`Batch completed with ${data.errors.length} item error(s).`);
+                            }
+                        }
+                        
+                        success = true;
+                        const duration = Date.now() - startTime;
+                        addLog(`Batch successful! Took ${((duration) / 1000).toFixed(1)}s.`);
+                        
+                        // Dynamically adjust batch size based on speed
+                        if (duration < 2500 && batchSize < MAX_BATCH) {
+                            const prevSize = batchSize;
+                            batchSize = Math.min(batchSize + 20, MAX_BATCH);
+                            addLog(`Fast response. Increasing next batch size: ${prevSize} → ${batchSize}.`);
+                        } else if (duration > 6500 && batchSize > MIN_BATCH) {
+                            const prevSize = batchSize;
+                            batchSize = Math.max(batchSize - 20, MIN_BATCH);
+                            addLog(`Slow response. Decreasing next batch size: ${prevSize} → ${batchSize}.`);
+                        }
+                        
+                        currentIndex = batchEnd;
+                        setImportProgress({ current: currentIndex, total: totalRows });
+                    } catch (error: any) {
+                        retries++;
+                        const status = error.response?.status;
+                        const isTimeout = error.code === 'ECONNABORTED' || 
+                                          error.message?.includes('timeout') || 
+                                          status === 504 || 
+                                          status === 502 ||
+                                          status === 408;
+                        
+                        addLog(`Batch error: ${error.response?.data?.error?.message || error.message}`);
+                        
+                        if (retries < MAX_RETRIES) {
+                            if (isTimeout) {
+                                const prevSize = batchSize;
+                                batchSize = Math.max(Math.floor(batchSize / 2), MIN_BATCH);
+                                addLog(`Timeout/gateway issue. Shrinking batch size: ${prevSize} → ${batchSize} for retry.`);
+                            }
+                            const delay = 1000 * Math.pow(2, retries);
+                            addLog(`Retrying batch in ${(delay / 1000).toFixed(0)}s (Retry ${retries}/${MAX_RETRIES})...`);
+                            
+                            // wait delay with responsive pause checks
+                            for (let d = 0; d < delay; d += 200) {
+                                if (isCancelledRef.current || isPausedRef.current) break;
+                                await new Promise(resolve => setTimeout(resolve, 200));
+                            }
+                        }
+                    }
+                }
+
+                // If batch failed completely, isolate each item sequentially
+                if (!success && !isCancelledRef.current && !isPausedRef.current) {
+                    addLog(`Batch failed after ${MAX_RETRIES} attempts. Isolating and importing items individually...`);
+
+                    const itemGroups = new Map<string, any[]>();
+                    for (const row of chunk) {
+                        if (!itemGroups.has(row.itemCode)) {
+                            itemGroups.set(row.itemCode, []);
+                        }
+                        itemGroups.get(row.itemCode)!.push(row);
+                    }
+
+                    addLog(`Found ${itemGroups.size} unique items in this batch. Processing one-by-one...`);
+
+                    let resolvedCount = 0;
+                    for (const [itemCode, itemRows] of itemGroups.entries()) {
+                        if (isCancelledRef.current) {
+                            break;
+                        }
+
+                        while (isPausedRef.current) {
+                            setImportStatus('Paused');
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        }
+                        setImportStatus('Importing');
+
+                        resolvedCount++;
+                        addLog(`[Item ${resolvedCount}/${itemGroups.size}] Importing item ${itemCode} individually...`);
+
+                        let itemSuccess = false;
+                        let itemRetries = 0;
+                        while (!itemSuccess && itemRetries < 2) {
+                            try {
+                                const res = await api.post('/products/import-excel', { 
+                                    rows: itemRows, 
+                                    duplicateStrategy: dupStrategy 
+                                });
+                                const data = res.data.data;
+                                finalResult.imported += data.imported || 0;
+                                finalResult.skipped += data.skipped || 0;
+                                finalResult.overwritten += data.overwritten || 0;
+                                finalResult.total += data.total || 0;
+                                if (data.errors) {
+                                    finalResult.errors.push(...data.errors);
+                                    if (data.errors.length > 0) {
+                                        addLog(`Item ${itemCode} failed: ${data.errors.join(', ')}`);
+                                    } else {
+                                        addLog(`Item ${itemCode} imported successfully.`);
+                                    }
+                                } else {
+                                    addLog(`Item ${itemCode} imported successfully.`);
+                                }
+                                itemSuccess = true;
+                            } catch (itemErr: any) {
+                                itemRetries++;
+                                if (itemRetries >= 2) {
+                                    const errMsg = itemErr.response?.data?.error?.message || itemErr.message || 'Import failed';
+                                    addLog(`Item ${itemCode} failed completely: ${errMsg}`);
+                                    finalResult.errors.push(`Item ${itemCode}: ${errMsg}`);
+                                    finalResult.skipped += 1;
+                                    finalResult.total += 1;
+                                } else {
+                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                }
+                            }
+                        }
+
+                        currentIndex += itemRows.length;
+                        setImportProgress({ current: Math.min(currentIndex, totalRows), total: totalRows });
+                    }
+
+                    // Reset index to end of batch to align correctly
+                    currentIndex = batchEnd;
+                    setImportProgress({ current: currentIndex, total: totalRows });
+                }
             }
 
+            addLog('Import process completed!');
             return finalResult;
         },
         onSuccess: (data) => {
@@ -391,7 +585,10 @@ export default function ItemImportModal({ onClose }: Props) {
             qc.removeQueries({ queryKey: ['products'] });
             toast.success(`Import complete: ${data.imported} imported, ${data.skipped} skipped`);
         },
-        onError: (err: any) => toast.error(err.response?.data?.error?.message || err.message || 'Import failed'),
+        onError: (err: any) => {
+            setStep('preview');
+            toast.error(err.response?.data?.error?.message || err.message || 'Import failed');
+        },
     });
 
     // ── Download template ─────────────────────────────────────────────────────
@@ -420,9 +617,11 @@ export default function ItemImportModal({ onClose }: Props) {
                             <p className="text-blue-100 text-xs">Upload your filled template to bulk-import items</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="text-white/80 hover:text-white transition-colors">
-                        <X size={20} />
-                    </button>
+                    {step !== 'importing' && (
+                        <button onClick={onClose} className="text-white/80 hover:text-white transition-colors">
+                            <X size={20} />
+                        </button>
+                    )}
                 </div>
 
                 {/* Body */}
@@ -637,6 +836,73 @@ export default function ItemImportModal({ onClose }: Props) {
                         </div>
                     )}
 
+                    {/* ── STEP: IMPORTING ────────────────────────────── */}
+                    {step === 'importing' && (
+                        <div className="p-8 space-y-6 flex flex-col h-[50vh]">
+                            <div className="text-center space-y-2">
+                                <h3 className="text-lg font-semibold text-gray-800">
+                                    {paused ? 'Import Paused' : 'Importing Items...'}
+                                </h3>
+                                <p className="text-sm text-gray-500">
+                                    Please keep this window open while the import runs.
+                                </p>
+                            </div>
+
+                            {/* Progress bar */}
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-xs text-gray-500 font-medium">
+                                    <span>Progress: {importProgress.current} / {importProgress.total} rows</span>
+                                    <span>{importProgress.total > 0 ? Math.round((importProgress.current / importProgress.total) * 100) : 0}%</span>
+                                </div>
+                                <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                                    <div 
+                                        className="bg-blue-600 h-full transition-all duration-300 rounded-full" 
+                                        style={{ width: `${importProgress.total > 0 ? (importProgress.current / importProgress.total) * 100 : 0}%` }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Dynamic stats */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="p-4 bg-gray-50 rounded-xl border border-gray-100 flex flex-col justify-center items-center text-center">
+                                    <span className="text-xs text-gray-400 font-medium uppercase">Current Batch Size</span>
+                                    <span className="text-lg font-bold text-gray-700 mt-1">{currentBatchSize} rows</span>
+                                </div>
+                                <div className="p-4 bg-gray-50 rounded-xl border border-gray-100 flex flex-col justify-center items-center text-center">
+                                    <span className="text-xs text-gray-400 font-medium uppercase">Status</span>
+                                    <span className={`text-lg font-bold mt-1 ${paused ? 'text-amber-500' : 'text-blue-500 animate-pulse'}`}>
+                                        {paused ? 'Paused' : importStatus}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Log console */}
+                            <div className="flex-1 flex flex-col min-h-0">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Import Logs</p>
+                                <div className="flex-1 bg-gray-950 rounded-xl p-4 font-mono text-xs text-gray-300 overflow-y-auto space-y-1 select-text">
+                                    {importLogs.map((log, index) => {
+                                        let colorClass = 'text-gray-300';
+                                        if (log.includes('successful') || log.includes('success') || log.includes('completed')) {
+                                            colorClass = 'text-emerald-400';
+                                        } else if (log.includes('error') || log.includes('failed')) {
+                                            colorClass = 'text-rose-400 font-bold';
+                                        } else if (log.includes('paused') || log.includes('Retry') || log.includes('Timeout')) {
+                                            colorClass = 'text-amber-400';
+                                        } else if (log.includes('cancelled')) {
+                                            colorClass = 'text-red-400';
+                                        }
+                                        return (
+                                            <div key={index} className={colorClass}>
+                                                {log}
+                                            </div>
+                                        );
+                                    })}
+                                    <div ref={logEndRef} />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* ── STEP: DONE ───────────────────────────────────── */}
                     {step === 'done' && result && (
                         <div className="p-10 text-center space-y-6">
@@ -670,7 +936,7 @@ export default function ItemImportModal({ onClose }: Props) {
                                 <div className="text-left rounded-xl border border-red-200 bg-red-50 p-4 max-h-48 overflow-y-auto">
                                     <p className="text-sm font-semibold text-red-700 mb-2">⚠ Items that could not be imported ({result.errors.length}):</p>
                                     {result.errors.map((e: string, i: number) => (
-                                        <p key={i} className="text-xs text-red-600 flex items-start gap-1.5 mb-1">
+                                        <p key={i} className="text-xs text-red-600 flex items-start gap-1.5 mb-1 font-mono">
                                             <AlertCircle size={11} className="mt-0.5 shrink-0" />{e}
                                         </p>
                                     ))}
@@ -691,16 +957,34 @@ export default function ItemImportModal({ onClose }: Props) {
                         )}
                     </div>
                     <div className="flex items-center gap-3">
-                        <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition-colors">
-                            {step === 'done' ? 'Close' : 'Cancel'}
-                        </button>
+                        {step === 'importing' ? (
+                            <>
+                                <button
+                                    onClick={() => {
+                                        if (confirm('Are you sure you want to stop the import? Any items imported so far will remain in the database.')) {
+                                            isCancelledRef.current = true;
+                                            isPausedRef.current = false;
+                                            setPaused(false);
+                                        }
+                                    }}
+                                    className="px-4 py-2 text-sm text-red-600 hover:text-red-800 font-medium transition-colors"
+                                >
+                                    Cancel Import
+                                </button>
+                                <button
+                                    onClick={togglePause}
+                                    className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-colors shadow-sm text-white ${paused ? 'bg-green-600 hover:bg-green-700' : 'bg-amber-500 hover:bg-amber-600'}`}
+                                >
+                                    {paused ? '▶ Resume Import' : '⏸ Pause Import'}
+                                </button>
+                            </>
+                        ) : (
+                            <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition-colors">
+                                {step === 'done' ? 'Close' : 'Cancel'}
+                            </button>
+                        )}
                         {step === 'preview' && validItems.length > 0 && (
                             <div className="flex items-center gap-4">
-                                {importMut.isPending && importProgress.total > 0 && (
-                                    <span className="text-sm text-blue-600 font-bold animate-pulse">
-                                        Importing... {importProgress.current} / {importProgress.total} items
-                                    </span>
-                                )}
                                 <button
                                     onClick={() => importMut.mutate()}
                                     disabled={importMut.isPending}
