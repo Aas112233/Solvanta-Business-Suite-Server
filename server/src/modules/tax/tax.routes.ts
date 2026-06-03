@@ -61,6 +61,20 @@ taxRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), valida
             });
         });
 
+        // Audit log
+        try {
+            await prisma.auditLog.create({
+                data: {
+                    companyId,
+                    userId: req.user!.id,
+                    action: 'CREATE',
+                    entity: 'Tax',
+                    entityId: result.id,
+                    after: result as any,
+                },
+            });
+        } catch (_) { /* audit is best-effort */ }
+
         sendSuccess(res, result, { message: 'Tax created successfully' }, 201);
     } catch (error) { next(error); }
 });
@@ -93,10 +107,25 @@ taxRoutes.patch('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), va
             }
 
             return await tx.tax.update({
-                where: { id },
+                where: { id, companyId },
                 data: body
             });
         });
+
+        // Audit log
+        try {
+            await prisma.auditLog.create({
+                data: {
+                    companyId,
+                    userId: req.user!.id,
+                    action: 'UPDATE',
+                    entity: 'Tax',
+                    entityId: id,
+                    before: existing as any,
+                    after: result as any,
+                },
+            });
+        } catch (_) { /* audit is best-effort */ }
 
         sendSuccess(res, result, { message: 'Tax updated successfully' });
     } catch (error) { next(error); }
@@ -111,13 +140,35 @@ taxRoutes.delete('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), a
         const existing = await prisma.tax.findFirst({ where: { id, companyId } });
         if (!existing) throw AppError.notFound('Tax rule');
 
+        // Prevent deleting the default tax — would break all POS/Sales operations
+        if (existing.isDefault) {
+            throw AppError.badRequest(
+                'Cannot delete the default tax rule. Please assign another tax as default first.'
+            );
+        }
+
         // Check if any product is using it
-        const productCount = await prisma.product.count({ where: { taxId: id } });
+        const productCount = await prisma.product.count({ where: { taxId: id, companyId } });
         if (productCount > 0) {
             throw AppError.badRequest('Cannot delete tax rule because it is assigned to one or more products.');
         }
 
-        await prisma.tax.delete({ where: { id } });
+        await prisma.tax.delete({ where: { id, companyId } });
+
+        // Audit log
+        try {
+            await prisma.auditLog.create({
+                data: {
+                    companyId,
+                    userId: req.user!.id,
+                    action: 'DELETE',
+                    entity: 'Tax',
+                    entityId: id,
+                    before: existing as any,
+                },
+            });
+        } catch (_) { /* audit is best-effort */ }
+
         sendSuccess(res, { message: 'Tax deleted successfully' });
     } catch (error) { next(error); }
 });

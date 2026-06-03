@@ -14,6 +14,12 @@ import { getPosTerminalPolicy, issuePosSessionToken, verifyPosSessionToken } fro
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { InventoryService } from '../inventory/InventoryService.js';
 import { POS_PAYMENT_METHODS } from '../../utils/paymentMethods.js';
+import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
+
+function roundMoney(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+}
 export const posRoutes = Router();
 posRoutes.use(authenticate);
 
@@ -1316,7 +1322,9 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     name: true,
                     rate: true,
                     isDefault: true,
+                    createdAt: true,
                 },
+                orderBy: { createdAt: 'asc' },
             });
 
             if (activeSalesTaxes.length === 0) {
@@ -1327,6 +1335,13 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
 
             const activeSalesTaxById = new Map(activeSalesTaxes.map((tax) => [tax.id, tax]));
             const defaultSalesTax = activeSalesTaxes.find((tax) => tax.isDefault) || activeSalesTaxes[0];
+
+            // Load company tax settings for inclusive pricing
+            const companyRecord = await tx.company.findUnique({
+                where: { id: companyId },
+                select: { settings: true },
+            });
+            const companyTaxSettings = resolveCompanyTaxSettings(companyRecord?.settings);
 
             const priceOverrides = new Map<string, { salePrice: number; minPrice: number | null }>();
             const customerPriceGroupId = customer?.priceGroupId || null;
@@ -1366,10 +1381,18 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     const gross = unitPrice * qty;
                     if (discount > gross) throw AppError.badRequest('Discount cannot exceed Total Amount');
 
-                    const lineSubtotal = gross - discount;
+                    const lineGross = gross - discount;
                     // Services use default tax rate
                     const taxRate = defaultSalesTax ? Number(defaultSalesTax.rate) : 0;
-                    const taxAmount = lineSubtotal * taxRate;
+                    let taxAmount: number;
+                    let lineSubtotal: number;
+                    if (companyTaxSettings.inclusivePricing && taxRate > 0) {
+                        taxAmount = roundMoney(lineGross - (lineGross / (1 + taxRate)));
+                        lineSubtotal = roundMoney(lineGross - taxAmount);
+                    } else {
+                        taxAmount = roundMoney(lineGross * taxRate);
+                        lineSubtotal = roundMoney(lineGross);
+                    }
 
                     return {
                         serviceId: item.serviceId,
@@ -1435,7 +1458,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     }
                 }
 
-                const lineSubtotal = gross - discount;
+                const lineGross = gross - discount;
                 const productLabel = `${product.itemCode} (${product.name})`;
                 let appliedTax = null;
 
@@ -1460,7 +1483,15 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                     return null;
                 }
 
-                const taxAmount = lineSubtotal * taxRate;
+                let taxAmount: number;
+                let lineSubtotal: number;
+                if (companyTaxSettings.inclusivePricing && taxRate > 0) {
+                    taxAmount = roundMoney(lineGross - (lineGross / (1 + taxRate)));
+                    lineSubtotal = roundMoney(lineGross - taxAmount);
+                } else {
+                    taxAmount = roundMoney(lineGross * taxRate);
+                    lineSubtotal = roundMoney(lineGross);
+                }
                 return {
                     productId: item.productId,
                     unitCode: unit.unitCode,

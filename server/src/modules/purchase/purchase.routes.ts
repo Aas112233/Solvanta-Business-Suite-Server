@@ -52,6 +52,11 @@ function parseDateOrThrow(value: unknown, fieldName: string): Date | undefined {
     return date;
 }
 
+function roundMoney(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
 const purchaseItemSchema = z.object({
     productId: z.string().min(1),
     unitCode: z.string().min(1),
@@ -378,13 +383,47 @@ purchaseRoutes.post('/orders', requirePermission(PERMISSIONS.PURCHASE_CREATE), v
         const result = await prisma.$transaction(async (tx) => {
             const poNo = formatDocNo('PO', await nextCounter(tx as any, companyId, PURCHASE_ORDER_COUNTER));
 
+            // Server-side tax computation — never trust client-sent taxAmount/lineTotal
+            const productIds = [...new Set(items.map((i: any) => i.productId))];
+            const products = await (tx as any).product.findMany({
+                where: { companyId, id: { in: productIds } },
+                select: { id: true, taxId: true, itemCode: true, name: true },
+            });
+            const productById = new Map<string, any>(products.map((p: any) => [p.id, p]));
+
+            const activePurchaseTaxes = await tx.tax.findMany({
+                where: {
+                    companyId,
+                    isActive: true,
+                    OR: [{ type: 'PURCHASE' }, { type: 'BOTH' }],
+                },
+                select: { id: true, name: true, rate: true, isDefault: true },
+                orderBy: { createdAt: 'asc' },
+            });
+            const purchaseTaxById = new Map(activePurchaseTaxes.map((t: any) => [t.id, t]));
+            const defaultPurchaseTax = activePurchaseTaxes.find((t: any) => t.isDefault) || activePurchaseTaxes[0] || null;
+
             let subtotal = 0;
             let taxTotal = 0;
             const preparedItems = items.map((item: any) => {
                 const qty = Number(item.qty) || 0;
                 const unitCost = Number(item.unitCost) || 0;
-                const lineTotal = Number(item.lineTotal) || (qty * unitCost);
-                const taxAmount = Number(item.taxAmount) || 0;
+                const lineTotal = roundMoney(qty * unitCost);
+
+                // Resolve tax rate from product's tax or default purchase tax
+                const product = productById.get(item.productId);
+                let taxRate = 0;
+                if (product?.taxId) {
+                    const productTax = purchaseTaxById.get(product.taxId);
+                    if (productTax) {
+                        taxRate = Number(productTax.rate) || 0;
+                    } else if (defaultPurchaseTax) {
+                        taxRate = Number(defaultPurchaseTax.rate) || 0;
+                    }
+                } else if (defaultPurchaseTax) {
+                    taxRate = Number(defaultPurchaseTax.rate) || 0;
+                }
+                const taxAmount = roundMoney(lineTotal * taxRate);
 
                 subtotal += lineTotal;
                 taxTotal += taxAmount;
@@ -399,6 +438,10 @@ purchaseRoutes.post('/orders', requirePermission(PERMISSIONS.PURCHASE_CREATE), v
                 };
             });
 
+            subtotal = roundMoney(subtotal);
+            taxTotal = roundMoney(taxTotal);
+            const grandTotal = roundMoney(subtotal + taxTotal);
+
             return await tx.purchaseOrder.create({
                 data: {
                     companyId,
@@ -409,7 +452,7 @@ purchaseRoutes.post('/orders', requirePermission(PERMISSIONS.PURCHASE_CREATE), v
                     expectedDate: expectedDate ? new Date(expectedDate) : null,
                     subtotal,
                     taxTotal,
-                    grandTotal: subtotal + taxTotal,
+                    grandTotal,
                     notes,
                     createdById: userId,
                     items: {
@@ -867,14 +910,47 @@ purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), async (
         const result = await prisma.$transaction(async (tx) => {            // Generate Purchase No
             const purchaseNo = formatDocNo('PUR', await nextCounter(tx as any, companyId, 'PURCHASE_INVOICE'));
 
-            // Calculate totals and sanitize items
+            // Server-side tax computation — never trust client-sent taxAmount/lineTotal
+            const productIds = [...new Set(items.map((i: any) => i.productId))];
+            const products = await (tx as any).product.findMany({
+                where: { companyId, id: { in: productIds } },
+                select: { id: true, taxId: true, itemCode: true, name: true },
+            });
+            const productById = new Map<string, any>(products.map((p: any) => [p.id, p]));
+
+            const activePurchaseTaxes = await tx.tax.findMany({
+                where: {
+                    companyId,
+                    isActive: true,
+                    OR: [{ type: 'PURCHASE' }, { type: 'BOTH' }],
+                },
+                select: { id: true, name: true, rate: true, isDefault: true },
+                orderBy: { createdAt: 'asc' },
+            });
+            const purchaseTaxById = new Map(activePurchaseTaxes.map((t: any) => [t.id, t]));
+            const defaultPurchaseTax = activePurchaseTaxes.find((t: any) => t.isDefault) || activePurchaseTaxes[0] || null;
+
             let subtotal = 0;
             let taxTotal = 0;
             const sanitizedItems = items.map((item: any) => {
                 const qty = Number(item.qty) || 0;
                 const unitCost = Number(item.unitCost) || 0;
-                const lineTotal = Number(item.lineTotal) || (qty * unitCost);
-                const taxAmount = Number(item.taxAmount) || 0;
+                const lineTotal = roundMoney(qty * unitCost);
+
+                // Resolve tax rate from product's tax or default purchase tax
+                const product = productById.get(item.productId);
+                let taxRate = 0;
+                if (product?.taxId) {
+                    const productTax = purchaseTaxById.get(product.taxId);
+                    if (productTax) {
+                        taxRate = Number(productTax.rate) || 0;
+                    } else if (defaultPurchaseTax) {
+                        taxRate = Number(defaultPurchaseTax.rate) || 0;
+                    }
+                } else if (defaultPurchaseTax) {
+                    taxRate = Number(defaultPurchaseTax.rate) || 0;
+                }
+                const taxAmount = roundMoney(lineTotal * taxRate);
 
                 subtotal += lineTotal;
                 taxTotal += taxAmount;
@@ -889,7 +965,9 @@ purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), async (
                 };
             });
 
-            const grandTotal = subtotal + taxTotal;
+            subtotal = roundMoney(subtotal);
+            taxTotal = roundMoney(taxTotal);
+            const grandTotal = roundMoney(subtotal + taxTotal);
 
             // Create purchase invoice
             const pModel = (tx as any).purchaseInvoice || tx['purchaseInvoice'];
@@ -1511,11 +1589,11 @@ purchaseRoutes.post('/:id/returns', requirePermission(PERMISSIONS.PURCHASE_RETUR
                 }
 
                 const unitCost = Number(source.unitCost);
-                const lineTotal = Number(new Decimal(line.qty).mul(unitCost));
+                const lineTotal = roundMoney(Number(new Decimal(line.qty).mul(unitCost)));
                 const taxRate = Number(source.qty) > 0 ? Number(source.taxAmount || 0) / Number(source.qty) : 0;
-                const lineTax = Number(new Decimal(line.qty).mul(taxRate));
-                subtotal += lineTotal;
-                taxTotal += lineTax;
+                const lineTax = roundMoney(Number(new Decimal(line.qty).mul(taxRate)));
+                subtotal = roundMoney(subtotal + lineTotal);
+                taxTotal = roundMoney(taxTotal + lineTax);
 
                 return {
                     purchaseItemId: source.id,
@@ -1529,7 +1607,7 @@ purchaseRoutes.post('/:id/returns', requirePermission(PERMISSIONS.PURCHASE_RETUR
             });
 
             if (preparedItems.length === 0) throw AppError.badRequest('At least one return line is required');
-            const grandTotal = subtotal + taxTotal;
+            const grandTotal = roundMoney(subtotal + taxTotal);
 
             const returnNo = formatDocNo('PR', await nextCounter(tx as any, companyId, 'PURCHASE_RETURN'));
 
@@ -1674,11 +1752,11 @@ purchaseRoutes.put('/returns/:id', requirePermission(PERMISSIONS.PURCHASE_RETURN
                 }
 
                 const unitCost = Number(source.unitCost);
-                const lineTotal = Number(new Decimal(line.qty).mul(unitCost));
+                const lineTotal = roundMoney(Number(new Decimal(line.qty).mul(unitCost)));
                 const taxRate = Number(source.qty) > 0 ? Number(source.taxAmount || 0) / Number(source.qty) : 0;
-                const lineTax = Number(new Decimal(line.qty).mul(taxRate));
-                subtotal += lineTotal;
-                taxTotal += lineTax;
+                const lineTax = roundMoney(Number(new Decimal(line.qty).mul(taxRate)));
+                subtotal = roundMoney(subtotal + lineTotal);
+                taxTotal = roundMoney(taxTotal + lineTax);
 
                 return {
                     purchaseItemId: source.id,
@@ -1692,7 +1770,7 @@ purchaseRoutes.put('/returns/:id', requirePermission(PERMISSIONS.PURCHASE_RETURN
             });
 
             if (preparedItems.length === 0) throw AppError.badRequest('At least one return line is required');
-            const grandTotal = subtotal + taxTotal;
+            const grandTotal = roundMoney(subtotal + taxTotal);
 
             // Restore inventory from existing return lines before applying new lines.
             for (const item of existing.items as any[]) {

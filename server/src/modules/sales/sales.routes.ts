@@ -13,6 +13,12 @@ import { z } from 'zod';
 import { getPosTerminalPolicy } from '../pos/pos-policy.js';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { InventoryService } from '../inventory/InventoryService.js';
+import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
+
+function roundMoney(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+}
 
 export const salesRoutes = Router();
 salesRoutes.use(authenticate);
@@ -419,11 +425,19 @@ async function validateAndCalculateTaxes(
     items: { productId?: string | null; description: string; qty: number; unitPrice: number; discount?: number; unitCode?: string | null }[]
 ) {
     const taxes = await (prisma as any).tax.findMany({
-        where: { companyId, isActive: true, type: { in: ['SALES', 'BOTH'] } }
+        where: { companyId, isActive: true, type: { in: ['SALES', 'BOTH'] } },
+        orderBy: { createdAt: 'asc' },
     });
 
     const activeSalesTaxById = new Map<string, any>(taxes.map((t: any) => [t.id, t]));
-    const defaultSalesTax = taxes.find((t: any) => t.isDefault) || null;
+    const defaultSalesTax = taxes.find((t: any) => t.isDefault) || taxes[0] || null;
+
+    // Load company tax settings for inclusive pricing
+    const companyRecord = await prisma.company.findUnique({
+        where: { id: companyId },
+        select: { settings: true },
+    });
+    const companyTaxSettings = resolveCompanyTaxSettings(companyRecord?.settings);
 
     const productIds = items.map(i => i.productId).filter(Boolean) as string[];
     const products = productIds.length > 0 ? await (prisma as any).product.findMany({
@@ -442,7 +456,7 @@ async function validateAndCalculateTaxes(
         const unitPrice = Number(item.unitPrice);
         const discount = Number(item.discount || 0);
 
-        const lineSubtotal = (qty * unitPrice) - discount;
+        const lineGross = (qty * unitPrice) - discount;
         const product = item.productId ? (productById.get(item.productId) as any) : null;
         const productLabel = product ? `${product.itemCode} (${product.name})` : item.description;
 
@@ -468,7 +482,15 @@ async function validateAndCalculateTaxes(
             return null;
         }
 
-        const taxAmount = lineSubtotal * taxRate;
+        let taxAmount: number;
+        let lineSubtotal: number;
+        if (companyTaxSettings.inclusivePricing && taxRate > 0) {
+            taxAmount = roundMoney(lineGross - (lineGross / (1 + taxRate)));
+            lineSubtotal = roundMoney(lineGross - taxAmount);
+        } else {
+            taxAmount = roundMoney(lineGross * taxRate);
+            lineSubtotal = roundMoney(lineGross);
+        }
         subtotal += lineSubtotal;
         taxTotal += taxAmount;
         discountTotal += discount;
@@ -494,9 +516,9 @@ async function validateAndCalculateTaxes(
 
     return {
         preparedItems: computedItems as NonNullable<typeof computedItems[0]>[],
-        subtotal,
-        taxTotal,
-        discountTotal
+        subtotal: roundMoney(subtotal),
+        taxTotal: roundMoney(taxTotal),
+        discountTotal: roundMoney(discountTotal)
     };
 }
 
@@ -2237,11 +2259,11 @@ salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RE
                 const unitPrice = Number(src.unitPrice || 0);
                 const unitDiscount = Number(src.qty) > 0 ? Number(src.discount || 0) / Number(src.qty) : 0;
                 const unitTax = Number(src.qty) > 0 ? Number(src.taxAmount || 0) / Number(src.qty) : 0;
-                const lineDiscount = Number(line.qty) * unitDiscount;
-                const lineTax = Number(line.qty) * unitTax;
-                const lineTotal = Number(line.qty) * unitPrice - lineDiscount;
-                subtotal += lineTotal;
-                taxTotal += lineTax;
+                const lineDiscount = roundMoney(Number(line.qty) * unitDiscount);
+                const lineTax = roundMoney(Number(line.qty) * unitTax);
+                const lineTotal = roundMoney(Number(line.qty) * unitPrice - lineDiscount);
+                subtotal = roundMoney(subtotal + lineTotal);
+                taxTotal = roundMoney(taxTotal + lineTax);
 
                 return {
                     invoiceItemId: src.id,

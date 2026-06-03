@@ -20,13 +20,29 @@ function normalizeTaxRate(value: unknown) {
     return parsed;
 }
 
-export function resolveCompanyTaxSettings(settings: unknown): CompanyTaxSettings {
-    const safeSettings = isRecord(settings) ? settings : {};
-    const taxSettings = isRecord(safeSettings.tax) ? safeSettings.tax : {};
+export function resolveCompanyTaxSettings(source?: unknown): CompanyTaxSettings {
+    const sourceRecord = isRecord(source) ? source : null;
+    const taxSettings = sourceRecord && isRecord(sourceRecord.taxSettings)
+        ? sourceRecord.taxSettings
+        : null;
+
+    if (taxSettings) {
+        return {
+            label: normalizeTaxLabel(taxSettings.label),
+            defaultRate: normalizeTaxRate(taxSettings.defaultRate),
+            inclusivePricing: Boolean(taxSettings.inclusivePricing),
+        };
+    }
+
+    const settings = sourceRecord && 'settings' in sourceRecord
+        ? sourceRecord.settings
+        : source;
+    const settingsRecord = isRecord(settings) ? settings : null;
+    const tax = settingsRecord && isRecord(settingsRecord.tax) ? settingsRecord.tax : null;
 
     return {
-        label: normalizeTaxLabel(taxSettings.label),
-        defaultRate: normalizeTaxRate(taxSettings.defaultRate),
-        inclusivePricing: Boolean(taxSettings.inclusivePricing),
+        label: normalizeTaxLabel(tax?.label),
+        defaultRate: normalizeTaxRate(tax?.defaultRate),
+        inclusivePricing: Boolean(tax?.inclusivePricing),
     };
 }

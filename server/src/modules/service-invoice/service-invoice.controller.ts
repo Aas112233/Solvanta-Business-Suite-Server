@@ -4,6 +4,8 @@ import { AppError } from '../../utils/AppError.js';
 import { formatDocNo, nextCounter } from '../../utils/documentCounter.js';
 import { sendSuccess } from '../../utils/response.js';
 import { normalizePaymentMethodKey, SERVICE_INVOICE_PAYMENT_METHODS } from '../../utils/paymentMethods.js';
+import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
+import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
 
 interface ServiceInvoiceItemInput {
     serviceId?: string | null;
@@ -99,11 +101,20 @@ export const createServiceInvoice = async (req: Request, res: Response) => {
                 select: {
                     rate: true,
                     isDefault: true,
+                    createdAt: true,
                 },
+                orderBy: { createdAt: 'asc' },
             });
 
             const defaultSalesTax = activeSalesTaxes.find((tax) => tax.isDefault) || activeSalesTaxes[0] || null;
             const defaultTaxRate = Number(defaultSalesTax?.rate || 0);
+
+            // Load company tax settings for inclusive pricing
+            const companyRecord = await tx.company.findUnique({
+                where: { id: companyId },
+                select: { settings: true },
+            });
+            const companyTaxSettings = resolveCompanyTaxSettings(companyRecord?.settings);
 
             const normalizedItems = items.map((item, index) => {
                 const serviceName = String(item.serviceName || '').trim();
@@ -130,8 +141,16 @@ export const createServiceInvoice = async (req: Request, res: Response) => {
                     throw AppError.badRequest(`Discount cannot exceed subtotal for item ${index + 1}`);
                 }
 
-                const lineSubtotal = roundMoney(gross - discount);
-                const taxAmount = roundMoney(lineSubtotal * defaultTaxRate);
+                const lineSubtotalGross = roundMoney(gross - discount);
+                let taxAmount: number;
+                let lineSubtotal: number;
+                if (companyTaxSettings.inclusivePricing && defaultTaxRate > 0) {
+                    taxAmount = roundMoney(lineSubtotalGross - (lineSubtotalGross / (1 + defaultTaxRate)));
+                    lineSubtotal = roundMoney(lineSubtotalGross - taxAmount);
+                } else {
+                    taxAmount = roundMoney(lineSubtotalGross * defaultTaxRate);
+                    lineSubtotal = lineSubtotalGross;
+                }
 
                 return {
                     serviceId: item.serviceId || null,
@@ -158,7 +177,7 @@ export const createServiceInvoice = async (req: Request, res: Response) => {
                 4
             );
 
-            return tx.pOSInvoice.create({
+            const invoice = await tx.pOSInvoice.create({
                 data: {
                     companyId,
                     branchId: branch.id,
@@ -217,6 +236,38 @@ export const createServiceInvoice = async (req: Request, res: Response) => {
                     },
                 },
             });
+
+            // Post accounting journal entry for service invoices
+            try {
+                await CoreAccountingService.recordPOSSale(tx as any, {
+                    id: invoice.id,
+                    companyId,
+                    branchId: branch.id,
+                    invoiceNo: invoice.invoiceNo,
+                    customerId: invoice.customerId,
+                    paymentMethod: normalizedPaymentMethod,
+                    subtotal: invoice.subtotal,
+                    taxTotal: invoice.taxTotal,
+                    grandTotal: invoice.grandTotal,
+                    cashReceived: invoice.cashReceived,
+                    changeGiven: invoice.changeGiven,
+                    createdById: userId,
+                    createdAt: invoice.createdAt,
+                    items: normalizedItems.map(item => ({
+                        productId: item.serviceId || '',
+                        qty: item.qty,
+                        unitPrice: item.unitPrice,
+                        lineTotal: item.lineTotal,
+                        taxAmount: item.taxAmount,
+                        cost: 0,
+                    })),
+                });
+            } catch (_) {
+                // Accounting posting is best-effort for service invoices;
+                // if account mappings are not configured, don't block the sale
+            }
+
+            return invoice;
         });
 
         sendSuccess(res, invoice, undefined, 201);

@@ -621,6 +621,15 @@ productRoutes.post('/', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIO
                 ...allUnitBarcodes
             ]));
 
+            if (data.taxId) {
+                const taxExists = await tx.tax.findFirst({
+                    where: { id: data.taxId, companyId },
+                });
+                if (!taxExists) {
+                    throw AppError.badRequest('The specified tax rule was not found or is invalid for this company');
+                }
+            }
+
             const product = await tx.product.create({
                 data: {
                     ...data,
@@ -1028,6 +1037,15 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
                     ...allUnitBarcodes
                 ]));
 
+                if (restData.taxId) {
+                    const taxExists = await tx.tax.findFirst({
+                        where: { id: restData.taxId, companyId },
+                    });
+                    if (!taxExists) {
+                        throw AppError.badRequest('The specified tax rule was not found or is invalid for this company');
+                    }
+                }
+
                 await tx.product.update({
                     where: { id: productId },
                     data: {
@@ -1095,6 +1113,14 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
             }, { maxWait: 10000, timeout: 20000 });
         } else {
             if (Object.keys(data).length === 0) throw AppError.badRequest('No fields provided for update');
+            if (data.taxId) {
+                const taxExists = await prisma.tax.findFirst({
+                    where: { id: data.taxId, companyId },
+                });
+                if (!taxExists) {
+                    throw AppError.badRequest('The specified tax rule was not found or is invalid for this company');
+                }
+            }
             product = await prisma.product.update({
                 where: { id: productId },
                 data,
