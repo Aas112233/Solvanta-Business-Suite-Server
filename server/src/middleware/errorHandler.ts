@@ -50,11 +50,23 @@ function getPrismaErrorDetails(code: string, meta: any): ErrorDetails[] | undefi
     const targets = rawTargets.filter((target) => target && target !== 'companyId');
     if (targets.length === 0) return undefined;
 
-    return targets.map((field) => ({
-        code,
-        field,
-        message: `This ${formatFieldLabel(field)} is already in use.`,
-    }));
+    return targets.map((field) => {
+        const friendlyField = field
+            .replace(/_key$/, '')
+            .replace(/^[^_]+_[^_]+_/, '') // Removes first two words like "global_strings"
+            .replace(/companyId_?/g, '')
+            .replace(/group_?/g, '')
+            .split('_')
+            .filter(Boolean)
+            .map(s => s.charAt(0).toUpperCase() + s.slice(1))
+            .join(' ') || 'Field';
+
+        return {
+            code,
+            field,
+            message: `This ${friendlyField} is already in use.`,
+        };
+    });
 }
 
 /**
@@ -66,9 +78,21 @@ function getPrismaErrorMessage(code: string, meta: any): { message: string; user
             const target = Array.isArray(meta?.target)
                 ? (meta?.target as string[]).join(', ')
                 : String(meta?.target || 'field');
+            
+            // Format constraint names like "global_strings_companyId_group_systemKey_key" to a friendly name
+            const friendlyTarget = target
+                .replace(/_key$/, '')
+                .replace(/^[^_]+_[^_]+_/, '') // Removes first two words like "global_strings"
+                .replace(/companyId_?/g, '')
+                .replace(/group_?/g, '')
+                .split('_')
+                .filter(Boolean)
+                .map(s => s.charAt(0).toUpperCase() + s.slice(1))
+                .join(' ') || 'field';
+
             return {
-                message: `Duplicate value for: ${target}`,
-                userMessage: `A record with this ${target} already exists. Please use a different value.`,
+                message: `Duplicate value for: ${friendlyTarget}`,
+                userMessage: `A record with this ${friendlyTarget} already exists. Please use a different value.`,
             };
         }
         case 'P2025':
@@ -254,7 +278,7 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
         sendError(
             res,
             'DATABASE_ERROR',
-            isProduction ? userMessage : message,
+            userMessage,
             details,
             400
         );

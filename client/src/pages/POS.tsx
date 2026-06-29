@@ -26,6 +26,7 @@ import {
     upsertCachedProducts,
 } from '../lib/posProductCache';
 import { formatTaxLabel, resolveEffectiveTaxRate, useCompanyTaxSettings } from '../lib/tax';
+import { isCashType, isBankType, isCreditType, isMixedType } from '../lib/globalStrings';
 
 interface CartItem {
     productId: string;
@@ -521,9 +522,9 @@ export default function POS() {
             return res.data.data;
         },
         onSuccess: async (invoice: any) => {
-            const cardReceivedComputed = String(invoice.paymentMethod || '').toUpperCase() === 'CARD'
+            const cardReceivedComputed = isBankType(String(invoice.paymentMethod || '').toUpperCase())
                 ? Number(invoice.grandTotal || 0)
-                : String(invoice.paymentMethod || '').toUpperCase() === 'MIXED'
+                : isMixedType(String(invoice.paymentMethod || '').toUpperCase())
                     ? Math.max(0, Number(invoice.grandTotal || 0) - Math.max(0, Number(invoice.cashReceived || 0) - Number(invoice.changeGiven || 0)))
                     : 0;
 
@@ -1016,15 +1017,15 @@ export default function POS() {
         if (!branchId) return toast.error('Terminal warehouse is missing');
         if (posPolicy?.requireShiftForSale !== false && !activeShiftId) return toast.error('Open shift is required');
         if (!allowedPaymentMethods.includes(String(paymentMethod).toUpperCase())) return toast.error('Payment method is not allowed for this POS');
-        if (String(paymentMethod).toUpperCase() === 'CREDIT' && posPolicy?.allowCreditSales === false) return toast.error('Credit sales are disabled for this POS');
-        if (paymentMethod === 'CREDIT' && !selectedCustomer) return toast.error('Select a customer for credit sale');
-        if (paymentMethod === 'CREDIT' && selectedCustomer?.allowCreditSales === false) return toast.error('Selected customer is not allowed for credit sales');
+        if (isCreditType(String(paymentMethod).toUpperCase()) && posPolicy?.allowCreditSales === false) return toast.error('Credit sales are disabled for this POS');
+        if (isCreditType(paymentMethod) && !selectedCustomer) return toast.error('Select a customer for credit sale');
+        if (isCreditType(paymentMethod) && selectedCustomer?.allowCreditSales === false) return toast.error('Selected customer is not allowed for credit sales');
 
         checkoutReceiptSnapshotRef.current = {
             paymentMethod,
-            cashReceived: paymentMethod === 'CASH' || paymentMethod === 'MIXED' ? cashReceived : 0,
-            cardReceived: paymentMethod === 'MIXED' ? cardReceived : paymentMethod === 'CARD' ? checkoutGrandTotal : 0,
-            changeGiven: paymentMethod === 'CASH' ? checkoutChange : paymentMethod === 'MIXED' ? checkoutMixedChange : 0,
+            cashReceived: isCashType(paymentMethod) || isMixedType(paymentMethod) ? cashReceived : 0,
+            cardReceived: isMixedType(paymentMethod) ? cardReceived : isBankType(paymentMethod) ? checkoutGrandTotal : 0,
+            changeGiven: isCashType(paymentMethod) ? checkoutChange : isMixedType(paymentMethod) ? checkoutMixedChange : 0,
             subtotal,
             discountTotal,
             taxTotal,
@@ -1068,9 +1069,9 @@ export default function POS() {
             taxTotal,
             grandTotal: checkoutGrandTotal,
             paymentMethod,
-            cashReceived: paymentMethod === 'CASH' || paymentMethod === 'MIXED' ? cashReceived : 0,
-            cardReceived: paymentMethod === 'MIXED' ? cardReceived : paymentMethod === 'CARD' ? checkoutGrandTotal : 0,
-            changeGiven: paymentMethod === 'CASH' ? checkoutChange : paymentMethod === 'MIXED' ? checkoutMixedChange : 0,
+            cashReceived: isCashType(paymentMethod) || isMixedType(paymentMethod) ? cashReceived : 0,
+            cardReceived: isMixedType(paymentMethod) ? cardReceived : isBankType(paymentMethod) ? checkoutGrandTotal : 0,
+            changeGiven: isCashType(paymentMethod) ? checkoutChange : isMixedType(paymentMethod) ? checkoutMixedChange : 0,
             loyaltyCustomerId: activeLoyaltyCustomer?.id || null,
             loyaltyPointsRedeemed: activePointsRedeemed,
         });
@@ -1796,7 +1797,7 @@ export default function POS() {
                                     : [
                                         { key: 'CASH', icon: Banknote, label: 'Cash' },
                                         { key: 'CARD', icon: CreditCard, label: 'Card' },
-                                        { key: 'STC_PAY', icon: ShoppingCart, label: 'STC Pay' },
+                                        { key: 'MOBILE', icon: ShoppingCart, label: 'Mobile Pay' },
                                         { key: 'CREDIT', icon: User, label: 'Credit' },
                                     ]
                                 )
@@ -1817,7 +1818,7 @@ export default function POS() {
                                     ))}
                             </div>
 
-                            {paymentMethod === 'CASH' && (
+                            {isCashType(paymentMethod) && (
                                 <div className="animate-in fade-in slide-in-from-top-2">
                                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 block">Cash Received</label>
                                     <input
@@ -1838,7 +1839,7 @@ export default function POS() {
                                 </div>
                             )}
 
-                            {paymentMethod === 'MIXED' && (
+                            {isMixedType(paymentMethod) && (
                                 <div className="animate-in fade-in slide-in-from-top-2 space-y-3">
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>

@@ -21,6 +21,9 @@ type PurchaseFormImportItem = {
     unitCode: string;
     qty: number;
     unitCost: number;
+    discountType?: 'PERCENTAGE' | 'AMOUNT';
+    discountValue?: number;
+    discountAmount?: number;
     lineTotal: number;
     taxRate?: number;
     product?: any;
@@ -172,8 +175,8 @@ function parseSheet(sheet: XLSX.WorkSheet): ParsedImportRow[] {
             if (qty === '' || Number.isNaN(Number(qty)) || Number(qty) <= 0) {
                 errors.push('Qty must be a positive number');
             }
-            if (unitCost !== '' && (Number.isNaN(Number(unitCost)) || Number(unitCost) < 0)) {
-                errors.push('Unit Cost must be blank or a non-negative number');
+            if (unitCost !== '' && (Number.isNaN(Number(unitCost)) || Number(unitCost) <= 0)) {
+                errors.push('Unit Cost must be blank or a positive number');
             }
 
             return {
@@ -255,8 +258,8 @@ export default function PurchaseImportModal({ onClose, onImport }: PurchaseImpor
                 }
 
                 const resolvedUnitCost = row.unitCost === '' ? Number(unit.costPrice || 0) : Number(row.unitCost);
-                if (!Number.isFinite(resolvedUnitCost) || resolvedUnitCost < 0) {
-                    nextRow._rowErrors = [...nextRow._rowErrors, 'Resolved unit cost is invalid'];
+                if (!Number.isFinite(resolvedUnitCost) || resolvedUnitCost <= 0) {
+                    nextRow._rowErrors = [...nextRow._rowErrors, 'Resolved unit cost must be greater than zero'];
                     return nextRow;
                 }
 
@@ -337,6 +340,9 @@ export default function PurchaseImportModal({ onClose, onImport }: PurchaseImpor
                 unitCode: row.resolvedUnitCode || row.unitCode || '',
                 qty,
                 unitCost,
+                discountType: 'AMOUNT',
+                discountValue: 0,
+                discountAmount: 0,
                 lineTotal: qty * unitCost,
                 taxRate: row.taxRate,
                 product: row.product,

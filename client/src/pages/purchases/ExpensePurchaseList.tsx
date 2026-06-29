@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isCashType, isBankType } from \'../../lib/globalStrings\';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import api from '../../lib/api';
@@ -192,8 +193,8 @@ export default function ExpensePurchaseList() {
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <span className={`px-2 py-1 rounded text-xs font-medium ${
-                                            expense.paymentMethod === 'CASH' ? 'bg-green-100 text-green-800' :
-                                            expense.paymentMethod === 'BANK' || expense.paymentMethod === 'BANK_TRANSFER' ? 'bg-blue-100 text-blue-800' :
+                                            isCashType(expense.paymentMethod || '') ? 'bg-green-100 text-green-800' :
+                                            isBankType(expense.paymentMethod || '') ? 'bg-blue-100 text-blue-800' :
                                             'bg-yellow-100 text-yellow-800'
                                         }`}>
                                             {expense.paymentMethod}

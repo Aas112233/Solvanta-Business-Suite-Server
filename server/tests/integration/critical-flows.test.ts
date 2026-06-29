@@ -132,6 +132,18 @@ async function createTestUserContext(params: {
     });
     createdCompanyIds.add(company.id);
     await seedDefaultAccounting(company.id);
+    if (params.permissions.includes(PERMISSIONS.POS_SELL) || params.permissions.includes(PERMISSIONS.POS_ACCESS)) {
+        await db.tax.create({
+            data: {
+                companyId: company.id,
+                name: 'Standard VAT',
+                rate: 0.0,
+                type: 'BOTH',
+                isActive: true,
+                isDefault: true,
+            },
+        });
+    }
 
     const branches: Array<{ id: string }> = [];
     for (let i = 0; i < branchCount; i += 1) {

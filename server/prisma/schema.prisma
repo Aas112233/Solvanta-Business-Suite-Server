@@ -1418,6 +1418,7 @@ model PurchaseInvoice {
   purchaseNo        String
   invoiceNoSupplier String?
   subtotal          Float
+  discountTotal     Float          @default(0)
   taxTotal          Float          @default(0)
   grandTotal        Float
   status            PurchaseStatus @default(RECEIVED)
@@ -1449,9 +1450,12 @@ model PurchaseInvoiceItem {
   invoiceId String @db.ObjectId
   productId String @db.ObjectId
   unitCode  String
-  qty       Float
-  unitCost  Float
-  taxAmount Float  @default(0)
+  qty            Float
+  unitCost       Float
+  discountType   String?
+  discountValue  Float?        @default(0)
+  discountAmount Float?        @default(0)
+  taxAmount      Float         @default(0)
   lineTotal Float
 
   invoice     PurchaseInvoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
@@ -1473,8 +1477,9 @@ model PurchaseOrder {
   poNo         String
   date         DateTime            @default(now())
   expectedDate DateTime?
-  subtotal     Float
-  taxTotal     Float               @default(0)
+  subtotal      Float
+  discountTotal Float               @default(0)
+  taxTotal      Float               @default(0)
   grandTotal   Float
   status       PurchaseOrderStatus @default(DRAFT)
   notes        String?
@@ -1500,9 +1505,12 @@ model PurchaseOrderItem {
   poId      String @db.ObjectId
   productId String @db.ObjectId
   unitCode  String
-  qty       Float
-  unitCost  Float
-  taxAmount Float  @default(0)
+  qty            Float
+  unitCost       Float
+  discountType   String?
+  discountValue  Float?        @default(0)
+  discountAmount Float?        @default(0)
+  taxAmount      Float         @default(0)
   lineTotal Float
 
   purchaseOrder PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)

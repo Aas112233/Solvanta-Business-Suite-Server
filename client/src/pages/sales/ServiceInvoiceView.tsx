@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isCashType, isBankType, isCreditType, isMixedType } from \'../../lib/globalStrings\';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Printer, Download, Mail, Share2 } from 'lucide-react';
@@ -340,7 +341,7 @@ export default function ServiceInvoiceView() {
                                     <span className="text-brand">{formatCurrencyAmount(Number(invoice.grandTotal || 0), currency)}</span>
                                 </div>
                             </div>
-                            {invoice.paymentMethod === 'CASH' && (
+                            {isCashType(invoice.paymentMethod || '') && (
                                 <>
                                     <div className="flex justify-between text-sm">
                                         <span className="text-text-tertiary">Cash Received</span>

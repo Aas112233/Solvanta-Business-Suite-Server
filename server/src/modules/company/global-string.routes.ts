@@ -25,10 +25,10 @@ const createSchema = z.object({
 
 const updateSchema = z.object({
     value: z.string().min(1).optional(),
-    systemKey: z.string().min(1).optional(),
-    link: z.string().optional(),
-    color: z.string().optional(),
-    description: z.string().optional(),
+    systemKey: z.string().min(1).nullish(),
+    link: z.string().nullish(),
+    color: z.string().nullish(),
+    description: z.string().nullish(),
     isActive: z.boolean().optional(),
 });
 

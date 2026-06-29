@@ -49,6 +49,10 @@ const objectIdSchema = z.string().regex(objectIdRegex, 'Invalid id');
 const idParamsSchema = z.object({
     id: objectIdSchema,
 });
+const productUnitParamsSchema = z.object({
+    productId: objectIdSchema,
+    unitId: objectIdSchema,
+});
 
 const requiredTrimmedString = (label: string, maxLength: number) =>
     z.preprocess(
@@ -901,11 +905,22 @@ productRoutes.get('/validate-unit-code', async (req, res, next) => {
     } catch (error) { next(error); }
 });
 
-productRoutes.get('/:id/audit', requirePermission(PERMISSIONS.PRODUCT_VIEW), async (req, res, next) => {
+productRoutes.get('/:id/audit', requirePermission(PERMISSIONS.PRODUCT_VIEW), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         const id = String(req.params.id);
+        const companyId = req.user!.companyId;
+
+        // Verify product exists and belongs to company
+        const productExists = await prisma.product.findFirst({
+            where: { id, companyId, deletedAt: { isSet: false } } as any,
+            select: { id: true }
+        });
+        if (!productExists) throw AppError.notFound('Product');
+
+        // 1. Fetch Audit Logs
         const logs = await prisma.auditLog.findMany({
             where: {
+                companyId,
                 entity: 'Product',
                 entityId: id,
             },
@@ -913,9 +928,103 @@ productRoutes.get('/:id/audit', requirePermission(PERMISSIONS.PRODUCT_VIEW), asy
                 user: { select: { name: true, email: true } },
             },
             orderBy: { createdAt: 'desc' },
-            take: 50,
+            take: 100,
         });
-        sendSuccess(res, logs);
+
+        // 2. Fetch Purchase invoice items
+        const purchaseItems = await prisma.purchaseInvoiceItem.findMany({
+            where: {
+                productId: id,
+                invoice: { companyId }
+            },
+            include: {
+                invoice: {
+                    include: {
+                        supplier: { select: { name: true } }
+                    }
+                }
+            },
+            orderBy: { invoice: { createdAt: 'desc' } },
+            take: 100,
+        });
+
+        // 3. Fetch POS/Sales invoice items
+        const saleItems = await prisma.pOSInvoiceItem.findMany({
+            where: {
+                productId: id,
+                invoice: { companyId }
+            },
+            include: {
+                invoice: {
+                    include: {
+                        customer: { select: { name: true } }
+                    }
+                }
+            },
+            orderBy: { invoice: { createdAt: 'desc' } },
+            take: 100,
+        });
+
+        // 4. Map to unified timeline events
+        const events: any[] = [];
+
+        for (const log of logs) {
+            events.push({
+                id: `log-${log.id}`,
+                type: log.action === 'CREATE' ? 'CREATE' : log.action === 'PRICE_CHANGE' ? 'PRICE_CHANGE' : 'UPDATE',
+                timestamp: log.createdAt,
+                description: log.action === 'CREATE'
+                    ? 'Item created'
+                    : log.action === 'PRICE_CHANGE'
+                        ? 'Price overrides modified'
+                        : 'Item details updated',
+                details: {
+                    before: log.before,
+                    after: log.after,
+                },
+                user: log.user,
+            });
+        }
+
+        for (const p of purchaseItems) {
+            events.push({
+                id: `purchase-${p.id}`,
+                type: 'PURCHASE',
+                timestamp: p.invoice.createdAt,
+                description: `Purchased ${p.qty} ${p.unitCode} from ${p.invoice.supplier?.name || 'Unknown Supplier'}`,
+                details: {
+                    invoiceNo: p.invoice.purchaseNo,
+                    qty: p.qty,
+                    unitCost: p.unitCost,
+                    taxAmount: p.taxAmount,
+                    lineTotal: p.lineTotal,
+                },
+                user: null,
+            });
+        }
+
+        for (const s of saleItems) {
+            events.push({
+                id: `sale-${s.id}`,
+                type: 'SALE',
+                timestamp: s.invoice.createdAt,
+                description: `Sold ${s.qty} ${s.unitCode} to ${s.invoice.customer?.name || s.invoice.walkInCustomerName || 'Walk-in Customer'}`,
+                details: {
+                    invoiceNo: s.invoice.invoiceNo,
+                    qty: s.qty,
+                    unitPrice: s.unitPrice,
+                    discount: s.discount,
+                    taxAmount: s.taxAmount,
+                    lineTotal: s.lineTotal,
+                },
+                user: null,
+            });
+        }
+
+        // Sort desc
+        events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        sendSuccess(res, events.slice(0, 100));
     } catch (error) { next(error); }
 });
 
@@ -946,7 +1055,7 @@ productRoutes.get('/:id', requirePermission(PERMISSIONS.PRODUCT_VIEW), async (re
 });
 
 // PATCH /products/:id
-productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), validate({ body: productPatchSchema }), async (req, res, next) => {
+productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), validate({ params: idParamsSchema, body: productPatchSchema }), async (req, res, next) => {
     try {
         const { units, ...rawData } = req.body;
         const companyId = req.user!.companyId;
@@ -1128,12 +1237,26 @@ productRoutes.patch('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMI
             });
         }
 
+        if (product) {
+            await prisma.auditLog.create({
+                data: {
+                    companyId,
+                    userId: req.user!.id,
+                    action: 'UPDATE',
+                    entity: 'Product',
+                    entityId: productId,
+                    before: existing ? existing : null,
+                    after: product,
+                }
+            });
+        }
+
         sendSuccess(res, product);
     } catch (error) { next(error); }
 });
 
 // DELETE /products/:id
-productRoutes.delete('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), async (req, res, next) => {
+productRoutes.delete('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), validate({ params: idParamsSchema }), async (req, res, next) => {
     try {
         throw AppError.badRequest('Product deletion is disabled. Please set status to INACTIVE instead.');
         /*
@@ -1148,7 +1271,7 @@ productRoutes.delete('/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERM
 
 // ════════════ UNITS MANAGEMENT ════════════
 
-productRoutes.post('/:id/units', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), validate({ body: unitSchema }), async (req, res, next) => {
+productRoutes.post('/:id/units', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), validate({ params: idParamsSchema, body: unitSchema }), async (req, res, next) => {
     try {
         const companyId = req.user!.companyId;
         const product = await prisma.product.findFirst({
@@ -1211,7 +1334,7 @@ productRoutes.post('/:id/units', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, 
     } catch (error) { next(error); }
 });
 
-productRoutes.patch('/:productId/units/:unitId', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), validate({ body: unitPatchSchema }), async (req, res, next) => {
+productRoutes.patch('/:productId/units/:unitId', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), validate({ params: productUnitParamsSchema, body: unitPatchSchema }), async (req, res, next) => {
     try {
         const companyId = req.user!.companyId;
         const productId = req.params.productId as string;
@@ -1325,7 +1448,7 @@ productRoutes.patch('/:productId/units/:unitId', requireAnyPermission(PERMISSION
     } catch (error) { next(error); }
 });
 
-productRoutes.delete('/:productId/units/:unitId', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), async (req, res, next) => {
+productRoutes.delete('/:productId/units/:unitId', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_ITEM), validate({ params: productUnitParamsSchema }), async (req, res, next) => {
     try {
         const unit = await prisma.productUnit.findFirst({
             where: {
@@ -1375,6 +1498,10 @@ productRoutes.put('/:id/pricing', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT,
         });
         if (!product) throw AppError.notFound('Product');
 
+        const existingPrices = await prisma.productPriceGroup.findMany({
+            where: { productId }
+        });
+
         const uniquePriceGroupIds = Array.from(new Set(prices.map((price) => price.priceGroupId)));
         if (uniquePriceGroupIds.length > 0) {
             const validPriceGroupCount = await (prisma as any).priceGroup.count({
@@ -1422,6 +1549,23 @@ productRoutes.put('/:id/pricing', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT,
                 })
             )
         );
+
+        const afterPrices = await prisma.productPriceGroup.findMany({
+            where: { productId }
+        });
+
+        await prisma.auditLog.create({
+            data: {
+                companyId,
+                userId: req.user!.id,
+                action: 'PRICE_CHANGE',
+                entity: 'Product',
+                entityId: productId,
+                before: existingPrices as any,
+                after: afterPrices as any,
+            }
+        });
+
         sendSuccess(res, { message: 'Prices updated' });
     } catch (error) { next(error); }
 });

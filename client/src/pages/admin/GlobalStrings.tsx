@@ -95,7 +95,7 @@ export default function GlobalStrings() {
     const [formLink, setFormLink] = useState('');
     const [formDescription, setFormDescription] = useState('');
     const [search, setSearch] = useState('');
-    const [loadingDefaults, setLoadingDefaults] = useState(false);
+    const [formIsActive, setFormIsActive] = useState(true);
     const [showForm, setShowForm] = useState(false);
 
 
@@ -118,7 +118,10 @@ export default function GlobalStrings() {
             resetForm();
             toast.success('Added successfully');
         },
-        onError: () => toast.error('Failed to add'),
+        onError: (err: any) => {
+            const errorData = err.response?.data?.error;
+            toast.error(errorData?.details?.[0]?.message || errorData?.message || 'Failed to add');
+        },
     });
 
     const updateMutation = useMutation({
@@ -128,7 +131,10 @@ export default function GlobalStrings() {
             resetForm();
             toast.success('Updated successfully');
         },
-        onError: () => toast.error('Failed to update'),
+        onError: (err: any) => {
+            const errorData = err.response?.data?.error;
+            toast.error(errorData?.details?.[0]?.message || errorData?.message || 'Failed to update');
+        },
     });
 
     const toggleMutation = useMutation({
@@ -157,6 +163,7 @@ export default function GlobalStrings() {
         setFormColor('#3b82f6');
         setFormLink('');
         setFormDescription('');
+        setFormIsActive(true);
         setShowForm(false);
     };
 
@@ -167,6 +174,7 @@ export default function GlobalStrings() {
         setFormColor(item.color || '#3b82f6');
         setFormLink(item.link || '');
         setFormDescription(item.description || '');
+        setFormIsActive(item.isActive !== false);
         setShowForm(true);
         document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
     };
@@ -192,6 +200,7 @@ export default function GlobalStrings() {
                 color: formColor.trim() || undefined,
                 link: formLink.trim() || undefined,
                 description: formDescription.trim() || undefined,
+                isActive: formIsActive,
             });
         } else {
             createMutation.mutate({
@@ -201,29 +210,9 @@ export default function GlobalStrings() {
                 color: formColor.trim() || undefined,
                 link: formLink.trim() || undefined,
                 description: formDescription.trim() || undefined,
+                isActive: formIsActive,
             });
         }
-    };
-
-
-    // ── Load Defaults ───────────────────────────────────────────
-    const loadDefaults = async () => {
-        const defaults = GROUP_DEFAULTS[selectedGroup] || [];
-        if (defaults.length === 0) {
-            toast.error('No defaults for this category');
-            return;
-        }
-        setLoadingDefaults(true);
-        let created = 0;
-        for (const item of defaults) {
-            try {
-                const res = await api.post('/global-strings', { group: selectedGroup, ...item });
-                if (res.status === 201) created++;
-            } catch { /* skip duplicates */ }
-        }
-        queryClient.invalidateQueries({ queryKey: ['global-strings'] });
-        setLoadingDefaults(false);
-        toast.success(created > 0 ? `Added ${created} new items` : 'All defaults already loaded');
     };
 
     // ── Filtered List ───────────────────────────────────────────
@@ -236,11 +225,26 @@ export default function GlobalStrings() {
 
     const paymentSystemKeyOptions = useMemo(() => {
         const defaults = GROUP_DEFAULTS[selectedGroup] || [];
+        
+        // Find systemKeys that are currently in use by other strings in this group
+        const inUseKeys = new Set(
+            strings
+                .filter(s => s.systemKey && s.id !== editingItem?.id)
+                .map(s => String(s.systemKey).toUpperCase())
+        );
+
         const options = defaults
             .filter((d) => d.systemKey)
-            .map((d) => ({ value: String(d.systemKey), label: `${d.systemKey} — ${d.value}` }));
+            .map((d) => {
+                const key = String(d.systemKey).toUpperCase();
+                return {
+                    value: key,
+                    label: `${key} — ${d.value}`,
+                    disabled: inUseKeys.has(key),
+                };
+            });
         return options;
-    }, [selectedGroup]);
+    }, [selectedGroup, strings, editingItem]);
 
     // ═════════════════════════════════════════════════════════════
     // RENDER
@@ -261,16 +265,6 @@ export default function GlobalStrings() {
                         </div>
                     </div>
                 </div>
-                {canManage && strings.length > 0 && (
-                    <button
-                        onClick={loadDefaults}
-                        disabled={loadingDefaults}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-white border border-border-subtle rounded-xl text-xs font-bold text-text-secondary hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm"
-                    >
-                        {loadingDefaults ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                        Sync Defaults
-                    </button>
-                )}
             </div>
 
             {!canManage && (
@@ -442,6 +436,23 @@ export default function GlobalStrings() {
                                             </div>
                                         </div>
                                     )}
+                                    {/* Active Toggle */}
+                                    <div className="md:col-span-2 flex items-center justify-between p-4 border border-border-subtle rounded-xl bg-slate-50">
+                                        <div>
+                                            <p className="text-sm font-bold text-text-primary">Active Status</p>
+                                            <p className="text-xs text-text-tertiary">If disabled, this item will not be available in dropdown selections.</p>
+                                        </div>
+                                        <label className="relative inline-flex items-center cursor-pointer">
+                                            <input 
+                                                type="checkbox" 
+                                                className="sr-only peer" 
+                                                checked={formIsActive} 
+                                                onChange={(e) => setFormIsActive(e.target.checked)} 
+                                            />
+                                            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-100 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-500"></div>
+                                        </label>
+                                    </div>
+
                                 </div>
 
                                 {/* Submit Row */}
@@ -568,17 +579,15 @@ export default function GlobalStrings() {
                                                 </button>
 
                                                 {/* Delete */}
-                                                {!item.systemKey && (
-                                                    <button
-                                                        onClick={() => {
-                                                            if (window.confirm(`Delete "${item.value}"?`)) deleteMutation.mutate(item.id);
-                                                        }}
-                                                        title="Delete"
-                                                        className="p-2 text-text-tertiary hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                                                    >
-                                                        <Trash2 size={15} />
-                                                    </button>
-                                                )}
+                                                <button
+                                                    onClick={() => {
+                                                        if (window.confirm(`Delete "${item.value}"?`)) deleteMutation.mutate(item.id);
+                                                    }}
+                                                    title="Delete"
+                                                    className="p-2 text-text-tertiary hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                                >
+                                                    <Trash2 size={15} />
+                                                </button>
                                             </div>
                                         )}
                                     </div>

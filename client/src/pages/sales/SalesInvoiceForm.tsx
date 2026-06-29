@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { isCashType, isBankType, isCreditType, isMixedType } from \'../../lib/globalStrings\';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import toast from '@/lib/toast';
@@ -200,9 +201,9 @@ export default function SalesInvoiceForm() {
         if (!branchId) return toast.error('Missing branch');
         if (!paymentMethod) return toast.error('Select payment method');
         if (items.length === 0) return toast.error('No items added');
-        if (paymentMethod === 'CREDIT' && !customerId) return toast.error('Customer is required for credit invoice');
-        if (paymentMethod === 'CREDIT' && !creditAllowedForCustomer) return toast.error('Selected customer is not allowed for credit sales');
-        if (paymentMethod === 'MIXED') return toast.error('MIXED is not supported from this form yet');
+        if (isCreditType(paymentMethod) && !customerId) return toast.error('Customer is required for credit invoice');
+        if (isCreditType(paymentMethod) && !creditAllowedForCustomer) return toast.error('Selected customer is not allowed for credit sales');
+        if (isMixedType(paymentMethod)) return toast.error('MIXED is not supported from this form yet');
 
         const payload: any = {
             branchId,

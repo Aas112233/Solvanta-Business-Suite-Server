@@ -427,6 +427,8 @@ export const purchaseInvoiceItemSchema = z.object({
     unitCode: optionalSanitizedString({ maxLength: 10 }),
     qty: positiveNumber,
     unitCost: nonNegativeNumber,
+    discountType: z.enum(['PERCENTAGE', 'AMOUNT']).optional().default('AMOUNT'),
+    discountValue: nonNegativeNumber.optional().default(0),
     taxAmount: nonNegativeNumber.default(0),
     lineTotal: nonNegativeNumber.optional(),
 });

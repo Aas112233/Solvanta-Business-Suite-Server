@@ -8,7 +8,7 @@ import { AppError } from '../../utils/AppError.js';
 import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
 import { formatDocNo, nextCounter } from '../../utils/documentCounter.js';
 import { resolveCompanyDocumentSettings } from '../../utils/companySettings.js';
-import { SALES_INVOICE_PAYMENT_METHODS, SALES_RECEIPT_PAYMENT_METHODS } from '../../utils/paymentMethods.js';
+import { SALES_INVOICE_PAYMENT_METHODS, SALES_RECEIPT_PAYMENT_METHODS, isCreditType, isMixedType } from '../../utils/paymentMethods.js';
 import { z } from 'zod';
 import { getPosTerminalPolicy } from '../pos/pos-policy.js';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
@@ -772,10 +772,10 @@ salesRoutes.post('/quotations/:id/convert', requirePermission(PERMISSIONS.SALES_
             const quoteBranchId = String(quote.branchId);
             if (quote.status === 'CONVERTED') throw AppError.badRequest('Quotation is already converted');
             if (quote.status === 'CANCELLED') throw AppError.badRequest('Cannot convert a cancelled quotation');
-            if (paymentMethod === 'CREDIT' && !quote.customerId) {
+            if (isCreditType(paymentMethod) && !quote.customerId) {
                 throw AppError.badRequest('Customer is required for CREDIT payment');
             }
-            if (paymentMethod === 'CREDIT' && quote.customerId) {
+            if (isCreditType(paymentMethod) && quote.customerId) {
                 const customer = await tx.customer.findFirst({
                     where: { id: quote.customerId, companyId },
                     select: { id: true, allowCreditSales: true },
@@ -1924,8 +1924,8 @@ salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_P
         const invoiceId = String(req.params.id);
         const { amount, paymentMethod, paymentDate, referenceNo, notes } = req.body as z.infer<typeof salesReceivePaymentSchema>;
         const normalizedPaymentMethod = String(paymentMethod || '').trim().toUpperCase();
-        if (!['CASH', 'CARD', 'BANK_TRANSFER', 'STC_PAY'].includes(normalizedPaymentMethod)) {
-            throw AppError.badRequest('Payment method must be CASH, CARD, BANK_TRANSFER, or STC_PAY');
+        if (!['CASH', 'CARD', 'BANK_TRANSFER', 'MOBILE'].includes(normalizedPaymentMethod) && !normalizedPaymentMethod.startsWith('CASH_') && !normalizedPaymentMethod.startsWith('CARD_') && !normalizedPaymentMethod.startsWith('BANK_') && !normalizedPaymentMethod.startsWith('MOBILE_')) {
+            throw AppError.badRequest('Payment method must be a valid cash, card, bank, or mobile payment type');
         }
 
         const result = await prisma.$transaction(async (tx) => {
@@ -2382,7 +2382,7 @@ salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RE
             const roundMoney = (value: number): number => Math.round(Number(value || 0) * 100) / 100;
             let cashRefund: number | undefined;
             let bankRefund: number | undefined;
-            if (String(invoice.paymentMethod || '').toUpperCase() === 'MIXED') {
+            if (isMixedType(String(invoice.paymentMethod || '').toUpperCase())) {
                 const originalNetCash = roundMoney(
                     Math.max(0, Number(invoice.cashReceived || 0) - Math.max(0, Number(invoice.changeGiven || 0)))
                 );
@@ -2608,10 +2608,10 @@ salesRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.SALES_QUOT
             if (!order) throw AppError.notFound('Sales Order');
             if (order.status === 'INVOICED') throw AppError.badRequest('Order is already invoiced');
             if (order.status === 'CANCELLED') throw AppError.badRequest('Cannot invoice a cancelled order');
-            if (paymentMethod === 'CREDIT' && !order.customerId) {
+            if (isCreditType(paymentMethod) && !order.customerId) {
                 throw AppError.badRequest('Customer is required for CREDIT payment');
             }
-            if (paymentMethod === 'CREDIT' && order.customerId) {
+            if (isCreditType(paymentMethod) && order.customerId) {
                 const customer = await tx.customer.findFirst({
                     where: { id: order.customerId, companyId },
                     select: { id: true, allowCreditSales: true },

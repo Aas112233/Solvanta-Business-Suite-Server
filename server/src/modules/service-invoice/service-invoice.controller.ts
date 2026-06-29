@@ -3,7 +3,7 @@ import { prisma } from '../../lib/prisma.js';
 import { AppError } from '../../utils/AppError.js';
 import { formatDocNo, nextCounter } from '../../utils/documentCounter.js';
 import { sendSuccess } from '../../utils/response.js';
-import { normalizePaymentMethodKey, SERVICE_INVOICE_PAYMENT_METHODS } from '../../utils/paymentMethods.js';
+import { normalizePaymentMethodKey, SERVICE_INVOICE_PAYMENT_METHODS, isCreditType } from '../../utils/paymentMethods.js';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
 
@@ -169,8 +169,8 @@ export const createServiceInvoice = async (req: Request, res: Response) => {
             const discountTotal = roundMoney(normalizedItems.reduce((sum, item) => sum + item.discount, 0));
             const taxTotal = roundMoney(normalizedItems.reduce((sum, item) => sum + item.taxAmount, 0));
             const grandTotal = roundMoney(subtotal + taxTotal);
-            const cashReceived = normalizedPaymentMethod === 'CREDIT' ? 0 : grandTotal;
-            const status = normalizedPaymentMethod === 'CREDIT' ? 'CREDIT' : 'PAID';
+            const cashReceived = isCreditType(normalizedPaymentMethod) ? 0 : grandTotal;
+            const status = isCreditType(normalizedPaymentMethod) ? 'CREDIT' : 'PAID';
             const invoiceNo = formatDocNo(
                 `SVC-${branch.code}`,
                 await nextCounter(tx as any, companyId, 'SERVICE_INVOICE', branch.id),

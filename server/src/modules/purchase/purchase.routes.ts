@@ -11,7 +11,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { z } from 'zod';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { InventoryService } from '../inventory/InventoryService.js';
-import { EXPENSE_PURCHASE_PAYMENT_METHODS, normalizePaymentMethodKey } from '../../utils/paymentMethods.js';
+import { EXPENSE_PURCHASE_PAYMENT_METHODS, normalizePaymentMethodKey, isCashType, isBankType, isCreditType } from '../../utils/paymentMethods.js';
 export const purchaseRoutes = Router();
 purchaseRoutes.use(authenticate);
 
@@ -62,6 +62,8 @@ const purchaseItemSchema = z.object({
     unitCode: z.string().min(1),
     qty: z.number().positive(),
     unitCost: z.number().min(0),
+    discountType: z.enum(['PERCENTAGE', 'AMOUNT']).optional().default('AMOUNT'),
+    discountValue: z.number().min(0).optional().default(0),
     taxAmount: z.number().min(0).optional().default(0),
     lineTotal: z.number().min(0),
 });
@@ -114,6 +116,8 @@ const purchaseOrderItemSchema = z.object({
     unitCode: z.string().min(1),
     qty: z.number().positive(),
     unitCost: z.number().min(0),
+    discountType: z.enum(['PERCENTAGE', 'AMOUNT']).optional().default('AMOUNT'),
+    discountValue: z.number().min(0).optional().default(0),
     taxAmount: z.number().min(0).optional().default(0),
     lineTotal: z.number().min(0),
 });
@@ -405,10 +409,26 @@ purchaseRoutes.post('/orders', requirePermission(PERMISSIONS.PURCHASE_CREATE), v
 
             let subtotal = 0;
             let taxTotal = 0;
+            let discountTotal = 0;
             const preparedItems = items.map((item: any) => {
                 const qty = Number(item.qty) || 0;
                 const unitCost = Number(item.unitCost) || 0;
-                const lineTotal = roundMoney(qty * unitCost);
+                const discountType = item.discountType || 'AMOUNT';
+                const discountValue = Number(item.discountValue || 0);
+
+                const itemGross = qty * unitCost;
+                let discountAmount = 0;
+                if (discountType === 'PERCENTAGE') {
+                    discountAmount = roundMoney(itemGross * (discountValue / 100));
+                } else {
+                    discountAmount = discountValue;
+                }
+
+                if (discountAmount > itemGross) {
+                    discountAmount = itemGross;
+                }
+
+                const lineTotal = roundMoney(itemGross - discountAmount);
 
                 // Resolve tax rate from product's tax or default purchase tax
                 const product = productById.get(item.productId);
@@ -427,12 +447,16 @@ purchaseRoutes.post('/orders', requirePermission(PERMISSIONS.PURCHASE_CREATE), v
 
                 subtotal += lineTotal;
                 taxTotal += taxAmount;
+                discountTotal += discountAmount;
 
                 return {
                     productId: item.productId,
                     unitCode: item.unitCode,
                     qty,
                     unitCost,
+                    discountType,
+                    discountValue,
+                    discountAmount,
                     taxAmount,
                     lineTotal,
                 };
@@ -440,6 +464,7 @@ purchaseRoutes.post('/orders', requirePermission(PERMISSIONS.PURCHASE_CREATE), v
 
             subtotal = roundMoney(subtotal);
             taxTotal = roundMoney(taxTotal);
+            discountTotal = roundMoney(discountTotal);
             const grandTotal = roundMoney(subtotal + taxTotal);
 
             return await tx.purchaseOrder.create({
@@ -451,6 +476,7 @@ purchaseRoutes.post('/orders', requirePermission(PERMISSIONS.PURCHASE_CREATE), v
                     date: date ? new Date(date) : new Date(),
                     expectedDate: expectedDate ? new Date(expectedDate) : null,
                     subtotal,
+                    discountTotal,
                     taxTotal,
                     grandTotal,
                     notes,
@@ -498,6 +524,7 @@ purchaseRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.PURCHAS
                     purchaseOrderId: po.id,
                     purchaseNo,
                     subtotal: po.subtotal,
+                    discountTotal: po.discountTotal,
                     taxTotal: po.taxTotal,
                     grandTotal: po.grandTotal,
                     status: 'RECEIVED',
@@ -509,6 +536,9 @@ purchaseRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.PURCHAS
                             unitCode: item.unitCode,
                             qty: item.qty,
                             unitCost: item.unitCost,
+                            discountType: item.discountType,
+                            discountValue: item.discountValue,
+                            discountAmount: item.discountAmount,
                             taxAmount: item.taxAmount,
                             lineTotal: item.lineTotal,
                         }))
@@ -932,10 +962,26 @@ purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), async (
 
             let subtotal = 0;
             let taxTotal = 0;
+            let discountTotal = 0;
             const sanitizedItems = items.map((item: any) => {
                 const qty = Number(item.qty) || 0;
                 const unitCost = Number(item.unitCost) || 0;
-                const lineTotal = roundMoney(qty * unitCost);
+                const discountType = item.discountType || 'AMOUNT';
+                const discountValue = Number(item.discountValue || 0);
+
+                const itemGross = qty * unitCost;
+                let discountAmount = 0;
+                if (discountType === 'PERCENTAGE') {
+                    discountAmount = roundMoney(itemGross * (discountValue / 100));
+                } else {
+                    discountAmount = discountValue;
+                }
+
+                if (discountAmount > itemGross) {
+                    discountAmount = itemGross;
+                }
+
+                const lineTotal = roundMoney(itemGross - discountAmount);
 
                 // Resolve tax rate from product's tax or default purchase tax
                 const product = productById.get(item.productId);
@@ -954,12 +1000,16 @@ purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), async (
 
                 subtotal += lineTotal;
                 taxTotal += taxAmount;
+                discountTotal += discountAmount;
 
                 return {
                     productId: item.productId,
                     unitCode: item.unitCode,
                     qty,
                     unitCost,
+                    discountType,
+                    discountValue,
+                    discountAmount,
                     taxAmount,
                     lineTotal,
                 };
@@ -967,6 +1017,7 @@ purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), async (
 
             subtotal = roundMoney(subtotal);
             taxTotal = roundMoney(taxTotal);
+            discountTotal = roundMoney(discountTotal);
             const grandTotal = roundMoney(subtotal + taxTotal);
 
             // Create purchase invoice
@@ -981,6 +1032,7 @@ purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), async (
                     purchaseNo,
                     invoiceNoSupplier,
                     subtotal,
+                    discountTotal,
                     taxTotal,
                     grandTotal,
                     paymentMethod,
@@ -993,6 +1045,9 @@ purchaseRoutes.post('/', requirePermission(PERMISSIONS.PURCHASE_CREATE), async (
                             unitCode: i.unitCode,
                             qty: i.qty,
                             unitCost: i.unitCost,
+                            discountType: i.discountType,
+                            discountValue: i.discountValue,
+                            discountAmount: i.discountAmount,
                             taxAmount: i.taxAmount,
                             lineTotal: i.lineTotal,
                         })),
@@ -1089,19 +1144,85 @@ purchaseRoutes.put('/:id', requirePermission(PERMISSIONS.PURCHASE_CREATE), valid
             const paidAmount = Number(payments._sum?.amount || 0);
 
             // 3. Prepare New Items & Calculations
+            const productIds = [...new Set(items.map((i: any) => i.productId))];
+            const products = await (tx as any).product.findMany({
+                where: { companyId, id: { in: productIds } },
+                select: { id: true, taxId: true, itemCode: true, name: true },
+            });
+            const productById = new Map<string, any>(products.map((p: any) => [p.id, p]));
+
+            const activePurchaseTaxes = await tx.tax.findMany({
+                where: {
+                    companyId,
+                    isActive: true,
+                    OR: [{ type: 'PURCHASE' }, { type: 'BOTH' }],
+                },
+                select: { id: true, name: true, rate: true, isDefault: true },
+                orderBy: { createdAt: 'asc' },
+            });
+            const purchaseTaxById = new Map(activePurchaseTaxes.map((t: any) => [t.id, t]));
+            const defaultPurchaseTax = activePurchaseTaxes.find((t: any) => t.isDefault) || activePurchaseTaxes[0] || null;
+
             let newSubtotal = 0;
             let newTaxTotal = 0;
+            let newDiscountTotal = 0;
 
             const sanitizedNewItems = items.map((item: any) => {
                 const qty = Number(item.qty) || 0;
                 const unitCost = Number(item.unitCost) || 0;
-                const lineTotal = Number(item.lineTotal) || (qty * unitCost);
-                const taxAmount = Number(item.taxAmount) || 0;
+                const discountType = item.discountType || 'AMOUNT';
+                const discountValue = Number(item.discountValue || 0);
+
+                const itemGross = qty * unitCost;
+                let discountAmount = 0;
+                if (discountType === 'PERCENTAGE') {
+                    discountAmount = roundMoney(itemGross * (discountValue / 100));
+                } else {
+                    discountAmount = discountValue;
+                }
+
+                if (discountAmount > itemGross) {
+                    discountAmount = itemGross;
+                }
+
+                const lineTotal = roundMoney(itemGross - discountAmount);
+
+                // Resolve tax rate
+                const product = productById.get(item.productId);
+                let taxRate = 0;
+                if (product?.taxId) {
+                    const productTax = purchaseTaxById.get(product.taxId);
+                    if (productTax) {
+                        taxRate = Number(productTax.rate) || 0;
+                    } else if (defaultPurchaseTax) {
+                        taxRate = Number(defaultPurchaseTax.rate) || 0;
+                    }
+                } else if (defaultPurchaseTax) {
+                    taxRate = Number(defaultPurchaseTax.rate) || 0;
+                }
+                const taxAmount = roundMoney(lineTotal * taxRate);
+
                 newSubtotal += lineTotal;
                 newTaxTotal += taxAmount;
-                return { ...item, qty, unitCost, lineTotal, taxAmount };
+                newDiscountTotal += discountAmount;
+
+                return {
+                    productId: item.productId,
+                    unitCode: item.unitCode,
+                    qty,
+                    unitCost,
+                    discountType,
+                    discountValue,
+                    discountAmount,
+                    taxAmount,
+                    lineTotal,
+                };
             });
-            const newGrandTotal = newSubtotal + newTaxTotal;
+
+            newSubtotal = roundMoney(newSubtotal);
+            newTaxTotal = roundMoney(newTaxTotal);
+            newDiscountTotal = roundMoney(newDiscountTotal);
+            const newGrandTotal = roundMoney(newSubtotal + newTaxTotal);
 
             if (newGrandTotal < paidAmount) {
                 throw AppError.badRequest(`Cannot reduce invoice total below paid amount (${paidAmount})`);
@@ -1161,6 +1282,7 @@ purchaseRoutes.put('/:id', requirePermission(PERMISSIONS.PURCHASE_CREATE), valid
                     branchId,
                     invoiceNoSupplier,
                     subtotal: newSubtotal,
+                    discountTotal: newDiscountTotal,
                     taxTotal: newTaxTotal,
                     grandTotal: newGrandTotal,
                     paymentMethod,
@@ -1198,6 +1320,9 @@ purchaseRoutes.put('/:id', requirePermission(PERMISSIONS.PURCHASE_CREATE), valid
                         unitCode: item.unitCode,
                         qty: item.qty,
                         unitCost: item.unitCost,
+                        discountType: item.discountType,
+                        discountValue: item.discountValue,
+                        discountAmount: item.discountAmount,
                         taxAmount: item.taxAmount,
                         lineTotal: item.lineTotal,
                     }
@@ -1588,7 +1713,7 @@ purchaseRoutes.post('/:id/returns', requirePermission(PERMISSIONS.PURCHASE_RETUR
                     throw AppError.badRequest(`Return qty exceeds available qty for item ${source.id}`);
                 }
 
-                const unitCost = Number(source.unitCost);
+                const unitCost = Number(source.qty) > 0 ? Number(source.lineTotal) / Number(source.qty) : Number(source.unitCost);
                 const lineTotal = roundMoney(Number(new Decimal(line.qty).mul(unitCost)));
                 const taxRate = Number(source.qty) > 0 ? Number(source.taxAmount || 0) / Number(source.qty) : 0;
                 const lineTax = roundMoney(Number(new Decimal(line.qty).mul(taxRate)));
@@ -2231,7 +2356,7 @@ purchaseRoutes.post('/expense-purchases', requirePermission(PERMISSIONS.PURCHASE
 
             // Credit: Cash/Bank account (depends on payment method)
             let creditAccountId: string;
-            if (normalizedPaymentMethod === 'CASH') {
+            if (isCashType(normalizedPaymentMethod)) {
                 // Find cash account (you may want to make this configurable)
                 const cashAccount = await (tx as any).account.findFirst({
                     where: { companyId, accountType: 'ASSET', name: { contains: 'Cash', mode: 'insensitive' } },
@@ -2240,7 +2365,7 @@ purchaseRoutes.post('/expense-purchases', requirePermission(PERMISSIONS.PURCHASE
                 if (!creditAccountId) {
                     throw AppError.badRequest('Cash account not found. Please create a Cash account first.');
                 }
-            } else if (normalizedPaymentMethod === 'BANK_TRANSFER') {
+            } else if (isBankType(normalizedPaymentMethod)) {
                 // Find bank account
                 const bankAccount = await (tx as any).account.findFirst({
                     where: { companyId, accountType: 'ASSET', name: { contains: 'Bank', mode: 'insensitive' } },
@@ -2282,7 +2407,7 @@ purchaseRoutes.post('/expense-purchases', requirePermission(PERMISSIONS.PURCHASE
             // Update expense purchase with journal entry reference
             await (tx as any).expensePurchase.update({
                 where: { id: expensePurchase.id },
-                data: { journalEntryId: journalEntry.id, status: normalizedPaymentMethod === 'CREDIT' ? 'DRAFT' : 'PAID' },
+                data: { journalEntryId: journalEntry.id, status: isCreditType(normalizedPaymentMethod) ? 'DRAFT' : 'PAID' },
             });
 
             return expensePurchase;

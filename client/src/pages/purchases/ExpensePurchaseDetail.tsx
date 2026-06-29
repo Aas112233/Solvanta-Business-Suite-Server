@@ -1,4 +1,5 @@
 import { useNavigate, useParams } from 'react-router-dom';
+import { isCashType, isBankType } from \'../../lib/globalStrings\';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { ArrowLeft, Edit, Trash2, FileText } from 'lucide-react';
@@ -79,8 +80,8 @@ export default function ExpensePurchaseDetail() {
                     {expense.status}
                 </span>
                 <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                   expense.paymentMethod === 'CASH' ? 'bg-green-100 text-green-800' :
-                   expense.paymentMethod === 'BANK' || expense.paymentMethod === 'BANK_TRANSFER' ? 'bg-blue-100 text-blue-800' :
+                   isCashType(expense.paymentMethod || '') ? 'bg-green-100 text-green-800' :
+                   isBankType(expense.paymentMethod || '') ? 'bg-blue-100 text-blue-800' :
                     'bg-yellow-100 text-yellow-800'
                 }`}>
                     {expense.paymentMethod}

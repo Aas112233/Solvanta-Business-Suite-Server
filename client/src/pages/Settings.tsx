@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import toast from '@/lib/toast';
-import { Building2, Loader2, RefreshCw, Save, ShieldAlert } from 'lucide-react';
+import { Building2, Loader2, RefreshCw, Save, ShieldAlert, Percent, Settings as SettingsIcon } from 'lucide-react';
 import ModuleRefreshButton from '../components/ModuleRefreshButton';
 import { useAuthStore } from '../stores/authStore';
 import AppLoader from '../components/ui/AppLoader';
@@ -39,6 +39,8 @@ type SettingsForm = {
     invoicePrefix: string;
     quotationPrefix: string;
     salesOrderPrefix: string;
+    taxLabel: string;
+    inclusivePricing: boolean;
 };
 
 const currencyOptions = ['SAR', 'USD', 'EUR', 'GBP', 'AED', 'PKR', 'INR', 'KWD', 'QAR'];
@@ -69,6 +71,8 @@ const emptyForm: SettingsForm = {
     invoicePrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.invoicePrefix,
     quotationPrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.quotationPrefix,
     salesOrderPrefix: DEFAULT_COMPANY_DOCUMENT_SETTINGS.salesOrderPrefix,
+    taxLabel: 'Tax',
+    inclusivePricing: false,
 };
 
 function parseForm(company?: CompanyResponse): { form: SettingsForm; rawSettings: Record<string, any> } {
@@ -82,6 +86,7 @@ function parseForm(company?: CompanyResponse): { form: SettingsForm; rawSettings
     const documents = settings.documents || {};
     const contact = settings.contact || {};
     const regional = settings.regional || {};
+    const tax = settings.tax || {};
 
     return {
         rawSettings: settings,
@@ -102,6 +107,8 @@ function parseForm(company?: CompanyResponse): { form: SettingsForm; rawSettings
             invoicePrefix: String(documents.invoicePrefix || settings.invoicePrefix || DEFAULT_COMPANY_DOCUMENT_SETTINGS.invoicePrefix),
             quotationPrefix: String(documents.quotationPrefix || DEFAULT_COMPANY_DOCUMENT_SETTINGS.quotationPrefix),
             salesOrderPrefix: String(documents.salesOrderPrefix || DEFAULT_COMPANY_DOCUMENT_SETTINGS.salesOrderPrefix),
+            taxLabel: String(tax.label || 'Tax'),
+            inclusivePricing: Boolean(tax.inclusivePricing),
         },
     };
 }
@@ -163,6 +170,11 @@ export default function Settings() {
                         invoicePrefix: next.invoicePrefix.trim() || DEFAULT_COMPANY_DOCUMENT_SETTINGS.invoicePrefix,
                         quotationPrefix: next.quotationPrefix.trim() || DEFAULT_COMPANY_DOCUMENT_SETTINGS.quotationPrefix,
                         salesOrderPrefix: next.salesOrderPrefix.trim() || DEFAULT_COMPANY_DOCUMENT_SETTINGS.salesOrderPrefix,
+                    },
+                    tax: {
+                        ...(rawSettings.tax || {}),
+                        label: next.taxLabel.trim() || 'Tax',
+                        inclusivePricing: next.inclusivePricing,
                     },
                 },
             };
@@ -324,11 +336,63 @@ export default function Settings() {
                 </section>
 
                 <section className="rounded-xl p-6 space-y-4" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
-                    <p className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>Operational Defaults</p>
+                    <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
+                            <Percent size={20} />
+                        </div>
+                        <div>
+                            <p className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>Tax & Compliance</p>
+                            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Configure default tax behaviors and labels</p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="text-xs font-medium mb-1.5 block text-gray-600">Tax Label (e.g. VAT, GST, Tax)</label>
+                            <input className="w-full rounded-lg px-3 py-2.5 text-sm border border-gray-200" disabled={!canEdit} value={form.taxLabel} onChange={(e) => setField('taxLabel', e.target.value)} />
+                        </div>
+                        <div className="flex items-center h-full pt-6">
+                            <label className="flex items-center gap-2 select-none cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    disabled={!canEdit}
+                                    checked={form.inclusivePricing}
+                                    onChange={(e) => setField('inclusivePricing', e.target.checked)}
+                                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
+                                />
+                                <span className="text-sm font-medium text-slate-700">Tax Inclusive Pricing (VAT Inclusive)</span>
+                            </label>
+                        </div>
+                    </div>
+                </section>
+
+                <section className="rounded-xl p-6 space-y-4" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
+                    <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl bg-gray-500/10 text-gray-500 flex items-center justify-center">
+                            <SettingsIcon size={20} />
+                        </div>
+                        <div>
+                            <p className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>Operational Defaults</p>
+                            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Document prefixes and default thresholds</p>
+                        </div>
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
+                            <label className="text-xs font-medium mb-1.5 block text-gray-600">Invoice Prefix</label>
+                            <input className="w-full rounded-lg px-3 py-2.5 text-sm border border-gray-200" disabled={!canEdit} value={form.invoicePrefix} onChange={(e) => setField('invoicePrefix', e.target.value)} />
+                        </div>
+                        <div>
+                            <label className="text-xs font-medium mb-1.5 block text-gray-600">Quotation Prefix</label>
+                            <input className="w-full rounded-lg px-3 py-2.5 text-sm border border-gray-200" disabled={!canEdit} value={form.quotationPrefix} onChange={(e) => setField('quotationPrefix', e.target.value)} />
+                        </div>
                         <div>
                             <label className="text-xs font-medium mb-1.5 block text-gray-600">Sales Order Prefix</label>
                             <input className="w-full rounded-lg px-3 py-2.5 text-sm border border-gray-200" disabled={!canEdit} value={form.salesOrderPrefix} onChange={(e) => setField('salesOrderPrefix', e.target.value)} />
+                        </div>
+                        <div>
+                            <label className="text-xs font-medium mb-1.5 block text-gray-600">Low Stock Alert Threshold</label>
+                            <input type="number" min="0" className="w-full rounded-lg px-3 py-2.5 text-sm border border-gray-200" disabled={!canEdit} value={form.lowStockThreshold} onChange={(e) => setField('lowStockThreshold', parseInt(e.target.value) || 0)} />
                         </div>
                     </div>
                 </section>

@@ -1,6 +1,7 @@
 import { PrismaClient, AccountEntityType, AccountMappingType } from '@prisma/client';
 import { AppError } from '../../utils/AppError';
 import { formatDocNo, nextCounter } from '../../utils/documentCounter.js';
+import { isCashType, isBankType, isCreditType, isMixedType } from '../../utils/paymentMethods.js';
 
 export interface AccountingResolutionContext {
     companyId: string;
@@ -259,7 +260,7 @@ export class CoreAccountingService {
 
         if (grandTotal <= 0) throw AppError.badRequest('Grand total must be greater than zero for accounting posting.');
 
-        if (method === 'CREDIT' || method === 'INSTALLMENT') {
+        if (isCreditType(method)) {
             const arAccountId = await this.resolveAccountOrFail(tx, 'ACCOUNT_RECEIVABLE', {
                 ...ctxGlobal,
                 customerId: input.customerId || undefined,
@@ -275,7 +276,7 @@ export class CoreAccountingService {
             ];
         }
 
-        if (method === 'MIXED') {
+        if (isMixedType(method)) {
             const netCash = roundMoney(
                 Math.max(0, Number(input.cashReceived || 0) - Math.max(0, Number(input.changeGiven || 0)))
             );
@@ -298,12 +299,12 @@ export class CoreAccountingService {
             return lines;
         }
 
-        if (method === 'CARD' || method === 'BANK_TRANSFER' || method === 'STC_PAY') {
+        if (isBankType(method)) {
             const bankAccountId = await this.resolveAccountOrFail(tx, 'BANK', ctxGlobal);
             return [{ accountId: bankAccountId, debit: grandTotal, credit: 0 }];
         }
 
-        if (method === 'CASH') {
+        if (isCashType(method)) {
             const cashAccountId = await this.resolveAccountOrFail(tx, 'CASH', ctxGlobal);
             return [{ accountId: cashAccountId, debit: grandTotal, credit: 0 }];
         }
@@ -457,8 +458,7 @@ export class CoreAccountingService {
         };
         const method = asUpper(payment.paymentMethod);
 
-        const receiptAccountId =
-            method === 'CARD' || method === 'BANK_TRANSFER'
+        const receiptAccountId = isBankType(method)
                 ? await this.resolveAccountOrFail(tx, 'BANK', ctx)
                 : await this.resolveAccountOrFail(tx, 'CASH', ctx);
         const arAccountId = await this.resolveAccountOrFail(tx, 'ACCOUNT_RECEIVABLE', ctx);
@@ -553,7 +553,7 @@ export class CoreAccountingService {
             lines.push({ accountId: outputTaxAccountId, debit: roundMoney(input.taxTotal), credit: 0 });
         }
 
-        if (method === 'CREDIT' || method === 'INSTALLMENT') {
+        if (isCreditType(method)) {
             if (!input.customerId) {
                 throw AppError.badRequest(`Customer is required to post accounting for ${method} sales return.`);
             }
@@ -568,7 +568,7 @@ export class CoreAccountingService {
                 partyType: 'CUSTOMER',
                 partyId: input.customerId,
             });
-        } else if (method === 'MIXED') {
+        } else if (isMixedType(method)) {
             const cashRefund = roundMoney(Number(input.cashRefund || 0));
             const bankRefund = roundMoney(Number(input.bankRefund || 0));
             if (Math.abs(roundMoney(cashRefund + bankRefund) - grandTotal) > MONEY_EPSILON) {
@@ -582,10 +582,10 @@ export class CoreAccountingService {
                 const bankAccountId = await this.resolveAccountOrFail(tx, 'BANK', ctxGlobal);
                 lines.push({ accountId: bankAccountId, debit: 0, credit: bankRefund });
             }
-        } else if (method === 'CARD' || method === 'BANK_TRANSFER' || method === 'STC_PAY') {
+        } else if (isBankType(method)) {
             const bankAccountId = await this.resolveAccountOrFail(tx, 'BANK', ctxGlobal);
             lines.push({ accountId: bankAccountId, debit: 0, credit: grandTotal });
-        } else if (method === 'CASH') {
+        } else if (isCashType(method)) {
             const cashAccountId = await this.resolveAccountOrFail(tx, 'CASH', ctxGlobal);
             lines.push({ accountId: cashAccountId, debit: 0, credit: grandTotal });
         } else {
@@ -712,8 +712,7 @@ export class CoreAccountingService {
         };
         const method = asUpper(payment.paymentMethod);
 
-        const sourceCashOrBankAccountId =
-            method === 'CARD' || method === 'BANK_TRANSFER'
+        const sourceCashOrBankAccountId = isBankType(method)
                 ? await this.resolveAccountOrFail(tx, 'BANK', ctx)
                 : await this.resolveAccountOrFail(tx, 'CASH', ctx);
         const accountPayableId = await this.resolveAccountOrFail(tx, 'ACCOUNT_PAYABLE', ctx);

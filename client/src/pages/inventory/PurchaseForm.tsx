@@ -17,6 +17,7 @@ import {
     PURCHASE_PAYMENT_METHOD_KEYS,
 } from '../../lib/globalStrings';
 import { formatTaxLabel, resolveEffectiveTaxRate, useCompanyTaxSettings } from '../../lib/tax';
+import { useAuthStore } from '@/stores/authStore';
 
 type PurchaseFormItem = {
     id?: string;
@@ -25,6 +26,9 @@ type PurchaseFormItem = {
     unitCode: string;
     qty: number;
     unitCost: number;
+    discountType?: 'PERCENTAGE' | 'AMOUNT';
+    discountValue?: number;
+    discountAmount?: number;
     lineTotal: number;
     taxRate?: number;
     product?: any;
@@ -63,11 +67,24 @@ const purchaseFormItemSchema = z.object({
     productId: z.string().trim().min(1, 'Each line must include a product'),
     unitCode: z.string().trim().min(1, 'Each line must include a unit'),
     qty: z.number().positive('Quantity must be greater than zero'),
-    unitCost: z.number().min(0, 'Unit cost cannot be negative'),
+    unitCost: z.number().positive('Unit cost must be greater than zero'),
+    discountType: z.enum(['PERCENTAGE', 'AMOUNT']).optional().default('AMOUNT'),
+    discountValue: z.number().min(0).optional().default(0),
     lineTotal: z.number().min(0, 'Line total cannot be negative'),
     taxRate: z.number().min(0).optional(),
 }).superRefine((item, ctx) => {
-    const expectedLineTotal = Number(item.qty) * Number(item.unitCost);
+    const qty = Number(item.qty || 0);
+    const unitCost = Number(item.unitCost || 0);
+    const gross = qty * unitCost;
+    const discountType = item.discountType || 'AMOUNT';
+    const discountValue = Number(item.discountValue || 0);
+    let discountAmount = 0;
+    if (discountType === 'PERCENTAGE') {
+        discountAmount = Math.round((gross * (discountValue / 100) + Number.EPSILON) * 100) / 100;
+    } else {
+        discountAmount = discountValue;
+    }
+    const expectedLineTotal = Math.max(0, Math.round((gross - discountAmount + Number.EPSILON) * 100) / 100);
     if (!Number.isFinite(expectedLineTotal) || expectedLineTotal < 0) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -89,12 +106,21 @@ const purchaseFormSchema = z.object({
     items: z.array(purchaseFormItemSchema).min(1, 'Add at least one item'),
 });
 
+function getUnitName(item: PurchaseFormItem) {
+    if (item.product?.units && Array.isArray(item.product.units)) {
+        const u = item.product.units.find((unit: any) => String(unit.unitCode).toUpperCase() === String(item.unitCode).toUpperCase());
+        if (u?.unitName) return u.unitName;
+    }
+    return item.unitCode;
+}
+
 export default function PurchaseForm() {
     const navigate = useNavigate();
     const { id } = useParams();
     const isEdit = Boolean(id && id !== 'new');
     const queryClient = useQueryClient();
     const companyTax = useCompanyTaxSettings();
+    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
     const [supplierId, setSupplierId] = useState('');
     const [branchId, setBranchId] = useState('');
     const [paymentMethod, setPaymentMethod] = useState('');
@@ -163,6 +189,9 @@ export default function PurchaseForm() {
                 unitCode: i.unitCode,
                 qty: i.qty,
                 unitCost: i.unitCost,
+                discountType: i.discountType || 'AMOUNT',
+                discountValue: i.discountValue || 0,
+                discountAmount: i.discountAmount || 0,
                 lineTotal: i.lineTotal,
                 taxRate: resolveEffectiveTaxRate([i.taxRate, i.product?.tax?.rate, i.product?.taxRate], companyTax),
                 product: i.product,
@@ -179,7 +208,6 @@ export default function PurchaseForm() {
         if (editingIndex !== null) {
             setItems(prev => prev.map((row, i) => i === editingIndex ? item : row));
             toast.success(`Updated ${item.productName || item.name}`);
-            // Let the modal handle closing if needed, or close it here
         } else {
             setItems(prev => [...prev, item]);
             toast.success(`Added ${item.productName || item.name}`);
@@ -231,6 +259,9 @@ export default function PurchaseForm() {
                 unitCode: i.unitCode,
                 qty: i.qty,
                 unitCost: i.unitCost,
+                discountType: i.discountType || 'AMOUNT',
+                discountValue: i.discountValue || 0,
+                discountAmount: i.discountAmount || 0,
                 lineTotal: i.lineTotal,
                 taxRate: resolveEffectiveTaxRate([i.taxRate, i.product?.tax?.rate, i.product?.taxRate], companyTax),
                 product: i.product,
@@ -246,9 +277,45 @@ export default function PurchaseForm() {
     };
 
     const totals = useMemo(() => {
-        const subtotal = items.reduce((sum, i) => sum + (i.lineTotal || 0), 0);
-        const taxTotal = items.reduce((sum, i) => sum + ((i.lineTotal || 0) * resolveEffectiveTaxRate([i.taxRate, i.product?.tax?.rate, i.product?.taxRate], companyTax)), 0);
-        return { subtotal, taxTotal, grandTotal: subtotal + taxTotal };
+        const grossSubtotal = items.reduce((sum, i) => sum + ((i.qty || 0) * (i.unitCost || 0)), 0);
+
+        const discountTotal = items.reduce((sum, i) => {
+            const qty = i.qty || 0;
+            const cost = i.unitCost || 0;
+            const gross = qty * cost;
+            const val = i.discountValue || 0;
+            if (i.discountType === 'PERCENTAGE') {
+                return sum + Math.round((gross * (val / 100) + Number.EPSILON) * 100) / 100;
+            } else {
+                return sum + val;
+            }
+        }, 0);
+
+        const netSubtotal = grossSubtotal - discountTotal;
+
+        const taxTotal = items.reduce((sum, i) => {
+            const qty = i.qty || 0;
+            const cost = i.unitCost || 0;
+            const gross = qty * cost;
+            const val = i.discountValue || 0;
+            let discountAmount = 0;
+            if (i.discountType === 'PERCENTAGE') {
+                discountAmount = Math.round((gross * (val / 100) + Number.EPSILON) * 100) / 100;
+            } else {
+                discountAmount = val;
+            }
+            const lineTotal = Math.max(0, Math.round((gross - discountAmount + Number.EPSILON) * 100) / 100);
+            const lineTax = Math.round((lineTotal * resolveEffectiveTaxRate([i.taxRate, i.product?.tax?.rate, i.product?.taxRate], companyTax) + Number.EPSILON) * 100) / 100;
+            return sum + lineTax;
+        }, 0);
+
+        return {
+            subtotal: grossSubtotal,
+            discountTotal,
+            netSubtotal,
+            taxTotal,
+            grandTotal: netSubtotal + taxTotal
+        };
     }, [companyTax, items]);
 
     const saveMut = useMutation({
@@ -285,13 +352,36 @@ export default function PurchaseForm() {
             paymentMethod: parsed.data.paymentMethod,
             invoiceNoSupplier: parsed.data.invoiceNoSupplier,
             notes: parsed.data.notes,
-            items: parsed.data.items.map((i, index) => ({
-                ...items[index],
-                ...i,
-                qty: Number(i.qty),
-                unitCost: Number(i.unitCost),
-                taxAmount: (i.lineTotal || 0) * resolveEffectiveTaxRate([i.taxRate, items[index]?.product?.tax?.rate, items[index]?.product?.taxRate], companyTax)
-            }))
+            items: parsed.data.items.map((i, index) => {
+                const qty = Number(i.qty);
+                const cost = Number(i.unitCost);
+                const gross = qty * cost;
+                const discountType = i.discountType || 'AMOUNT';
+                const discountValue = Number(i.discountValue || 0);
+
+                let discountAmount = 0;
+                if (discountType === 'PERCENTAGE') {
+                    discountAmount = Math.round((gross * (discountValue / 100) + Number.EPSILON) * 100) / 100;
+                } else {
+                    discountAmount = discountValue;
+                }
+
+                const lineTotal = Math.max(0, Math.round((gross - discountAmount + Number.EPSILON) * 100) / 100);
+                const taxRate = resolveEffectiveTaxRate([i.taxRate, items[index]?.product?.tax?.rate, items[index]?.product?.taxRate], companyTax);
+                const taxAmount = Math.round((lineTotal * taxRate + Number.EPSILON) * 100) / 100;
+
+                return {
+                    productId: i.productId,
+                    unitCode: i.unitCode,
+                    qty,
+                    unitCost: cost,
+                    discountType,
+                    discountValue,
+                    discountAmount,
+                    taxAmount,
+                    lineTotal,
+                };
+            })
         });
     };
 
@@ -431,41 +521,97 @@ export default function PurchaseForm() {
                             </div>
                         </div>
 
-                        <div className="border rounded-xl overflow-hidden">
-                            <table className="w-full text-left text-sm table-fixed">
-                                <thead className="bg-gray-50 font-bold text-xs uppercase tracking-wider text-gray-500">
-                                    <tr>
-                                        <th className="px-4 py-3 w-[260px]">Product</th>
-                                        <th className="px-4 py-3 w-28 text-right">Qty</th>
-                                        <th className="px-4 py-3 w-32 text-right">Cost</th>
-                                        <th className="px-4 py-3 w-32 text-right">Total</th>
-                                        <th className="px-4 py-3 w-10"></th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-100">
-                                    {items.length === 0 ? (
-                                        <tr><td colSpan={5} className="px-4 py-12 text-center text-gray-400 italic">No items added yet. Click 'Add Item' or import a PO.</td></tr>
-                                    ) : (
-                                        items.map((item, idx) => (
-                                            <tr key={idx} className="hover:bg-gray-50">
-                                                <td className="px-4 py-3">
-                                                    <p className="font-medium text-gray-900 truncate">{item.productName}</p>
-                                                    <p className="text-[10px] text-gray-500 uppercase truncate">{item.unitCode}</p>
-                                                </td>
-                                                <td className="px-4 py-3 text-right text-gray-700">{item.qty}</td>
-                                                <td className="px-4 py-3 text-right text-gray-700">{item.unitCost?.toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-right font-bold text-gray-900">{item.lineTotal?.toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-center">
-                                                    <div className="flex items-center justify-center gap-2">
-                                                        <button type="button" onClick={() => startEditItem(idx)} className="text-blue-500 hover:text-blue-700"><Pencil size={16} /></button>
-                                                        <button type="button" onClick={() => removeItem(idx)} className="text-gray-300 hover:text-red-500"><Trash size={16} /></button>
-                                                    </div>
+                        <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                            <div className="overflow-x-auto">
+                                <table className="w-full min-w-full text-left text-sm border-collapse table-auto">
+                                    <thead className="bg-gray-50 font-bold text-xs uppercase tracking-wider text-gray-500 border-b border-gray-200 whitespace-nowrap">
+                                        <tr>
+                                            <th className="px-3 py-3 text-center border-r border-gray-200">#</th>
+                                            <th className="px-4 py-3 border-r border-gray-200 w-full min-w-[250px] whitespace-normal">Item Name</th>
+                                            <th className="px-3 py-3 text-center border-r border-gray-200">Unit Code</th>
+                                            <th className="px-3 py-3 text-center border-r border-gray-200">Unit Name</th>
+                                            <th className="px-3 py-3 text-right border-r border-gray-200">Qty</th>
+                                            <th className="px-3 py-3 text-right border-r border-gray-200">Price</th>
+                                            <th className="px-3 py-3 text-right border-r border-gray-200">Discount</th>
+                                            <th className="px-3 py-3 text-right border-r border-gray-200">Tax Amt</th>
+                                            <th className="px-3 py-3 text-right border-r border-gray-200">Untaxed Total</th>
+                                            <th className="px-3 py-3 text-right border-r border-gray-200 bg-blue-50/10">Total (Tax Incl)</th>
+                                            <th className="px-3 py-3 text-center">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200 bg-white">
+                                        {items.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={11} className="px-4 py-12 text-center text-gray-400 italic">
+                                                    No items added yet. Click 'Add Item' or import a PO.
                                                 </td>
                                             </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
+                                        ) : (
+                                            items.map((item, idx) => {
+                                                const gross = item.qty * item.unitCost;
+                                                const discountAmt = item.discountType === 'PERCENTAGE'
+                                                    ? Math.round((gross * ((item.discountValue || 0) / 100) + Number.EPSILON) * 100) / 100
+                                                    : (item.discountValue || 0);
+                                                const lineTotal = Math.max(0, Math.round((gross - discountAmt + Number.EPSILON) * 100) / 100);
+                                                const taxRate = resolveEffectiveTaxRate([item.taxRate, item.product?.tax?.rate, item.product?.taxRate], companyTax);
+                                                const lineTax = Math.round((lineTotal * taxRate + Number.EPSILON) * 100) / 100;
+                                                const grandTotal = lineTotal + lineTax;
+
+                                                return (
+                                                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                                                        <td className="px-3 py-3 text-center font-medium text-gray-400 border-r border-gray-200 bg-gray-50/50 whitespace-nowrap">{idx + 1}</td>
+                                                        <td className="px-4 py-3 border-r border-gray-200 whitespace-normal min-w-[250px] break-words">
+                                                            <p className="font-semibold text-gray-900" title={item.productName}>{item.productName}</p>
+                                                            {item.product?.itemCode && (
+                                                                <p className="text-[10px] text-gray-400 font-mono mt-0.5">{item.product.itemCode}</p>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-3 py-3 text-center font-mono text-xs text-gray-600 border-r border-gray-200 whitespace-nowrap">{item.unitCode}</td>
+                                                        <td className="px-3 py-3 text-center text-gray-600 border-r border-gray-200 whitespace-nowrap">{getUnitName(item)}</td>
+                                                        <td className="px-3 py-3 text-right text-gray-700 font-medium border-r border-gray-200 whitespace-nowrap">{item.qty}</td>
+                                                        <td className="px-3 py-3 text-right text-gray-700 font-medium border-r border-gray-200 whitespace-nowrap">
+                                                            {item.unitCost?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                        </td>
+                                                        <td className="px-3 py-3 text-right border-r border-gray-200 whitespace-nowrap">
+                                                            {item.discountValue && item.discountValue > 0 ? (
+                                                                <div className="flex flex-col items-end">
+                                                                    <span className="text-red-600 bg-red-50 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                                                                        -{item.discountType === 'PERCENTAGE' 
+                                                                            ? `${item.discountValue}%` 
+                                                                            : `${item.discountValue.toFixed(2)}`}
+                                                                    </span>
+                                                                    {item.discountType === 'PERCENTAGE' && (
+                                                                        <span className="text-[9px] text-gray-400 mt-0.5">
+                                                                            -{discountAmt.toFixed(2)}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            ) : (
+                                                                <span className="text-gray-400">-</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-3 py-3 text-right text-amber-600 font-medium border-r border-gray-200 whitespace-nowrap">
+                                                            {lineTax > 0 ? lineTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : <span className="text-gray-400">0.00</span>}
+                                                        </td>
+                                                        <td className="px-3 py-3 text-right text-gray-900 font-semibold border-r border-gray-200 whitespace-nowrap">
+                                                            {lineTotal?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                        </td>
+                                                        <td className="px-3 py-3 text-right font-bold text-blue-600 border-r border-gray-200 bg-blue-50/10 whitespace-nowrap">
+                                                            {grandTotal?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                        </td>
+                                                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                                                            <div className="flex items-center justify-center gap-2">
+                                                                <button type="button" onClick={() => startEditItem(idx)} className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded transition-colors" title="Edit"><Pencil size={15} /></button>
+                                                                <button type="button" onClick={() => removeItem(idx)} className="text-gray-300 hover:text-red-500 p-1 hover:bg-red-50 rounded transition-colors" title="Delete"><Trash size={15} /></button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                         {formErrors.items && <p className="text-sm text-red-600">{formErrors.items}</p>}
                     </div>
@@ -490,9 +636,30 @@ export default function PurchaseForm() {
                     <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm sticky top-6">
                         <h2 className="text-lg font-bold text-gray-900 mb-6 font-mono uppercase tracking-tighter text-center">Summary</h2>
                         <div className="space-y-4">
-                            <div className="flex justify-between text-sm"><span className="text-gray-500">Subtotal</span><span className="font-medium">{totals.subtotal.toLocaleString()} SAR</span></div>
-                            <div className="flex justify-between text-sm"><span className="text-gray-500">{formatTaxLabel(companyTax)}</span><span className="font-medium">{totals.taxTotal.toLocaleString()} SAR</span></div>
-                            <div className="pt-4 border-t border-dashed flex justify-between items-center"><span className="font-bold text-gray-900">Grand Total</span><span className="text-xl font-black text-blue-600">{totals.grandTotal.toLocaleString()} SAR</span></div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-gray-500">Gross Subtotal</span>
+                                <span className="font-medium">{totals.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</span>
+                            </div>
+                            {totals.discountTotal > 0 && (
+                                <div className="flex justify-between text-sm text-red-600">
+                                    <span className="font-medium">Discount</span>
+                                    <span className="font-medium">-{totals.discountTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</span>
+                                </div>
+                            )}
+                            {totals.discountTotal > 0 && (
+                                <div className="flex justify-between text-sm border-t border-gray-100 pt-2">
+                                    <span className="text-gray-500">Net Subtotal</span>
+                                    <span className="font-medium">{totals.netSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</span>
+                                </div>
+                            )}
+                            <div className="flex justify-between text-sm">
+                                <span className="text-gray-500">{formatTaxLabel(companyTax)}</span>
+                                <span className="font-medium">{totals.taxTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</span>
+                            </div>
+                            <div className="pt-4 border-t border-dashed flex justify-between items-center">
+                                <span className="font-bold text-gray-900">Grand Total</span>
+                                <span className="text-xl font-black text-blue-600">{totals.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</span>
+                            </div>
                         </div>
                         <button onClick={handleSubmit} disabled={saveMut.isPending || items.length === 0 || !supplierId || !branchId} className="w-full mt-8 flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50 disabled:scale-100 shadow-lg shadow-blue-200">
                             <Save size={18} /> {saveMut.isPending ? 'Processing...' : (isEdit ? 'Save Changes' : 'Complete Purchase')}

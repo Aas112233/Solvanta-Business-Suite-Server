@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { isCashType, isBankType, isCreditType, isMixedType } from \'../../lib/globalStrings\';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -61,7 +62,7 @@ export default function SalesQuotationConvert() {
     );
 
     useEffect(() => {
-        if (paymentMethod === 'CREDIT' && !canUseCredit) {
+        if (isCreditType(paymentMethod) && !canUseCredit) {
             setPaymentMethod('CASH');
         }
     }, [paymentMethod, canUseCredit]);
@@ -79,7 +80,7 @@ export default function SalesQuotationConvert() {
     const handleConvert = (e: React.FormEvent) => {
         e.preventDefault();
         if (!confirm) return;
-        if (paymentMethod === 'CREDIT' && !canUseCredit) return;
+        if (isCreditType(paymentMethod) && !canUseCredit) return;
         mutation.mutate({ paymentMethod });
     };
 

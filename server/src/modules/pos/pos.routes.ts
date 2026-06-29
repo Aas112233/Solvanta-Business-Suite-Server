@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { authenticate, requirePermission, requireAnyPermission, requireBranch } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { PERMISSIONS } from '../../config/permissions.js';
-import { prisma } from '../../lib/prisma.js';
+import { prisma, basePrisma } from '../../lib/prisma.js';
+import { logger } from '../../lib/logger.js';
 import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
 import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
@@ -13,7 +14,7 @@ import bcrypt from 'bcryptjs';
 import { getPosTerminalPolicy, issuePosSessionToken, verifyPosSessionToken } from './pos-policy.js';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { InventoryService } from '../inventory/InventoryService.js';
-import { POS_PAYMENT_METHODS } from '../../utils/paymentMethods.js';
+import { POS_PAYMENT_METHODS, isCashType, isBankType, isCreditType, isMixedType } from '../../utils/paymentMethods.js';
 import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
 
 function roundMoney(value: number): number {
@@ -136,42 +137,42 @@ const posInvoiceSchema = z.object({
     loyaltyCustomerId: nullableObjectIdSchema,
     loyaltyPointsRedeemed: z.number().min(0).optional().default(0),
 }).superRefine((data, ctx) => {
-    if (data.paymentMethod === 'CREDIT' && !data.customerId) {
+    if (isCreditType(data.paymentMethod) && !data.customerId) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['customerId'],
             message: 'customerId is required for CREDIT payment',
         });
     }
-    if (data.paymentMethod === 'CASH' && Number(data.cardReceived || 0) > 0) {
+    if (isCashType(data.paymentMethod) && Number(data.cardReceived || 0) > 0) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['cardReceived'],
             message: 'cardReceived must be 0 for CASH payment',
         });
     }
-    if ((data.paymentMethod === 'CARD' || data.paymentMethod === 'BANK_TRANSFER') && Number(data.cashReceived || 0) > 0) {
+    if (isBankType(data.paymentMethod) && Number(data.cashReceived || 0) > 0) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['cashReceived'],
             message: 'cashReceived must be 0 for non-cash payment methods',
         });
     }
-    if ((data.paymentMethod === 'CARD' || data.paymentMethod === 'BANK_TRANSFER' || data.paymentMethod === 'CREDIT') && Number(data.changeGiven || 0) > 0) {
+    if ((isBankType(data.paymentMethod) || isCreditType(data.paymentMethod)) && Number(data.changeGiven || 0) > 0) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['changeGiven'],
             message: 'changeGiven is only allowed for CASH or MIXED payments',
         });
     }
-    if (data.paymentMethod === 'CREDIT' && (Number(data.cashReceived || 0) > 0 || Number(data.cardReceived || 0) > 0)) {
+    if (isCreditType(data.paymentMethod) && (Number(data.cashReceived || 0) > 0 || Number(data.cardReceived || 0) > 0)) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['cashReceived'],
             message: 'CREDIT payment should not include received cash or card amounts',
         });
     }
-    if (data.paymentMethod === 'MIXED') {
+    if (isMixedType(data.paymentMethod)) {
         if (Number(data.cashReceived || 0) <= 0) {
             ctx.addIssue({
                 code: z.ZodIssueCode.custom,
@@ -1234,7 +1235,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
             if (!posTerminalId) throw AppError.badRequest('Terminal is required for POS checkout');
             if (posTerminalId !== posSession!.terminalId) throw AppError.badRequest('Terminal does not match POS session');
             if (branchId !== posSession!.branchId) throw AppError.badRequest('Branch does not match POS session terminal');
-            if (String(paymentMethod).toUpperCase() === 'CREDIT' && !posSession!.policy.allowCreditSales) {
+            if (isCreditType(String(paymentMethod).toUpperCase()) && !posSession!.policy.allowCreditSales) {
                 throw AppError.badRequest('Credit sales are disabled for this POS');
             }
             const allowedMethods = (posSession!.policy.allowedPaymentMethods || []).map((m: string) => String(m).toUpperCase());
@@ -1295,7 +1296,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                 : null;
             if (customerId && !customer) throw AppError.notFound('Customer');
 
-            const productIds = [...new Set(requestedItems.map((i) => i.productId))];
+            const productIds = [...new Set(requestedItems.map((i) => i.productId).filter(Boolean))];
             const products = await tx.product.findMany({
                 where: {
                     companyId,
@@ -1308,7 +1309,25 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
             const productById = new Map(products.map((p) => [p.id, p]));
 
             if (products.length !== productIds.length) {
-                throw AppError.badRequest('One or more products are unavailable for sale');
+                const foundIds = new Set(products.map((p) => p.id));
+                const missingIds = productIds.filter((id) => !foundIds.has(id));
+                
+                const baseProducts = await basePrisma.product.findMany({
+                    where: { id: { in: missingIds } },
+                    select: { id: true, name: true, status: true, deletedAt: true, companyId: true, itemCode: true },
+                });
+
+                logger.error(`Product validation failed for POS checkout. Company: ${companyId}. Requested: ${JSON.stringify(productIds)}, Found active: ${JSON.stringify(Array.from(foundIds))}. Missing details: ${JSON.stringify(baseProducts)}`);
+
+                const missingDetailsStr = baseProducts.map((p) => 
+                    `"${p.name || p.itemCode}" (Status: ${p.status}, Deleted: ${p.deletedAt ? 'Yes' : 'No'}, Company: ${p.companyId})`
+                ).join(', ');
+
+                const errMessage = missingDetailsStr 
+                    ? `One or more products are unavailable for sale: ${missingDetailsStr}` 
+                    : `One or more products are unavailable for sale (IDs not found: ${missingIds.join(', ')})`;
+
+                throw AppError.badRequest(errMessage);
             }
 
             const activeSalesTaxes = await tx.tax.findMany({
@@ -1572,10 +1591,10 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
                 }
             }
 
-            if (String(paymentMethod).toUpperCase() === 'CREDIT' && !customerId) {
+            if (isCreditType(String(paymentMethod).toUpperCase()) && !customerId) {
                 throw AppError.badRequest('Customer is required for CREDIT payment');
             }
-            if (String(paymentMethod).toUpperCase() === 'CREDIT' && customer && customer.allowCreditSales === false) {
+            if (isCreditType(String(paymentMethod).toUpperCase()) && customer && customer.allowCreditSales === false) {
                 throw AppError.badRequest('Selected customer is not allowed for CREDIT sales');
             }
 
@@ -1591,15 +1610,15 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
             let normalizedCashReceived = 0;
             let normalizedChangeGiven = 0;
             let normalizedCardApplied = 0;
-            if (paymentMethod === 'CASH') {
+            if (isCashType(paymentMethod)) {
                 if (enteredCash < grandTotal) {
                     throw AppError.badRequest('Cash received cannot be less than grand total');
                 }
                 normalizedCashReceived = enteredCash;
                 normalizedChangeGiven = Math.max(0, enteredCash - grandTotal);
-            } else if (paymentMethod === 'CARD') {
+            } else if (isBankType(paymentMethod)) {
                 normalizedCardApplied = grandTotal;
-            } else if (paymentMethod === 'MIXED') {
+            } else if (isMixedType(paymentMethod)) {
                 if (enteredCash <= 0 || enteredCard <= 0) {
                     throw AppError.badRequest('For mixed payment, both cash and card amounts are required');
                 }
@@ -1617,7 +1636,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
             }
 
             // Check credit limit for CREDIT sales using server-computed totals
-            if (String(paymentMethod).toUpperCase() === 'CREDIT' && customerId) {
+            if (isCreditType(String(paymentMethod).toUpperCase()) && customerId) {
                 if (!customer) throw AppError.notFound('Customer');
 
                 const arBalance = await tx.journalEntryLine.aggregate({
@@ -1672,7 +1691,7 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
             }
 
             // Create POS invoice placeholder
-            let status: any = paymentMethod === 'CREDIT' ? 'CREDIT' : 'PAID';
+            let status: any = isCreditType(paymentMethod) ? 'CREDIT' : 'PAID';
             let isPosted = true;
 
             // Pre-fetch products for stock operations (avoid repeated lookups per item)
@@ -2041,7 +2060,7 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
                         where: { id: invoice.id },
                         data: {
                             isPosted: true,
-                            status: invoice.paymentMethod === 'CREDIT' ? 'CREDIT' : 'PAID',
+                            status: isCreditType(invoice.paymentMethod) ? 'CREDIT' : 'PAID',
                         },
                     });
                 }, { maxWait: 10000, timeout: 20000 });

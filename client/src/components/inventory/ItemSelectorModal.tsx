@@ -6,6 +6,12 @@ import { format } from 'date-fns';
 import AppDropdown from '../ui/AppDropdown';
 import { calculateTotalBaseQty, formatDecomposedQty } from '../../lib/inventoryUtils';
 import { formatTaxLabel, resolveEffectiveTaxRate, useCompanyTaxSettings } from '../../lib/tax';
+import { useAuthStore } from '@/stores/authStore';
+
+function roundMoney(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+}
 
 interface ItemSelectorModalProps {
     isOpen: boolean;
@@ -78,6 +84,7 @@ function getProductMatchScore(product: any, query: string): number {
 export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branchId, priceGroupId, initialItem, confirmLabel, allowAddNext = true }: ItemSelectorModalProps) {
     const companyTax = useCompanyTaxSettings();
     const defaultTaxRate = companyTax.defaultRate;
+    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
 
     /** Resolve effective sale price for a unit:
      *  1. Check priceGroupPrices for a matching override
@@ -101,7 +108,9 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
         qty: 1,
         unitCode: '',
         unitCost: 0,
-        taxRate: defaultTaxRate
+        taxRate: defaultTaxRate,
+        discountType: 'AMOUNT' as 'PERCENTAGE' | 'AMOUNT',
+        discountValue: 0,
     });
     const [error, setError] = useState<string | null>(null);
     const [showAllBranchesStock, setShowAllBranchesStock] = useState(false);
@@ -158,6 +167,8 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
                 unitCode: String(initialItem?.unitCode || ''),
                 unitCost: Number(initialItem?.unitPrice ?? initialItem?.unitCost ?? 0),
                 taxRate: resolveEffectiveTaxRate([initialItem?.taxRate, initialItem?.product?.tax?.rate, initialItem?.product?.taxRate], companyTax),
+                discountType: String(initialItem?.discountType || 'AMOUNT') as 'PERCENTAGE' | 'AMOUNT',
+                discountValue: Number(initialItem?.discountValue ?? 0),
             });
             setError(null);
             setShowAllBranchesStock(false);
@@ -203,6 +214,8 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
             unitCode: matchedUnit?.unitCode || 'PCS',
             unitCost: price,
             taxRate: resolveEffectiveTaxRate([product.tax?.rate, product.taxRate], companyTax),
+            discountType: 'AMOUNT',
+            discountValue: 0,
         });
     };
 
@@ -270,12 +283,27 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
 
     const effectiveQty = Number(formData.qty || 0);
     const effectiveUnitCost = Number(formData.unitCost || 0);
-    const lineSubtotal = effectiveQty * effectiveUnitCost;
-    const lineTaxAmount = lineSubtotal * Number(formData.taxRate || 0);
-    const lineGrandTotal = lineSubtotal + lineTaxAmount;
+    const unitCostError =
+        (mode === 'PURCHASE' || mode === 'SALE') && effectiveUnitCost <= 0
+            ? 'Unit cost must be greater than zero'
+            : '';
+    const grossTotal = effectiveQty * effectiveUnitCost;
+
+    const discountAmount = formData.discountType === 'PERCENTAGE'
+        ? roundMoney(grossTotal * ((formData.discountValue || 0) / 100))
+        : Number(formData.discountValue || 0);
+
+    const lineSubtotal = Math.max(0, roundMoney(grossTotal - discountAmount));
+    const lineTaxAmount = roundMoney(lineSubtotal * Number(formData.taxRate || 0));
+    const lineGrandTotal = roundMoney(lineSubtotal + lineTaxAmount);
 
     const handleAdd = (keepOpen: boolean) => {
         if (!selectedProduct || formData.qty < 0) return;
+
+        if ((mode === 'PURCHASE' || mode === 'SALE') && effectiveUnitCost <= 0) {
+            setError('Unit cost must be greater than zero');
+            return;
+        }
 
         if (mode === 'TRANSFER' && branchId && formData.qty > currentStock) {
             setError(`Insufficient stock. Available: ${currentStock}`);
@@ -293,7 +321,7 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
             ...formData,
             unitPrice: formData.unitCost, // Map to unitPrice for sales
             countedQty: formData.qty,
-            lineTotal: (mode === 'PURCHASE' || mode === 'SALE') ? formData.qty * formData.unitCost : 0,
+            lineTotal: (mode === 'PURCHASE' || mode === 'SALE') ? lineSubtotal : 0,
             product: selectedProduct
         };
 
@@ -302,7 +330,14 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
         if (keepOpen) {
             setSelectedProduct(null);
             setSearch('');
-            setFormData({ qty: 1, unitCode: '', unitCost: 0, taxRate: defaultTaxRate });
+            setFormData({
+                qty: 1,
+                unitCode: '',
+                unitCost: 0,
+                taxRate: defaultTaxRate,
+                discountType: 'AMOUNT',
+                discountValue: 0,
+            });
             setTimeout(() => searchInputRef.current?.focus(), 50);
         } else {
             onClose();
@@ -469,19 +504,63 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
                                 )}
 
                                 {(mode === 'PURCHASE' || mode === 'SALE') && (
-                                    <div className="space-y-1.5">
-                                        <label className="text-[11px] font-bold text-gray-500 uppercase tracking-tight">
-                                            {mode === 'SALE' ? 'Sale Price' : 'Cost Price'}
-                                        </label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 outline-none text-sm font-medium"
-                                            value={formData.unitCost}
-                                            onChange={(e) => setFormData({ ...formData, unitCost: Number(e.target.value) })}
-                                        />
-                                    </div>
-                                )}
+                                     <>
+                                         <div className="space-y-1.5">
+                                             <label className="text-[11px] font-bold text-gray-500 uppercase tracking-tight">
+                                                 {mode === 'SALE' ? 'Sale Price' : 'Cost Price'}
+                                             </label>
+                                             <input
+                                                 type="number"
+                                                 step="0.01"
+                                                 min="0.01"
+                                                 className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 outline-none text-sm font-medium"
+                                                 value={formData.unitCost}
+                                                 onChange={(e) => {
+                                                     setFormData({ ...formData, unitCost: Number(e.target.value) });
+                                                     setError(null);
+                                                 }}
+                                             />
+                                             {unitCostError && (
+                                                 <p className="text-[10px] text-red-500 font-semibold mt-1">{unitCostError}</p>
+                                             )}
+                                         </div>
+                                         <div className="space-y-1.5 sm:col-span-2">
+                                             <label className="text-[11px] font-bold text-gray-500 uppercase tracking-tight">Discount</label>
+                                             <div className="flex gap-2">
+                                                 <div className="relative flex-1">
+                                                     <input
+                                                         type="number"
+                                                         min="0"
+                                                         step="any"
+                                                         className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 outline-none text-sm font-medium"
+                                                         placeholder="Discount amount or percentage..."
+                                                         value={formData.discountValue || ''}
+                                                         onChange={(e) => {
+                                                             const val = Number(e.target.value);
+                                                             setFormData({ ...formData, discountValue: isNaN(val) ? 0 : val });
+                                                         }}
+                                                     />
+                                                 </div>
+                                                 <div className="flex border border-gray-200 rounded-lg overflow-hidden shrink-0">
+                                                     <button
+                                                         type="button"
+                                                         onClick={() => setFormData({ ...formData, discountType: 'AMOUNT' })}
+                                                         className={`px-4 text-xs font-bold transition-all ${formData.discountType === 'AMOUNT' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
+                                                     >
+                                                         {currency}
+                                                     </button>
+                                                     <button
+                                                         type="button"
+                                                         onClick={() => setFormData({ ...formData, discountType: 'PERCENTAGE' })}
+                                                         className={`px-4 text-xs font-bold transition-all ${formData.discountType === 'PERCENTAGE' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
+                                                     >
+                                                         %
+                                                     </button>
+                                                 </div>
+                                             </div>
+                                         </div>
+                                     </>
+                                 )}
                             </div>
 
                             <div className="space-y-2">
@@ -528,21 +607,29 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
                             </div>
 
                             {(mode === 'PURCHASE' || mode === 'SALE') && (
-                                <div className="space-y-3">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                        <div className="p-3 rounded-lg border border-gray-200 bg-gray-50">
-                                            <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Subtotal</div>
-                                            <div className="text-base font-black text-gray-900 mt-1">{lineSubtotal.toFixed(2)}</div>
-                                        </div>
-                                        <div className="p-3 rounded-lg border border-gray-200 bg-gray-50">
-                                            <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{formatTaxLabel(companyTax, Number(formData.taxRate || 0))}</div>
-                                            <div className="text-base font-black text-amber-600 mt-1">{lineTaxAmount.toFixed(2)}</div>
-                                        </div>
-                                        <div className="p-3 rounded-lg border border-gray-200 bg-blue-50">
-                                            <div className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Total Amount</div>
-                                            <div className="text-base font-black text-blue-700 mt-1">{lineGrandTotal.toFixed(2)}</div>
-                                        </div>
-                                    </div>
+                                 <div className="space-y-3">
+                                     <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                         <div className="p-3 rounded-lg border border-gray-200 bg-gray-50">
+                                             <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Gross</div>
+                                             <div className="text-base font-bold text-gray-900 mt-1">{grossTotal.toFixed(2)}</div>
+                                         </div>
+                                         <div className="p-3 rounded-lg border border-gray-200 bg-gray-50">
+                                             <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Discount</div>
+                                             <div className="text-base font-bold text-red-600 mt-1">-{discountAmount.toFixed(2)}</div>
+                                         </div>
+                                         <div className="p-3 rounded-lg border border-gray-200 bg-gray-50">
+                                             <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Taxable Subtotal</div>
+                                             <div className="text-base font-bold text-gray-900 mt-1">{lineSubtotal.toFixed(2)}</div>
+                                         </div>
+                                         <div className="p-3 rounded-lg border border-gray-200 bg-gray-50">
+                                             <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{formatTaxLabel(companyTax, Number(formData.taxRate || 0))}</div>
+                                             <div className="text-base font-bold text-amber-600 mt-1">{lineTaxAmount.toFixed(2)}</div>
+                                         </div>
+                                         <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 col-span-2 md:col-span-1">
+                                             <div className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Total</div>
+                                             <div className="text-base font-black text-blue-700 mt-1">{lineGrandTotal.toFixed(2)}</div>
+                                         </div>
+                                     </div>
 
                                     <div className={`grid grid-cols-1 gap-3 ${mode === 'PURCHASE' ? 'md:grid-cols-2' : ''}`}>
                                         <div className="p-3 rounded-lg border border-gray-200 bg-white">
@@ -623,7 +710,7 @@ export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branch
                         </button>
                     )}
                     <button
-                        disabled={!selectedProduct}
+                        disabled={!selectedProduct || ((mode === 'PURCHASE' || mode === 'SALE') && effectiveUnitCost <= 0)}
                         onClick={() => handleAdd(false)}
                         className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all disabled:opacity-50 shadow-sm"
                     >

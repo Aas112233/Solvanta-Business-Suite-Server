@@ -46,7 +46,13 @@ export default function MasterCRUD({ title, endpoint, columns, formFields }: Mas
     });
 
     const saveMut = useMutation({
-        mutationFn: (data: any) => data.id ? api.patch(`${endpoint}/${data.id}`, data) : api.post(endpoint, data),
+        mutationFn: (data: any) => {
+            if (data.id) {
+                const { id, ...payload } = data;
+                return api.patch(`${endpoint}/${id}`, payload);
+            }
+            return api.post(endpoint, data);
+        },
         onSuccess: () => {
             toast.success('Saved successfully');
             qc.invalidateQueries({ queryKey: [endpoint] });

@@ -9,6 +9,7 @@ import { paginationSchema, getPaginationParams } from '../../utils/pagination.js
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { getPosTerminalPolicy, upsertPosTerminalPolicy } from '../pos/pos-policy.js';
+import { isCashType, isBankType, isCreditType, isMixedType } from '../../utils/paymentMethods.js';
 
 export const posTerminalRoutes = Router();
 posTerminalRoutes.use(authenticate);
@@ -331,19 +332,17 @@ async function buildShiftConsolidation(companyId: string, shiftId: string, openi
         paymentBreakdown[method].count += 1;
         paymentBreakdown[method].total += amount;
 
-        if (method === 'CASH') {
+        if (isCashType(method)) {
             cashSales += amount;
-        } else if (method === 'CARD') {
-            cardSales += amount;
-        } else if (method === 'MIXED') {
+        } else if (isMixedType(method)) {
             mixedSales += amount;
             const cashPart = Math.max(0, Number(inv.cashReceived || 0) - Number(inv.changeGiven || 0));
             const cardPart = Math.max(0, amount - cashPart);
             mixedCashPart += cashPart;
             mixedCardPart += cardPart;
-        } else if (method === 'CREDIT') {
+        } else if (isCreditType(method)) {
             creditSales += amount;
-        } else if (method === 'BANK_TRANSFER') {
+        } else if (isBankType(method)) {
             bankTransferSales += amount;
         } else {
             otherSales += amount;

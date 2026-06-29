@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isCashType, isBankType, isCreditType, isMixedType } from '../../lib/globalStrings';
 import { useQuery } from '@tanstack/react-query';
 import { CalendarClock, DollarSign, Eye, FileSpreadsheet, Package, Plus, Printer } from 'lucide-react';
 import { format } from 'date-fns';

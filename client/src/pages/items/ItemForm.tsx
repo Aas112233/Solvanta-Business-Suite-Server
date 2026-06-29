@@ -11,6 +11,15 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import AppLoader from '../../components/ui/AppLoader';
 
+type Tax = {
+    id: string;
+    name: string;
+    rate: number;
+    type: 'SALES' | 'PURCHASE' | 'BOTH';
+    isActive: boolean;
+    isDefault: boolean;
+};
+
 const itemFormSchema = z.object({
     itemCode: z.string().regex(/^\d{1,32}$/, 'Item Code must be between 1 and 32 digits'),
     name: z.string().min(1, 'Name is required'),
@@ -19,6 +28,7 @@ const itemFormSchema = z.object({
     itemGroupId: z.string().min(1, 'Group is required'),
     brandId: z.string().optional(),
     status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
+    taxId: z.string().optional().nullable(),
 });
 
 const unitSchema = z.object({
@@ -92,7 +102,8 @@ export default function ItemForm() {
     const [formData, setFormData] = useState<any>({
         itemCode: '', name: '', nameArabic: '', categoryId: '', itemGroupId: '', brandId: '',
         status: 'ACTIVE',
-        barcodes: []
+        barcodes: [],
+        taxId: ''
     });
     const [units, setUnits] = useState<any[]>([
         { unitName: 'Piece', unitCode: 'PCS', qtyInBaseUnit: 1, isBase: true, salePrice: 0, costPrice: 0, minimumNegotiationPrice: '', status: 'ACTIVE', barcodes: [] }
@@ -100,8 +111,142 @@ export default function ItemForm() {
     const [pricingOverrides, setPricingOverrides] = useState<Record<string, string>>({});
     const [priceMinOverrides, setPriceMinOverrides] = useState<Record<string, string>>({});
     const [unitErrors, setUnitErrors] = useState<Record<number, string[]>>({});
-    const [baseSalePriceSource, setBaseSalePriceSource] = useState<'auto' | 'manual'>('auto');
-    const baseSalePriceInitializedRef = useRef(false);
+    const [autoCalcPrice, setAutoCalcPrice] = useState(isNew);
+    const [auditSearch, setAuditSearch] = useState('');
+    const [auditTypeFilter, setAuditTypeFilter] = useState<'ALL' | 'SYSTEM' | 'PRICING' | 'PURCHASE' | 'SALE'>('ALL');
+    const [expandedEvents, setExpandedEvents] = useState<Record<string, boolean>>({});
+
+    const toggleEventExpand = (eventId: string) => {
+        setExpandedEvents(prev => ({ ...prev, [eventId]: !prev[eventId] }));
+    };
+
+    const getProductDiff = (before: any, after: any) => {
+        if (!before || !after) return [];
+        const diffs: { field: string; from: any; to: any }[] = [];
+        const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+        
+        const resolveName = (key: string, val: any) => {
+            if (!val) return 'None';
+            if (key === 'categoryId') {
+                return (cats || []).find((c: any) => String(c.id) === String(val))?.name || val;
+            }
+            if (key === 'itemGroupId') {
+                return (groups || []).find((g: any) => String(g.id) === String(val))?.name || val;
+            }
+            if (key === 'brandId') {
+                return (brands || []).find((b: any) => String(b.id) === String(val))?.name || val;
+            }
+            if (key === 'taxId') {
+                return (taxes || []).find((t: any) => String(t.id) === String(val))?.name || val;
+            }
+            return String(val);
+        };
+
+        for (const k of keys) {
+            if (['updatedAt', 'createdAt', 'deletedAt', 'companyId', 'id'].includes(k)) continue;
+            const bVal = before[k];
+            const aVal = after[k];
+            
+            if (k === 'units') {
+                const bUnits = Array.isArray(bVal) ? bVal : [];
+                const aUnits = Array.isArray(aVal) ? aVal : [];
+                const bMap = new Map(bUnits.map(u => [String(u.unitCode).toUpperCase(), u]));
+                const aMap = new Map(aUnits.map(u => [String(u.unitCode).toUpperCase(), u]));
+                const allCodes = Array.from(new Set([...bMap.keys(), ...aMap.keys()]));
+                
+                for (const code of allCodes) {
+                    const bu = bMap.get(code);
+                    const au = aMap.get(code);
+                    
+                    if (bu && au) {
+                        if (Number(bu.salePrice || 0) !== Number(au.salePrice || 0)) {
+                            diffs.push({
+                                field: `Unit "${code}" Sale Price`,
+                                from: Number(bu.salePrice || 0).toFixed(2),
+                                to: Number(au.salePrice || 0).toFixed(2)
+                            });
+                        }
+                        if (Number(bu.costPrice || 0) !== Number(au.costPrice || 0)) {
+                            diffs.push({
+                                field: `Unit "${code}" Cost Price`,
+                                from: Number(bu.costPrice || 0).toFixed(2),
+                                to: Number(au.costPrice || 0).toFixed(2)
+                            });
+                        }
+                        if (bu.minimumNegotiationPrice !== au.minimumNegotiationPrice) {
+                            diffs.push({
+                                field: `Unit "${code}" Min Negotiation Price`,
+                                from: bu.minimumNegotiationPrice != null ? Number(bu.minimumNegotiationPrice).toFixed(2) : 'None',
+                                to: au.minimumNegotiationPrice != null ? Number(au.minimumNegotiationPrice).toFixed(2) : 'None'
+                            });
+                        }
+                        if (bu.unitName !== au.unitName) {
+                            diffs.push({
+                                field: `Unit "${code}" Name`,
+                                from: bu.unitName,
+                                to: au.unitName
+                            });
+                        }
+                    } else if (au) {
+                        diffs.push({
+                            field: `Unit "${code}" Added`,
+                            from: 'None',
+                            to: `${au.unitName} (Price: ${Number(au.salePrice || 0).toFixed(2)})`
+                        });
+                    } else if (bu) {
+                        diffs.push({
+                            field: `Unit "${code}" Removed`,
+                            from: bu.unitName,
+                            to: 'None'
+                        });
+                    }
+                }
+                continue;
+            }
+
+            if (k === 'barcodes') {
+                const bArr = Array.isArray(bVal) ? bVal : [];
+                const aArr = Array.isArray(aVal) ? aVal : [];
+                const added = aArr.filter(x => !bArr.includes(x));
+                const removed = bArr.filter(x => !aArr.includes(x));
+                
+                if (added.length > 0) {
+                    diffs.push({
+                        field: 'Barcodes Added',
+                        from: 'None',
+                        to: added.join(', ')
+                    });
+                }
+                if (removed.length > 0) {
+                    diffs.push({
+                        field: 'Barcodes Removed',
+                        from: removed.join(', '),
+                        to: 'None'
+                    });
+                }
+                continue;
+            }
+
+            const bStr = typeof bVal === 'object' && bVal !== null ? JSON.stringify(bVal) : String(bVal ?? '');
+            const aStr = typeof aVal === 'object' && aVal !== null ? JSON.stringify(aVal) : String(aVal ?? '');
+            
+            if (bStr !== aStr) {
+                let label = k;
+                if (k === 'taxId') label = 'Tax Rule';
+                else if (k === 'categoryId') label = 'Category';
+                else if (k === 'itemGroupId') label = 'Item Group';
+                else if (k === 'brandId') label = 'Brand';
+                else if (k === 'minimumNegotiationPrice') label = 'Min Negotiation Price';
+
+                diffs.push({
+                    field: label,
+                    from: resolveName(k, bVal),
+                    to: resolveName(k, aVal),
+                });
+            }
+        }
+        return diffs;
+    };
 
     const canEditItem = hasPermission('product.edit') || hasPermission('product.editItem');
     const canEditPricing = hasPermission('product.edit') || hasPermission('product.editPricing');
@@ -123,6 +268,7 @@ export default function ItemForm() {
             itemGroupId: '',
             brandId: '',
             status: 'ACTIVE',
+            taxId: '',
         },
     });
 
@@ -131,6 +277,10 @@ export default function ItemForm() {
     const { data: groups, refetch: refetchGroups, isFetching: isFetchingGroups } = useQuery({ queryKey: ['groups'], queryFn: () => api.get('/products/meta/groups').then(r => r.data.data) });
     const { data: brands, refetch: refetchBrands, isFetching: isFetchingBrands } = useQuery({ queryKey: ['brands'], queryFn: () => api.get('/products/meta/brands').then(r => r.data.data) });
     const { data: priceGroups, refetch: refetchPriceGroups, isFetching: isFetchingPriceGroups } = useQuery({ queryKey: ['priceGroups'], queryFn: () => api.get('/products/meta/price-groups').then(r => r.data.data) });
+    const { data: taxes = [] } = useQuery<Tax[]>({
+        queryKey: ['taxes'],
+        queryFn: () => api.get('/taxes').then(r => r.data.data as Tax[]),
+    });
 
     // Fetch Item Detais
     const { data: item, isLoading } = useQuery({
@@ -218,13 +368,6 @@ export default function ItemForm() {
     }, [isNew]);
 
     useEffect(() => {
-        if (isNew) {
-            baseSalePriceInitializedRef.current = true;
-            setBaseSalePriceSource('auto');
-        }
-    }, [isNew]);
-
-    useEffect(() => {
         if (item) {
             setFormData({
                 itemCode: item.itemCode,
@@ -234,7 +377,8 @@ export default function ItemForm() {
                 itemGroupId: item.itemGroupId || '',
                 brandId: item.brandId || '',
                 status: item.status,
-                barcodes: item.barcodes || []
+                barcodes: item.barcodes || [],
+                taxId: item.taxId || ''
             });
             setValue('itemCode', item.itemCode);
             setValue('name', item.name);
@@ -243,6 +387,7 @@ export default function ItemForm() {
             setValue('itemGroupId', item.itemGroupId || '');
             setValue('brandId', item.brandId || '');
             setValue('status', item.status);
+            setValue('taxId', item.taxId || '');
             if (item.units?.length) setUnits(item.units.map((u: any) => ({
                 ...u,
                 status: u.status || 'ACTIVE',
@@ -261,7 +406,6 @@ export default function ItemForm() {
             }
             setPricingOverrides(nextOverrides);
             setPriceMinOverrides(nextMinOverrides);
-            baseSalePriceInitializedRef.current = false;
         }
     }, [item, setValue]);
 
@@ -274,12 +418,6 @@ export default function ItemForm() {
         () => calculateRecommendedSalePrice(Number(units[0]?.costPrice || 0), categoryProfitMarginPct),
         [categoryProfitMarginPct, units]
     );
-
-    useEffect(() => {
-        if (!cats || isNew || !item || units.length === 0 || baseSalePriceInitializedRef.current) return;
-        setBaseSalePriceSource(arePricesEqual(Number(units[0]?.salePrice || 0), recommendedBaseSalePrice) ? 'auto' : 'manual');
-        baseSalePriceInitializedRef.current = true;
-    }, [cats, isNew, item, recommendedBaseSalePrice, units]);
 
     const syncDerivedUnitPricing = (draftUnits: any[]) => {
         if (draftUnits.length <= 1) return draftUnits;
@@ -299,7 +437,7 @@ export default function ItemForm() {
     };
 
     useEffect(() => {
-        if (baseSalePriceSource !== 'auto' || units.length === 0 || !baseSalePriceInitializedRef.current) return;
+        if (!autoCalcPrice || units.length === 0) return;
 
         setUnits((currentUnits) => {
             if (currentUnits.length === 0) return currentUnits;
@@ -310,7 +448,7 @@ export default function ItemForm() {
             nextUnits[0] = { ...nextUnits[0], salePrice: recommendedBaseSalePrice };
             return syncDerivedUnitPricing(nextUnits);
         });
-    }, [baseSalePriceSource, recommendedBaseSalePrice]);
+    }, [autoCalcPrice, recommendedBaseSalePrice]);
 
     // Mutation
     const saveMut = useMutation({
@@ -336,6 +474,7 @@ export default function ItemForm() {
             const payload = {
                 ...payloadData,
                 brandId: payloadData.brandId || null,
+                taxId: payloadData.taxId || null,
                 units: normalizedUnits,
                 barcodes: productBarcodes, // Product level barcodes sync with unit codes
             };
@@ -346,6 +485,9 @@ export default function ItemForm() {
         },
         onSuccess: () => {
             toast.success('Saved successfully');
+            if (id && id !== 'new') {
+                qc.invalidateQueries({ queryKey: ['product', id] });
+            }
             qc.removeQueries({ queryKey: ['products'] });
             navigate('/items');
         },
@@ -406,7 +548,7 @@ export default function ItemForm() {
         newUnits[idx] = { ...newUnits[idx], [field]: val };
 
         if (idx === 0 && field === 'salePrice') {
-            setBaseSalePriceSource('manual');
+            setAutoCalcPrice(false);
             setUnits(syncDerivedUnitPricing(newUnits));
             return;
         }
@@ -417,16 +559,6 @@ export default function ItemForm() {
         }
 
         setUnits(newUnits);
-    };
-
-    const applyRecommendedBaseSalePrice = () => {
-        setBaseSalePriceSource('auto');
-        setUnits((currentUnits) => {
-            if (currentUnits.length === 0) return currentUnits;
-            const nextUnits = [...currentUnits];
-            nextUnits[0] = { ...nextUnits[0], salePrice: recommendedBaseSalePrice };
-            return syncDerivedUnitPricing(nextUnits);
-        });
     };
 
     const duplicateUnitCodes = useMemo(() => {
@@ -599,14 +731,14 @@ export default function ItemForm() {
 
             {/* Tabs */}
             <div className="flex border-b border-gray-200 bg-white rounded-t-xl px-2">
-                {['general', 'units', 'pricing', 'audit'].map(t => (
+                {['general', 'units', 'pricing', 'tax', 'audit'].map(t => (
                     <button
                         key={t}
                         onClick={() => setActiveTab(t)}
                         className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors capitalize ${activeTab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
                             }`}
                     >
-                        {t}
+                        {t === 'tax' ? 'Tax Setup' : t}
                     </button>
                 ))}
             </div>
@@ -876,26 +1008,29 @@ export default function ItemForm() {
                                                 className="w-full px-2 py-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                                             />
                                             {idx === 0 && selectedCategory && (
-                                                <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px]">
-                                                    <span className="font-semibold text-emerald-600">
-                                                        Recommended: {recommendedBaseSalePrice.toFixed(2)}
-                                                    </span>
-                                                    <span className="text-gray-500">
-                                                        {categoryProfitMarginPct.toFixed(2)}% from category margin
-                                                    </span>
-                                                    {baseSalePriceSource === 'auto' ? (
-                                                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 border border-emerald-200">
-                                                            Auto
-                                                        </span>
-                                                    ) : !arePricesEqual(Number(u.salePrice || 0), recommendedBaseSalePrice) ? (
-                                                        <button
-                                                            type="button"
-                                                            onClick={applyRecommendedBaseSalePrice}
-                                                            className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 font-semibold text-blue-700 hover:bg-blue-100"
-                                                        >
-                                                            Apply
-                                                        </button>
-                                                    ) : null}
+                                                <div className="mt-1 space-y-1">
+                                                    <label className="flex items-center gap-1.5 text-[10px] text-gray-600 cursor-pointer select-none">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={autoCalcPrice}
+                                                            onChange={e => {
+                                                                const checked = e.target.checked;
+                                                                setAutoCalcPrice(checked);
+                                                                if (checked) {
+                                                                    setUnits(prev => {
+                                                                        const next = [...prev];
+                                                                        next[0] = { ...next[0], salePrice: recommendedBaseSalePrice };
+                                                                        return syncDerivedUnitPricing(next);
+                                                                    });
+                                                                }
+                                                            }}
+                                                            className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                                        />
+                                                        <span>Auto-calculate from category margin ({categoryProfitMarginPct.toFixed(2)}%)</span>
+                                                    </label>
+                                                    <div className="text-[9px] text-gray-500">
+                                                        Recommended: <span className="font-semibold text-emerald-600">{recommendedBaseSalePrice.toFixed(2)}</span>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
@@ -1065,28 +1200,418 @@ export default function ItemForm() {
                     </div>
                 )}
 
+                {activeTab === 'tax' && (
+                    <div className="space-y-6">
+                        <div>
+                            <h3 className="text-base font-semibold text-gray-900 font-bold">Tax Setup</h3>
+                            <p className="text-xs text-gray-500">Configure item-level tax rules for sales and purchase transactions.</p>
+                        </div>
+
+                        <div className="max-w-md">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Item Tax Rule</label>
+                            <Controller
+                                name="taxId"
+                                control={control}
+                                render={({ field }) => (
+                                    <AppDropdown
+                                        value={field.value || ''}
+                                        onChange={(value) => {
+                                            field.onChange(value);
+                                            setFormData((prev: any) => ({ ...prev, taxId: value }));
+                                        }}
+                                        options={[
+                                            { value: '', label: 'No Tax Rule (Use company defaults)' },
+                                            ...(taxes || [])
+                                                .filter((t) => t.isActive)
+                                                .map((t) => ({
+                                                    value: t.id,
+                                                    label: `${t.name} (${(t.rate * 100).toFixed(0)}%) - ${
+                                                        t.type === 'BOTH' ? 'Inward & Outward' : t.type === 'SALES' ? 'Outward Only' : 'Inward Only'
+                                                    }`,
+                                                })),
+                                        ]}
+                                        placeholder="Select Tax Rule"
+                                    />
+                                )}
+                            />
+                        </div>
+
+                        {/* Tax Applicability Previews */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-6 border-t border-gray-100">
+                            {/* Outward Tax Preview */}
+                            <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 flex items-start gap-4 shadow-sm">
+                                <div className="p-3 bg-blue-100 text-blue-600 rounded-lg">
+                                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                    </svg>
+                                </div>
+                                <div className="space-y-1">
+                                    <h4 className="font-semibold text-gray-900 text-sm">Outward Transactions (Sales)</h4>
+                                    {(() => {
+                                        const selectedTaxId = getValues('taxId');
+                                        const selectedTax = (taxes || []).find((t) => t.id === selectedTaxId);
+                                        const defaultSalesTax = (taxes || []).find((t) => t.isDefault && (t.type === 'SALES' || t.type === 'BOTH')) || (taxes || []).find((t) => t.type === 'SALES' || t.type === 'BOTH');
+
+                                        let resolvedTax = null;
+                                        let source = 'Company Default';
+
+                                        if (selectedTax) {
+                                            if (selectedTax.type === 'SALES' || selectedTax.type === 'BOTH') {
+                                                resolvedTax = selectedTax;
+                                                source = 'Product Tax Rule';
+                                            } else {
+                                                resolvedTax = defaultSalesTax;
+                                                source = 'Company Default (Selected rule applies to Inward only)';
+                                            }
+                                        } else {
+                                            resolvedTax = defaultSalesTax;
+                                        }
+
+                                        return (
+                                            <>
+                                                <p className="text-xl font-bold text-gray-800">
+                                                    {resolvedTax ? `${resolvedTax.name} (${(resolvedTax.rate * 100).toFixed(0)}%)` : 'No Tax (0%)'}
+                                                </p>
+                                                <p className="text-xs text-gray-500">Source: <span className="font-medium text-gray-700">{source}</span></p>
+                                            </>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+
+                            {/* Inward Tax Preview */}
+                            <div className="border border-gray-200 rounded-xl p-4 bg-gray-50 flex items-start gap-4 shadow-sm">
+                                <div className="p-3 bg-emerald-100 text-emerald-600 rounded-lg">
+                                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 13l-7 7-7-7m14-6l-7 7-7-7" />
+                                    </svg>
+                                </div>
+                                <div className="space-y-1">
+                                    <h4 className="font-semibold text-gray-900 text-sm">Inward Transactions (Purchase)</h4>
+                                    {(() => {
+                                        const selectedTaxId = getValues('taxId');
+                                        const selectedTax = (taxes || []).find((t) => t.id === selectedTaxId);
+                                        const defaultPurchaseTax = (taxes || []).find((t) => t.isDefault && (t.type === 'PURCHASE' || t.type === 'BOTH')) || (taxes || []).find((t) => t.type === 'PURCHASE' || t.type === 'BOTH');
+
+                                        let resolvedTax = null;
+                                        let source = 'Company Default';
+
+                                        if (selectedTax) {
+                                            if (selectedTax.type === 'PURCHASE' || selectedTax.type === 'BOTH') {
+                                                resolvedTax = selectedTax;
+                                                source = 'Product Tax Rule';
+                                            } else {
+                                                resolvedTax = defaultPurchaseTax;
+                                                source = 'Company Default (Selected rule applies to Outward only)';
+                                            }
+                                        } else {
+                                            resolvedTax = defaultPurchaseTax;
+                                        }
+
+                                        return (
+                                            <>
+                                                <p className="text-xl font-bold text-gray-800">
+                                                    {resolvedTax ? `${resolvedTax.name} (${(resolvedTax.rate * 100).toFixed(0)}%)` : 'No Tax (0%)'}
+                                                </p>
+                                                <p className="text-xs text-gray-500">Source: <span className="font-medium text-gray-700">{source}</span></p>
+                                            </>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {activeTab === 'audit' && (
-                    <div className="space-y-4">
-                        <p className="text-sm text-gray-500 italic">Real timeline of created, edited, and price changes.</p>
-                        {isNew ? (
-                            <div className="text-sm text-gray-500">Save item first to view audit timeline.</div>
-                        ) : (auditTimeline || []).length === 0 ? (
-                            <div className="text-sm text-gray-500">No audit history found.</div>
-                        ) : (
-                            <div className="space-y-3">
-                                {(auditTimeline || []).map((row: any) => (
-                                    <div key={row.id} className="border-l-2 border-blue-200 pl-4 py-2 relative">
-                                        <div className="absolute -left-[5px] top-3 w-2.5 h-2.5 rounded-full bg-blue-500"></div>
-                                        <p className="text-sm font-medium text-gray-900">
-                                            {row.action} · {row.entity}
-                                        </p>
-                                        <p className="text-xs text-gray-500">
-                                            {new Date(row.createdAt).toLocaleString()} · by {row.user?.name || row.user?.email || 'System'}
-                                        </p>
-                                    </div>
+                    <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
+                            <div>
+                                <h3 className="text-base font-bold text-gray-900">Product Lifecycle & Activity Ledger</h3>
+                                <p className="text-xs text-gray-500">Track edits, price channel overrides, purchases, and sales in real-time.</p>
+                            </div>
+                            
+                            {/* Filter Buttons */}
+                            <div className="flex flex-wrap gap-1.5">
+                                {(
+                                    [
+                                        { key: 'ALL', label: 'All Activity' },
+                                        { key: 'SYSTEM', label: 'Info Updates' },
+                                        { key: 'PRICING', label: 'Price Changes' },
+                                        { key: 'PURCHASE', label: 'Purchases' },
+                                        { key: 'SALE', label: 'Sales' },
+                                    ] as const
+                                ).map(item => (
+                                    <button
+                                        type="button"
+                                        key={item.key}
+                                        onClick={() => setAuditTypeFilter(item.key)}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                                            auditTypeFilter === item.key
+                                                ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                                                : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                                        }`}
+                                    >
+                                        {item.label}
+                                    </button>
                                 ))}
                             </div>
-                        )}
+                        </div>
+
+                        {/* Search Input */}
+                        <div className="max-w-md">
+                            <input
+                                value={auditSearch}
+                                onChange={e => setAuditSearch(e.target.value)}
+                                placeholder="Search by description or editor name..."
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                            />
+                        </div>
+
+                        {isNew ? (
+                            <div className="text-sm text-gray-500 italic p-4 bg-gray-50 rounded-lg border border-dashed border-gray-200 text-center">
+                                Save the item first to view its audit timeline and transaction history.
+                            </div>
+                        ) : (() => {
+                            // Filter logic
+                            const filtered = (auditTimeline || []).filter((e: any) => {
+                                // 1. Type Filter
+                                if (auditTypeFilter === 'SYSTEM' && !['CREATE', 'UPDATE'].includes(e.type)) return false;
+                                if (auditTypeFilter === 'PRICING' && e.type !== 'PRICE_CHANGE') return false;
+                                if (auditTypeFilter === 'PURCHASE' && e.type !== 'PURCHASE') return false;
+                                if (auditTypeFilter === 'SALE' && e.type !== 'SALE') return false;
+
+                                // 2. Search text filter
+                                if (auditSearch) {
+                                    const searchLower = auditSearch.toLowerCase();
+                                    const matchDesc = String(e.description || '').toLowerCase().includes(searchLower);
+                                    const matchUser = String(e.user?.name || e.user?.email || '').toLowerCase().includes(searchLower);
+                                    const matchInvoice = String(e.details?.invoiceNo || '').toLowerCase().includes(searchLower);
+                                    
+                                    // Search inside UPDATE property diffs
+                                    let matchDiff = false;
+                                    if (e.type === 'UPDATE' && e.details?.before && e.details?.after) {
+                                        const diffs = getProductDiff(e.details.before, e.details.after);
+                                        matchDiff = diffs.some(d => 
+                                            d.field.toLowerCase().includes(searchLower) ||
+                                            String(d.from).toLowerCase().includes(searchLower) ||
+                                            String(d.to).toLowerCase().includes(searchLower)
+                                        );
+                                    }
+
+                                    // Search inside PRICE_CHANGE details
+                                    let matchPricing = false;
+                                    if (e.type === 'PRICE_CHANGE' && e.details?.after) {
+                                        matchPricing = (e.details.after || []).some((over: any) => 
+                                            over.unitCode.toLowerCase().includes(searchLower) ||
+                                            String(over.salePrice).toLowerCase().includes(searchLower)
+                                        );
+                                    }
+
+                                    if (!matchDesc && !matchUser && !matchInvoice && !matchDiff && !matchPricing) return false;
+                                }
+
+                                return true;
+                            });
+
+                            if (filtered.length === 0) {
+                                return (
+                                    <div className="text-sm text-gray-500 italic p-8 bg-gray-50 rounded-lg border border-dashed border-gray-200 text-center">
+                                        No matching events found in this period.
+                                    </div>
+                                );
+                            }
+
+                            return (
+                                <div className="space-y-6 relative pl-12 before:absolute before:left-[24px] before:top-2 before:bottom-2 before:w-[2px] before:bg-gray-200">
+                                    {filtered.map((e: any) => {
+                                        const isExpanded = !!expandedEvents[e.id];
+                                        
+                                        // Styling based on type
+                                        let badgeColor = 'bg-gray-100 text-gray-700 border-gray-200';
+                                        let iconBg = 'bg-gray-100 text-gray-600';
+                                        let iconSvg = (
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                                            </svg>
+                                        );
+
+                                        if (e.type === 'CREATE') {
+                                            badgeColor = 'bg-teal-50 border-teal-200 text-teal-800';
+                                            iconBg = 'bg-teal-100 text-teal-600';
+                                            iconSvg = (
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                                </svg>
+                                            );
+                                        } else if (e.type === 'UPDATE') {
+                                            badgeColor = 'bg-orange-50 border-orange-200 text-orange-800';
+                                            iconBg = 'bg-orange-100 text-orange-600';
+                                            iconSvg = (
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                                </svg>
+                                            );
+                                        } else if (e.type === 'PRICE_CHANGE') {
+                                            badgeColor = 'bg-indigo-50 border-indigo-200 text-indigo-800';
+                                            iconBg = 'bg-indigo-100 text-indigo-600';
+                                            iconSvg = (
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2zM9 16V8l5 4-5 4z" />
+                                                </svg>
+                                            );
+                                        } else if (e.type === 'PURCHASE') {
+                                            badgeColor = 'bg-blue-50 border-blue-200 text-blue-800';
+                                            iconBg = 'bg-blue-100 text-blue-600';
+                                            iconSvg = (
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                                                </svg>
+                                            );
+                                        } else if (e.type === 'SALE') {
+                                            badgeColor = 'bg-emerald-50 border-emerald-200 text-emerald-800';
+                                            iconBg = 'bg-emerald-100 text-emerald-600';
+                                            iconSvg = (
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                                                </svg>
+                                            );
+                                        }
+
+                                        return (
+                                            <div key={e.id} className="relative group">
+                                                {/* Timeline Icon Node */}
+                                                <div
+                                                    style={{ left: '-24px', transform: 'translateX(-50%)' }}
+                                                    className={`absolute top-0.5 w-9 h-9 rounded-full flex items-center justify-center border-2 border-white shadow-sm z-10 ${iconBg}`}
+                                                >
+                                                    {iconSvg}
+                                                </div>
+
+                                                {/* Card Wrapper */}
+                                                <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow">
+                                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                                        <div className="space-y-1">
+                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                <span className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded-full border ${badgeColor}`}>
+                                                                    {e.type}
+                                                                </span>
+                                                                <p className="text-sm font-semibold text-gray-900">{e.description}</p>
+                                                            </div>
+                                                            <p className="text-xs text-gray-500">
+                                                                {new Date(e.timestamp).toLocaleString()}
+                                                                {e.user && (
+                                                                    <span> · by <span className="font-medium text-gray-700">{e.user.name || e.user.email}</span></span>
+                                                                )}
+                                                            </p>
+                                                        </div>
+
+                                                        {/* Details Expand Action Button */}
+                                                        {e.details && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => toggleEventExpand(e.id)}
+                                                                className="px-2.5 py-1 text-xs font-semibold border border-gray-200 rounded-md text-gray-600 hover:bg-gray-50 transition-colors"
+                                                            >
+                                                                {isExpanded ? 'Hide Details' : 'Show Details'}
+                                                            </button>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Expanded Diffs or Transaction details */}
+                                                    {isExpanded && e.details && (
+                                                        <div className="mt-4 pt-4 border-t border-gray-100 animate-fade-in text-xs space-y-3">
+                                                            {/* Update Event Diff rendering */}
+                                                            {e.type === 'UPDATE' && (() => {
+                                                                const diffs = getProductDiff(e.details.before, e.details.after);
+                                                                if (diffs.length === 0) return <p className="text-gray-500 italic">No significant properties modified.</p>;
+                                                                return (
+                                                                    <div className="grid grid-cols-1 gap-2 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                                                        {diffs.map((d: any, di: number) => (
+                                                                            <div key={di} className="flex flex-wrap gap-x-2 text-gray-700 py-0.5 border-b border-dashed border-gray-200 last:border-0">
+                                                                                <span className="font-semibold text-gray-900 w-36 capitalize">{d.field}:</span>
+                                                                                <span className="text-red-600 font-mono line-through">{String(d.from)}</span>
+                                                                                <span className="text-gray-400">→</span>
+                                                                                <span className="text-emerald-700 font-semibold font-mono">{String(d.to)}</span>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                );
+                                                            })()}
+
+                                                            {/* Pricing Channel changes */}
+                                                            {e.type === 'PRICE_CHANGE' && (
+                                                                <div className="bg-gray-50 p-3 rounded-lg border border-gray-100 space-y-2">
+                                                                    <p className="font-semibold text-gray-900">Updated Price Overrides:</p>
+                                                                    <div className="grid grid-cols-1 gap-1">
+                                                                        {(e.details.after || []).map((over: any, idx: number) => {
+                                                                            const prevPrice = (e.details.before || []).find((b: any) => b.priceGroupId === over.priceGroupId && b.unitCode === over.unitCode)?.salePrice;
+                                                                            const channelName = (priceGroups || []).find((pg: any) => pg.id === over.priceGroupId)?.name || over.priceGroupId.substring(0, 8);
+                                                                            return (
+                                                                                <div key={idx} className="flex items-center gap-x-2 text-gray-600">
+                                                                                    <span className="font-mono bg-indigo-50 border border-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded text-[10px]">
+                                                                                        {over.unitCode} (Channel: {channelName})
+                                                                                    </span>
+                                                                                    <span>Price: {prevPrice !== undefined ? Number(prevPrice).toFixed(2) : 'Base'} → <span className="font-semibold text-emerald-600">{Number(over.salePrice).toFixed(2)}</span></span>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Sale Event Details */}
+                                                            {e.type === 'SALE' && (
+                                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-emerald-50/50 p-3 rounded-lg border border-emerald-100 text-emerald-900">
+                                                                    <div>
+                                                                        <span className="block text-[10px] text-emerald-600 uppercase font-bold">Invoice No</span>
+                                                                        <span className="font-mono font-bold">{e.details.invoiceNo}</span>
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="block text-[10px] text-emerald-600 uppercase font-bold">Qty Sold</span>
+                                                                        <span className="font-semibold">{e.details.qty}</span>
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="block text-[10px] text-emerald-600 uppercase font-bold">Unit Price</span>
+                                                                        <span>{Number(e.details.unitPrice || 0).toFixed(2)}</span>
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="block text-[10px] text-emerald-600 uppercase font-bold">Line Total</span>
+                                                                        <span className="font-bold text-emerald-700">{Number(e.details.lineTotal || 0).toFixed(2)}</span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Purchase Event Details */}
+                                                            {e.type === 'PURCHASE' && (
+                                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-blue-50/50 p-3 rounded-lg border border-blue-100 text-blue-900">
+                                                                    <div>
+                                                                        <span className="block text-[10px] text-blue-600 uppercase font-bold">Reference No</span>
+                                                                        <span className="font-mono font-bold">{e.details.invoiceNo}</span>
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="block text-[10px] text-blue-600 uppercase font-bold">Qty Purchased</span>
+                                                                        <span className="font-semibold">{e.details.qty}</span>
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="block text-[10px] text-blue-600 uppercase font-bold">Unit Cost</span>
+                                                                        <span>{Number(e.details.unitCost || 0).toFixed(2)}</span>
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="block text-[10px] text-blue-600 uppercase font-bold">Line Total</span>
+                                                                        <span className="font-bold text-blue-700">{Number(e.details.lineTotal || 0).toFixed(2)}</span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
             </div>
