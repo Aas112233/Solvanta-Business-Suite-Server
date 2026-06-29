@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { isCashType, isBankType, isCreditType, isMixedType } from \'../../lib/globalStrings\';
+import { isCashType, isBankType, isCreditType, isMixedType } from '../../lib/globalStrings';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import toast from '@/lib/toast';

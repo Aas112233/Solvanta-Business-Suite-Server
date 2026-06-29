@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { isCashType, isBankType, isCreditType, isMixedType } from \'../../lib/globalStrings\';
+import { isCashType, isBankType, isCreditType, isMixedType } from '../../lib/globalStrings';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Printer, Download, Mail, Share2 } from 'lucide-react';

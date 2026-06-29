@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from 'react-router-dom';
-import { isCashType, isBankType } from \'../../lib/globalStrings\';
+import { isCashType, isBankType } from '../../lib/globalStrings';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { ArrowLeft, Edit, Trash2, FileText } from 'lucide-react';

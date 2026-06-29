@@ -495,12 +495,11 @@ export default function GlobalStrings() {
                                 </p>
                                 {canManage && !search && (
                                     <button
-                                        onClick={loadDefaults}
-                                        disabled={loadingDefaults}
+                                        onClick={() => setShowForm(true)}
                                         className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-brand text-white rounded-xl text-xs font-bold hover:shadow-lg hover:shadow-brand-200/50 transition-all"
                                     >
-                                        {loadingDefaults ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                                        Load Recommended Defaults
+                                        <Plus size={14} />
+                                        Add New Item
                                     </button>
                                 )}
                             </div>

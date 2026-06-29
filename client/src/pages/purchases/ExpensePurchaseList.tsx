@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { isCashType, isBankType } from \'../../lib/globalStrings\';
+import { isCashType, isBankType } from '../../lib/globalStrings';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import api from '../../lib/api';

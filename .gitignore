@@ -79,3 +79,7 @@ client/.env.*
 client/*.log
 client/coverage/
 client/.cache/
+client/dist.zip
+client/dist.zip
+client/
+
