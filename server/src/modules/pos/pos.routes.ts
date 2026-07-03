@@ -2063,9 +2063,9 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
                         },
                     });
                 }, { maxWait: 10000, timeout: 20000 });
-                results.push({ id, status: 'success' });
+                results.push({ id: invoice.id, status: 'success' });
             } catch (err: any) {
-                results.push({ id, status: 'error', message: err.message });
+                results.push({ id: invoice.id, status: 'error', message: err.message });
             }
         }
 
