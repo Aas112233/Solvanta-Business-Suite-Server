@@ -1,28 +1,13 @@
-
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
+import { FETCH_ALL_LIMIT } from '../../lib/constants';
 import { exportExcel } from '../../lib/fileExport';
 import type { ExcelColumn } from '../../lib/excelReport';
-import {
-    Building2,
-    CalendarRange,
-    CheckSquare,
-    Download,
-    Filter,
-    Layers,
-    Loader2,
-    Package,
-    Search,
-    Square,
-    Truck,
-    X,
-} from 'lucide-react';
+import { Download, Loader2, Search } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { formatCompanyDate, resolveCompanyCurrency, toDateInputValue } from '../../lib/companySettings';
-import AppDropdown from '../ui/AppDropdown';
-
-type FilterPanel = 'date' | 'branch' | 'supplier' | 'item' | 'search' | 'columns' | null;
+import { PageTemplate, Section, KpiCard, Button, FilterBar, Select } from '../ui';
 
 type ColumnKey =
     | 'purchaseNo'
@@ -132,7 +117,6 @@ function formatUnitFraction(line: PurchasesOnDateLine) {
 export default function PurchasesOnDateReport() {
     const company = useAuthStore((s) => s.user?.company);
     const currency = resolveCompanyCurrency(company);
-    const [panel, setPanel] = useState<FilterPanel>(null);
     const [targetDate, setTargetDate] = useState(() => toDateInputValue(undefined, company));
     const [branchId, setBranchId] = useState('');
     const [supplierId, setSupplierId] = useState('');
@@ -168,7 +152,7 @@ export default function PurchasesOnDateReport() {
     });
     const { data: suppliers = [] } = useQuery({
         queryKey: ['suppliers-report-purchases-on-date'],
-        queryFn: () => api.get('/suppliers', { params: { limit: 1000 } }).then((r) => r.data.data as { id: string; name: string }[]),
+        queryFn: () => api.get('/suppliers', { params: { limit: FETCH_ALL_LIMIT } }).then((r) => r.data.data as { id: string; name: string }[]),
     });
     const { data: master } = useQuery({
         queryKey: ['purchase-on-date-filter-master-data'],
@@ -343,179 +327,172 @@ export default function PurchasesOnDateReport() {
     };
 
     return (
-        <div className="space-y-6">
-            <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 via-indigo-50 to-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-xl bg-blue-600 p-2.5 text-white"><Package size={18} /></div>
-                        <div>
-                            <h2 className="text-lg font-black text-slate-900">Purchases on Date Report</h2>
-                            <p className="text-sm text-slate-600">Line-level purchase analytics for a selected date with drill-down filters.</p>
+        <PageTemplate
+            title="Purchases on Date Report"
+            subtitle="Line-level purchase analytics for a selected date with drill-down filters."
+            breadcrumb={[
+                { label: 'Home', href: '/' },
+                { label: 'Reports', href: '/reports' },
+                { label: 'Purchases on Date Report' },
+            ]}
+            action={
+                <Button
+                    variant="primary"
+                    size="sm"
+                    icon={isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    onClick={handleExport}
+                    disabled={isExporting || !reportData}
+                    loading={isExporting}
+                >
+                    {isExporting ? 'Generating...' : 'Export Excel'}
+                </Button>
+            }
+            loading={isLoading}
+            maxWidth="full"
+        >
+            <div className="space-y-6">
+                {/* Filters */}
+                <FilterBar>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex items-center gap-2">
+                            <label className="text-sm text-text-secondary whitespace-nowrap">Date:</label>
+                            <input
+                                type="date"
+                                value={targetDate}
+                                onChange={(e) => setTargetDate(e.target.value)}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
+                        </div>
+                        <Select
+                            options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
+                            value={branchId}
+                            onChange={(e) => setBranchId(e.target.value)}
+                            placeholder="Warehouse"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Suppliers' }, ...suppliers.map((s) => ({ value: s.id, label: s.name }))]}
+                            value={supplierId}
+                            onChange={(e) => setSupplierId(e.target.value)}
+                            placeholder="Supplier"
+                            className="min-w-[180px]"
+                        />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 mt-2">
+                        <Select
+                            options={[{ value: '', label: 'All Items' }, ...itemOptions]}
+                            value={productId}
+                            onChange={(e) => setProductId(e.target.value)}
+                            placeholder="Item"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Item Groups' }, ...groupOptions]}
+                            value={groupId}
+                            onChange={(e) => setGroupId(e.target.value)}
+                            placeholder="Item Group"
+                            className="min-w-[160px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Categories' }, ...categoryOptions]}
+                            value={categoryId}
+                            onChange={(e) => setCategoryId(e.target.value)}
+                            placeholder="Category"
+                            className="min-w-[160px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Brands' }, ...brandOptions]}
+                            value={brandId}
+                            onChange={(e) => setBrandId(e.target.value)}
+                            placeholder="Brand"
+                            className="min-w-[160px]"
+                        />
+                        <div className="relative flex-1 min-w-[200px] max-w-xs">
+                            <Search size={15} className="absolute left-3 top-2.5 text-text-tertiary" />
+                            <input
+                                type="text"
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                placeholder="Search purchase no, supplier, item name/code..."
+                                className="w-full h-10 rounded-lg border border-border bg-background-card pl-9 pr-3 text-sm text-text-primary"
+                            />
                         </div>
                     </div>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">{activeFilterCount} active</span>
+                    <span className="text-xs text-text-tertiary ml-auto">{activeFilterCount} active filters</span>
+                </FilterBar>
+
+                {/* Column Toggles */}
+                <Section variant="card" title="Export Columns" headerBorder>
+                    <div className="flex items-center gap-2 mb-3">
+                        <Button size="sm" variant="ghost" onClick={() => setAllColumns(true)}>Select All</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setAllColumns(false)}>Clear All</Button>
+                        <span className="text-xs text-text-tertiary ml-auto">{selectedColCount} selected</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {columns.map((col) => (
+                            <label
+                                key={col.key}
+                                className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer hover:text-text-primary transition-colors"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedColumns[col.key]}
+                                    onChange={() => toggleColumn(col.key)}
+                                    className="rounded border-border text-brand focus:ring-brand-200"
+                                />
+                                {col.label}
+                            </label>
+                        ))}
+                    </div>
+                </Section>
+
+                {/* KPI Summary */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                    <KpiCard label="Purchase Invoices" value={Number(reportData?.summary?.invoiceCount || 0)} />
+                    <KpiCard label="Line Items" value={Number(reportData?.summary?.lineCount || 0)} />
+                    <KpiCard label="Total Quantity" value={Number(reportData?.summary?.totalQty || 0).toLocaleString()} />
+                    <KpiCard label="Total Amount" value={money(Number(reportData?.summary?.totalAmount || 0), currency)} />
+                    <KpiCard label="Total Tax" value={money(Number(reportData?.summary?.totalTax || 0), currency)} />
                 </div>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setPanel(panel === 'date' ? null : 'date')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><CalendarRange size={15} /> {targetDateLabel}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'branch' ? null : 'branch')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Building2 size={15} /> {branchName}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'supplier' ? null : 'supplier')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Truck size={15} /> {supplierName}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'item' ? null : 'item')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Layers size={15} /> Item Filters {itemFiltersCount > 0 ? `(${itemFiltersCount})` : ''}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'search' ? null : 'search')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Search size={15} /> {searchLabel}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'columns' ? null : 'columns')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Columns {selectedColCount}</button>
-                    </div>
-
-                    {panel && (
-                        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                            <div className="mb-2 flex items-center justify-between">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-600">{panel} filter</p>
-                                <button type="button" onClick={() => setPanel(null)} className="rounded-md border border-slate-300 bg-white p-1 text-slate-500 hover:bg-slate-100"><X size={13} /></button>
-                            </div>
-
-                            {panel === 'date' && (
-                                <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
-                            )}
-
-                            {panel === 'branch' && (
-                                <AppDropdown value={branchId} onChange={setBranchId} options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]} placeholder="Select warehouse" searchable />
-                            )}
-
-                            {panel === 'supplier' && (
-                                <AppDropdown value={supplierId} onChange={setSupplierId} options={[{ value: '', label: 'All Suppliers' }, ...suppliers.map((s) => ({ value: s.id, label: s.name }))]} placeholder="Select supplier" searchable />
-                            )}
-
-                            {panel === 'search' && (
-                                <div className="relative">
-                                    <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
-                                    <input
-                                        type="text"
-                                        value={search}
-                                        onChange={(e) => setSearch(e.target.value)}
-                                        placeholder="Search purchase no, supplier, item name/code..."
-                                        className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm"
-                                    />
-                                </div>
-                            )}
-
-                            {panel === 'item' && (
-                                <div className="space-y-3">
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item</p>
-                                            <AppDropdown value={productId} onChange={setProductId} options={[{ value: '', label: 'All Items' }, ...itemOptions]} placeholder="Select item" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item Group</p>
-                                            <AppDropdown value={groupId} onChange={setGroupId} options={[{ value: '', label: 'All Item Groups' }, ...groupOptions]} placeholder="Select item group" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item Category</p>
-                                            <AppDropdown value={categoryId} onChange={setCategoryId} options={[{ value: '', label: 'All Categories' }, ...categoryOptions]} placeholder="Select category" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Brand</p>
-                                            <AppDropdown value={brandId} onChange={setBrandId} options={[{ value: '', label: 'All Brands' }, ...brandOptions]} placeholder="Select brand" searchable />
-                                        </div>
-                                    </div>
-                                    <div className="flex justify-end">
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setProductId('');
-                                                setGroupId('');
-                                                setCategoryId('');
-                                                setBrandId('');
-                                            }}
-                                            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                                        >
-                                            Clear Item Filters
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-
-                            {panel === 'columns' && (
-                                <div className="space-y-3">
-                                    <div className="flex gap-2">
-                                        <button type="button" onClick={() => setAllColumns(true)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">Select all</button>
-                                        <button type="button" onClick={() => setAllColumns(false)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">Clear all</button>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-                                        {columns.map((col) => {
-                                            const active = selectedColumns[col.key];
-                                            return (
-                                                <button key={col.key} type="button" onClick={() => toggleColumn(col.key)} className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-xs font-semibold ${active ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>
-                                                    {active ? <CheckSquare size={13} /> : <Square size={13} />}
-                                                    {col.label}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {isLoading ? (
-                <div className="flex justify-center rounded-xl border border-slate-200 bg-white p-10"><Loader2 size={24} className="animate-spin text-blue-600" /></div>
-            ) : (
-                <>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Purchase Invoices</p><p className="mt-2 text-3xl font-black text-slate-900">{Number(reportData?.summary?.invoiceCount || 0)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Line Items</p><p className="mt-2 text-3xl font-black text-slate-900">{Number(reportData?.summary?.lineCount || 0)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Quantity</p><p className="mt-2 text-3xl font-black text-blue-700">{Number(reportData?.summary?.totalQty || 0).toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Amount</p><p className="mt-2 text-3xl font-black text-emerald-600">{money(Number(reportData?.summary?.totalAmount || 0), currency)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Tax</p><p className="mt-2 text-3xl font-black text-rose-600">{money(Number(reportData?.summary?.totalTax || 0), currency)}</p></div>
-                    </div>
-
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                            <div className="text-sm font-semibold text-slate-700">Live Preview ({previewRows.length})</div>
-                            <button type="button" onClick={handleExport} disabled={isExporting || !reportData} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
-                                {isExporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                                {isExporting ? 'Generating...' : 'Export Excel'}
-                            </button>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                                    <tr>
-                                        <th className="px-4 py-3 text-left">Purchase No</th>
-                                        <th className="px-4 py-3 text-left">Date</th>
-                                        <th className="px-4 py-3 text-left">Supplier</th>
-                                        <th className="px-4 py-3 text-left">Warehouse</th>
-                                        <th className="px-4 py-3 text-left">Item</th>
-                                        <th className="px-4 py-3 text-left">Unit</th>
-                                        <th className="px-4 py-3 text-right">Qty</th>
-                                        <th className="px-4 py-3 text-right">Line Total</th>
+                {/* Preview Table */}
+                <Section title={`Live Preview (${previewRows.length})`} variant="card" headerBorder>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-background-subtle text-xs uppercase tracking-wider text-text-tertiary">
+                                <tr>
+                                    <th className="px-4 py-3 text-left">Purchase No</th>
+                                    <th className="px-4 py-3 text-left">Date</th>
+                                    <th className="px-4 py-3 text-left">Supplier</th>
+                                    <th className="px-4 py-3 text-left">Warehouse</th>
+                                    <th className="px-4 py-3 text-left">Item</th>
+                                    <th className="px-4 py-3 text-left">Unit</th>
+                                    <th className="px-4 py-3 text-right">Qty</th>
+                                    <th className="px-4 py-3 text-right">Line Total</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {previewRows.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-text-tertiary">No purchases found for selected filters.</td></tr>}
+                                {previewRows.map((line) => (
+                                    <tr key={line.id} className="hover:bg-background-subtle transition-colors">
+                                        <td className="px-4 py-3 font-semibold text-text-primary">{line.invoice?.purchaseNo || '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{line.invoice?.createdAt ? formatCompanyDate(line.invoice.createdAt, company) : '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{line.invoice?.supplier?.name || '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{line.invoice?.branch?.name || '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">
+                                            <div className="font-semibold text-text-primary">{line.product?.name || '-'}</div>
+                                            <div className="text-xs text-text-tertiary">{line.product?.itemCode || '-'}</div>
+                                        </td>
+                                        <td className="px-4 py-3 text-text-secondary">{line.unitCode || '-'}</td>
+                                        <td className="px-4 py-3 text-right text-text-primary">{Number(line.qty || 0).toLocaleString()}</td>
+                                        <td className="px-4 py-3 text-right font-semibold text-text-primary">{money(Number(line.lineTotal || 0), currency)}</td>
                                     </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {previewRows.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">No purchases found for selected filters.</td></tr>}
-                                    {previewRows.map((line) => (
-                                        <tr key={line.id} className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 font-semibold text-slate-800">{line.invoice?.purchaseNo || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-600">{line.invoice?.createdAt ? formatCompanyDate(line.invoice.createdAt, company) : '-'}</td>
-                                            <td className="px-4 py-3 text-slate-700">{line.invoice?.supplier?.name || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-700">{line.invoice?.branch?.name || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-700">
-                                                <div className="font-semibold text-slate-800">{line.product?.name || '-'}</div>
-                                                <div className="text-xs text-slate-500">{line.product?.itemCode || '-'}</div>
-                                            </td>
-                                            <td className="px-4 py-3 text-slate-700">{line.unitCode || '-'}</td>
-                                            <td className="px-4 py-3 text-right text-slate-800">{Number(line.qty || 0).toLocaleString()}</td>
-                                            <td className="px-4 py-3 text-right font-semibold text-slate-800">{money(Number(line.lineTotal || 0), currency)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
-                </>
-            )}
-        </div>
+                </Section>
+            </div>
+        </PageTemplate>
     );
 }

@@ -28,13 +28,14 @@ import {
     GLOBAL_STRING_GROUPS,
     SALE_INVOICE_PAYMENT_METHOD_KEYS,
 } from '../../lib/globalStrings';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 export default function SalesQuotationConvert() {
     const [searchParams] = useSearchParams();
     const quotationId = searchParams.get('id');
     const navigate = useNavigate();
     const queryClient = useQueryClient();
-    const currency = useAuthStore(s => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore(s => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     // Form State
     const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'CREDIT' | 'BANK_TRANSFER'>('CASH');

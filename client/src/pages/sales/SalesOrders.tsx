@@ -31,6 +31,7 @@ import {
     TableLoading,
     TableRow,
 } from '../../components/ui';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 const orderStateOptions = [
     { value: 'active', label: 'Active' },
@@ -70,7 +71,7 @@ export default function SalesOrders() {
     const [endDate, setEndDate] = useState('');
     const [deletingId, setDeletingId] = useState<string | null>(null);
 
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const companyName = useAuthStore((s) => s.user?.company?.name) || 'SOLVANTA ERP';
 
     const { data: qData, isLoading, isFetching } = useQuery({

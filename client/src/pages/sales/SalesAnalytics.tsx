@@ -25,6 +25,7 @@ import {
 } from 'recharts';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import { useAuthStore } from '../../stores/authStore';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 import AppLoader from '../../components/ui/AppLoader';
 
 const PAYMENT_COLORS = ['#2563eb', '#0ea5e9', '#0f766e', '#f97316', '#7c3aed', '#be123c'];
@@ -37,7 +38,7 @@ const chartTooltipStyle = {
 };
 
 export default function SalesAnalytics() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const { data, isLoading } = useQuery({
         queryKey: ['sales-analytics'],
         queryFn: () => api.get('/sales/analytics').then((r) => r.data.data),

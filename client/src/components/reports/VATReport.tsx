@@ -3,21 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { exportExcel } from '../../lib/fileExport';
 import type { ExcelColumn } from '../../lib/excelReport';
-import {
-    Building2,
-    Calculator,
-    CalendarRange,
-    CheckSquare,
-    Download,
-    Filter,
-    Loader2,
-    Square,
-    X,
-} from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
-import AppDropdown from '../ui/AppDropdown';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
+import { PageTemplate, Section, KpiCard, Button, FilterBar, Select } from '../ui';
 
-type FilterPanel = 'date' | 'branch' | 'options' | 'columns' | null;
 type ColumnKey =
     | 'source'
     | 'docNo'
@@ -114,8 +104,7 @@ function formatDate(value: string | Date) {
 }
 
 export default function VATReport() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
-    const [panel, setPanel] = useState<FilterPanel>(null);
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const [dateFrom, setDateFrom] = useState(monthStartISO());
     const [dateTo, setDateTo] = useState(todayISO());
     const [branchId, setBranchId] = useState('');
@@ -266,183 +255,181 @@ export default function VATReport() {
     };
 
     return (
-        <div className="space-y-6">
-            <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 via-indigo-50 to-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-xl bg-blue-600 p-2.5 text-white"><Calculator size={18} /></div>
-                        <div>
-                            <h2 className="text-lg font-black text-slate-900">VAT Report</h2>
-                            <p className="text-sm text-slate-600">Output/Input VAT summary with invoice-level drilldown and VAT rate analysis.</p>
+        <PageTemplate
+            title="VAT Report"
+            subtitle="Output/Input VAT summary with invoice-level drilldown and VAT rate analysis."
+            breadcrumb={[
+                { label: 'Home', href: '/' },
+                { label: 'Reports', href: '/reports' },
+                { label: 'VAT Report' },
+            ]}
+            action={
+                <Button
+                    variant="primary"
+                    size="sm"
+                    icon={isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    onClick={handleExport}
+                    disabled={isExporting || entries.length === 0}
+                    loading={isExporting}
+                >
+                    {isExporting ? 'Generating...' : 'Export Excel'}
+                </Button>
+            }
+            loading={isLoading}
+            maxWidth="full"
+        >
+            <div className="space-y-6">
+                {/* Filters */}
+                <FilterBar>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Select
+                            options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
+                            value={branchId}
+                            onChange={(e) => setBranchId(e.target.value)}
+                            placeholder="Warehouse"
+                            className="min-w-[180px]"
+                        />
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                max={todayISO()}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
+                            <span className="text-text-tertiary text-sm">to</span>
+                            <input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => setDateTo(e.target.value)}
+                                max={todayISO()}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
                         </div>
+                        <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={postedOnly}
+                                onChange={(e) => setPostedOnly(e.target.checked)}
+                                className="rounded border-border text-brand focus:ring-brand-200"
+                            />
+                            Posted Only
+                        </label>
                     </div>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">{activeFilterCount} active</span>
-                </div>
+                    <span className="text-xs text-text-tertiary ml-auto">{activeFilterCount} active filters</span>
+                </FilterBar>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setPanel(panel === 'date' ? null : 'date')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><CalendarRange size={15} /> {dateFrom} to {dateTo}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'branch' ? null : 'branch')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Building2 size={15} /> {branchName}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'options' ? null : 'options')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> {postedOnly ? 'Posted Only' : 'All Invoices'}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'columns' ? null : 'columns')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Columns {selectedColCount}</button>
+                {/* Column Toggles */}
+                <Section variant="card" title="Export Columns" headerBorder>
+                    <div className="flex items-center gap-2 mb-3">
+                        <Button size="sm" variant="ghost" onClick={() => setAllColumns(true)}>Select All</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setAllColumns(false)}>Clear All</Button>
+                        <span className="text-xs text-text-tertiary ml-auto">{selectedColCount} selected</span>
                     </div>
-
-                    {panel && (
-                        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                            <div className="mb-2 flex items-center justify-between">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-600">{panel} filter</p>
-                                <button type="button" onClick={() => setPanel(null)} className="rounded-md border border-slate-300 bg-white p-1 text-slate-500 hover:bg-slate-100"><X size={13} /></button>
-                            </div>
-
-                            {panel === 'date' && (
-                                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                    <div className="space-y-1">
-                                        <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Date From</p>
-                                        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} max={todayISO()} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Date To</p>
-                                        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} max={todayISO()} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
-                                    </div>
-                                </div>
-                            )}
-
-                            {panel === 'branch' && (
-                                <AppDropdown
-                                    value={branchId}
-                                    onChange={setBranchId}
-                                    options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
-                                    placeholder="Select warehouse"
-                                    searchable
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {columns.map((col) => (
+                            <label
+                                key={col.key}
+                                className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer hover:text-text-primary transition-colors"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedColumns[col.key]}
+                                    onChange={() => toggleColumn(col.key)}
+                                    className="rounded border-border text-brand focus:ring-brand-200"
                                 />
-                            )}
+                                {col.label}
+                            </label>
+                        ))}
+                    </div>
+                </Section>
 
-                            {panel === 'options' && (
-                                <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
-                                    <input
-                                        type="checkbox"
-                                        checked={postedOnly}
-                                        onChange={(e) => setPostedOnly(e.target.checked)}
-                                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                    />
-                                    Include only posted sales invoices
-                                </label>
-                            )}
-
-                            {panel === 'columns' && (
-                                <div className="space-y-3">
-                                    <div className="flex gap-2">
-                                        <button type="button" onClick={() => setAllColumns(true)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">Select all</button>
-                                        <button type="button" onClick={() => setAllColumns(false)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">Clear all</button>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-                                        {columns.map((col) => {
-                                            const active = selectedColumns[col.key];
-                                            return (
-                                                <button key={col.key} type="button" onClick={() => toggleColumn(col.key)} className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-xs font-semibold ${active ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>
-                                                    {active ? <CheckSquare size={13} /> : <Square size={13} />}
-                                                    {col.label}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                {/* KPI Summary */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <KpiCard label="Output VAT (Sales)" value={money(Number(summary.outputVAT || 0), currency)} />
+                    <KpiCard label="Input VAT (Purchases)" value={money(Number(summary.inputVAT || 0), currency)} />
+                    <KpiCard label={`Net VAT (${summary.netStatus || 'PAYABLE'})`} value={money(Number(summary.netVAT || 0), currency)} />
+                    <KpiCard label="Taxable Sales" value={money(Number(summary.taxableSales || 0), currency)} />
+                    <KpiCard label="Taxable Purchases" value={money(Number(summary.taxablePurchases || 0), currency)} />
+                    <KpiCard label="Documents" value={Number(summary.totalDocuments || 0).toLocaleString()} />
                 </div>
+
+                {/* VAT by Rate Table */}
+                <Section title="VAT by Effective Rate" variant="card" headerBorder>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-background-subtle text-xs uppercase tracking-wider text-text-tertiary">
+                                <tr>
+                                    <th className="px-4 py-3 text-left">VAT %</th>
+                                    <th className="px-4 py-3 text-right">Sales Taxable</th>
+                                    <th className="px-4 py-3 text-right">Sales VAT</th>
+                                    <th className="px-4 py-3 text-right">Purchase Taxable</th>
+                                    <th className="px-4 py-3 text-right">Purchase VAT</th>
+                                    <th className="px-4 py-3 text-right">Net VAT</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {mergedRates.length === 0 && (
+                                    <tr><td colSpan={6} className="px-4 py-8 text-center text-text-tertiary">No VAT rate rows for selected filters.</td></tr>
+                                )}
+                                {mergedRates.map((row) => (
+                                    <tr key={row.rate} className="hover:bg-background-subtle transition-colors">
+                                        <td className="px-4 py-3 font-semibold text-text-primary">{row.rate.toFixed(2)}%</td>
+                                        <td className="px-4 py-3 text-right text-text-secondary">{money(row.salesTaxable, currency)}</td>
+                                        <td className="px-4 py-3 text-right text-danger">{money(row.salesVAT, currency)}</td>
+                                        <td className="px-4 py-3 text-right text-text-secondary">{money(row.purchasesTaxable, currency)}</td>
+                                        <td className="px-4 py-3 text-right text-text-brand">{money(row.purchasesVAT, currency)}</td>
+                                        <td className={`px-4 py-3 text-right font-semibold ${row.salesVAT - row.purchasesVAT >= 0 ? 'text-danger' : 'text-success'}`}>
+                                            {money(row.salesVAT - row.purchasesVAT, currency)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </Section>
+
+                {/* Entries Preview */}
+                <Section title={`Live Preview (${previewRows.length})`} variant="card" headerBorder>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-background-subtle text-xs uppercase tracking-wider text-text-tertiary">
+                                <tr>
+                                    <th className="px-4 py-3 text-left">Type</th>
+                                    <th className="px-4 py-3 text-left">Doc No</th>
+                                    <th className="px-4 py-3 text-left">Date</th>
+                                    <th className="px-4 py-3 text-left">Party</th>
+                                    <th className="px-4 py-3 text-left">Branch</th>
+                                    <th className="px-4 py-3 text-right">Taxable</th>
+                                    <th className="px-4 py-3 text-right">VAT</th>
+                                    <th className="px-4 py-3 text-right">Gross</th>
+                                    <th className="px-4 py-3 text-right">VAT %</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {previewRows.length === 0 && (
+                                    <tr><td colSpan={9} className="px-4 py-8 text-center text-text-tertiary">No VAT entries for selected filters.</td></tr>
+                                )}
+                                {previewRows.map((row) => (
+                                    <tr key={`${row.source}-${row.id}`} className="hover:bg-background-subtle transition-colors">
+                                        <td className="px-4 py-3 font-semibold text-text-primary">{row.source === 'SALES' ? 'Sales' : 'Purchase'}</td>
+                                        <td className="px-4 py-3 text-text-primary">{row.docNo}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{formatDate(row.date)}</td>
+                                        <td className="px-4 py-3 text-text-primary">{row.party || '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{row.branchName || '-'}</td>
+                                        <td className="px-4 py-3 text-right text-text-secondary">{money(row.taxableAmount, currency)}</td>
+                                        <td className={`px-4 py-3 text-right font-semibold ${row.source === 'SALES' ? 'text-danger' : 'text-text-brand'}`}>
+                                            {money(row.vatAmount, currency)}
+                                        </td>
+                                        <td className="px-4 py-3 text-right text-text-primary">{money(row.grossAmount, currency)}</td>
+                                        <td className="px-4 py-3 text-right text-text-secondary">{Number(row.effectiveRate || 0).toFixed(2)}%</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </Section>
             </div>
-
-            {isLoading ? (
-                <div className="flex justify-center rounded-xl border border-slate-200 bg-white p-10"><Loader2 size={24} className="animate-spin text-blue-600" /></div>
-            ) : (
-                <>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Output VAT (Sales)</p><p className="mt-2 text-3xl font-black text-rose-600">{money(Number(summary.outputVAT || 0), currency)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Input VAT (Purchases)</p><p className="mt-2 text-3xl font-black text-blue-700">{money(Number(summary.inputVAT || 0), currency)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Net VAT ({summary.netStatus || 'PAYABLE'})</p><p className={`mt-2 text-3xl font-black ${Number(summary.netVAT || 0) >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{money(Number(summary.netVAT || 0), currency)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Taxable Sales</p><p className="mt-2 text-3xl font-black text-slate-900">{money(Number(summary.taxableSales || 0), currency)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Taxable Purchases</p><p className="mt-2 text-3xl font-black text-slate-900">{money(Number(summary.taxablePurchases || 0), currency)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Documents</p><p className="mt-2 text-3xl font-black text-slate-900">{Number(summary.totalDocuments || 0).toLocaleString()}</p></div>
-                    </div>
-
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                        <div className="border-b border-slate-200 px-4 py-3">
-                            <div className="text-sm font-semibold text-slate-700">VAT by Effective Rate</div>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                                    <tr>
-                                        <th className="px-4 py-3 text-left">VAT %</th>
-                                        <th className="px-4 py-3 text-right">Sales Taxable</th>
-                                        <th className="px-4 py-3 text-right">Sales VAT</th>
-                                        <th className="px-4 py-3 text-right">Purchase Taxable</th>
-                                        <th className="px-4 py-3 text-right">Purchase VAT</th>
-                                        <th className="px-4 py-3 text-right">Net VAT</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {mergedRates.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No VAT rate rows for selected filters.</td></tr>}
-                                    {mergedRates.map((row) => (
-                                        <tr key={row.rate} className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 font-semibold text-slate-800">{row.rate.toFixed(2)}%</td>
-                                            <td className="px-4 py-3 text-right text-slate-700">{money(row.salesTaxable, currency)}</td>
-                                            <td className="px-4 py-3 text-right text-rose-700">{money(row.salesVAT, currency)}</td>
-                                            <td className="px-4 py-3 text-right text-slate-700">{money(row.purchasesTaxable, currency)}</td>
-                                            <td className="px-4 py-3 text-right text-blue-700">{money(row.purchasesVAT, currency)}</td>
-                                            <td className={`px-4 py-3 text-right font-semibold ${row.salesVAT - row.purchasesVAT >= 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{money(row.salesVAT - row.purchasesVAT, currency)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                            <div className="text-sm font-semibold text-slate-700">Live Preview ({previewRows.length})</div>
-                            <button type="button" onClick={handleExport} disabled={isExporting || entries.length === 0} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
-                                {isExporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                                {isExporting ? 'Generating...' : 'Export Excel'}
-                            </button>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                                    <tr>
-                                        <th className="px-4 py-3 text-left">Type</th>
-                                        <th className="px-4 py-3 text-left">Doc No</th>
-                                        <th className="px-4 py-3 text-left">Date</th>
-                                        <th className="px-4 py-3 text-left">Party</th>
-                                        <th className="px-4 py-3 text-left">Branch</th>
-                                        <th className="px-4 py-3 text-right">Taxable</th>
-                                        <th className="px-4 py-3 text-right">VAT</th>
-                                        <th className="px-4 py-3 text-right">Gross</th>
-                                        <th className="px-4 py-3 text-right">VAT %</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {previewRows.length === 0 && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">No VAT entries for selected filters.</td></tr>}
-                                    {previewRows.map((row) => (
-                                        <tr key={`${row.source}-${row.id}`} className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 font-semibold text-slate-800">{row.source === 'SALES' ? 'Sales' : 'Purchase'}</td>
-                                            <td className="px-4 py-3 text-slate-700">{row.docNo}</td>
-                                            <td className="px-4 py-3 text-slate-700">{formatDate(row.date)}</td>
-                                            <td className="px-4 py-3 text-slate-700">{row.party || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-700">{row.branchName || '-'}</td>
-                                            <td className="px-4 py-3 text-right text-slate-800">{money(row.taxableAmount, currency)}</td>
-                                            <td className={`px-4 py-3 text-right font-semibold ${row.source === 'SALES' ? 'text-rose-700' : 'text-blue-700'}`}>{money(row.vatAmount, currency)}</td>
-                                            <td className="px-4 py-3 text-right text-slate-800">{money(row.grossAmount, currency)}</td>
-                                            <td className="px-4 py-3 text-right text-slate-800">{Number(row.effectiveRate || 0).toFixed(2)}%</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </>
-            )}
-        </div>
+        </PageTemplate>
     );
 }

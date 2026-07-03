@@ -8,12 +8,13 @@ import { useAuthStore } from '../../../stores/authStore';
 import ModuleRefreshButton from '../../../components/ModuleRefreshButton';
 import { formatMoney } from './utils';
 import AppLoader from '../../../components/ui/AppLoader';
+import { DEFAULT_CURRENCY } from '../../../lib/constants';
 
 const COLORS = ['#2563eb', '#0ea5e9', '#14b8a6', '#f97316', '#e11d48', '#7c3aed', '#4f46e5'];
 
 export default function SalesCashDashboard() {
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     const { data, isLoading } = useQuery({
         queryKey: ['sales-cash-dashboard', activeBranchId],

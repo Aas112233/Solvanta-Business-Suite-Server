@@ -137,7 +137,9 @@ import {
 import SetupWizard from './pages/SetupWizard';
 import ModulePlaceholder from './pages/placeholders/ModulePlaceholder';
 import AppLoader from './components/ui/AppLoader';
-import { ToastContainer } from './components/ui';
+import { SkeletonTable } from './components/ui/Skeleton';
+import { Toaster } from 'react-hot-toast';
+import { publicRoutes, protectedRoutes, AppRoute } from './config/routes';
 
 const INACTIVITY_WARNING_AFTER_MS = 5 * 60 * 1000;
 const INACTIVITY_COUNTDOWN_SECONDS = 60;
@@ -326,6 +328,54 @@ function DynamicTitle() {
     return null;
 }
 
+/**
+ * Renders an array of AppRoute config objects into <Route> elements.
+ * Handles index routes, redirects, nested children (super-admin), and
+ * standard permission-gated routes.
+ */
+function renderProtectedRoutes(routes: AppRoute[]): React.ReactNode[] {
+    return routes.map((route, i) => {
+        // Redirect route (check before index — super-admin child index routes use this)
+        if (route.redirectTo) {
+            return route.index
+                ? <Route key={i} index element={<Navigate to={route.redirectTo} replace />} />
+                : <Route key={i} path={route.path!} element={<Navigate to={route.redirectTo} replace />} />;
+        }
+
+        // Index route → LandingRoute (only reached for non-redirect index routes)
+        if (route.index) {
+            return <Route key={i} index element={<LandingRoute />} />;
+        }
+
+        // Nested route with children (e.g. super-admin shell)
+        if (route.children) {
+            return (
+                <Route key={i} path={route.path!} element={route.element}>
+                    {renderProtectedRoutes(route.children)}
+                </Route>
+            );
+        }
+
+        // Standard permission-gated route
+        return (
+            <Route
+                key={i}
+                path={route.path!}
+                element={
+                    <PermissionRoute
+                        permission={route.permission}
+                        permissions={route.permissions}
+                        moduleKey={route.moduleKey}
+                        title={route.title}
+                    >
+                        {route.element}
+                    </PermissionRoute>
+                }
+            />
+        );
+    });
+}
+
 export default function App() {
     const token = useAuthStore((s) => s.token);
     const hasHydrated = useAuthStore((s) => s.hasHydrated);
@@ -490,13 +540,22 @@ export default function App() {
     return (
         <>
             <DynamicTitle />
-            <ToastContainer />
-            <Suspense fallback={<AppLoader />}>
+            <Toaster position="top-right" />
+            <Suspense fallback={<div className="p-6"><SkeletonTable rows={8} /></div>}>
                 <Routes>
-                    <Route path="/login" element={<Login />} />
-                    <Route path="/forgot-password" element={<ForgotPassword />} />
-                    <Route path="/reset-password" element={<ResetPassword />} />
-                    <Route path="/setup-wizard" element={<ProtectedRoute><SetupWizard /></ProtectedRoute>} />
+                    {publicRoutes.map((route, i) => (
+                        <Route
+                            key={i}
+                            path={route.path}
+                            element={
+                                route.protected ? (
+                                    <ProtectedRoute>{route.element}</ProtectedRoute>
+                                ) : (
+                                    route.element
+                                )
+                            }
+                        />
+                    ))}
                     <Route
                         path="/*"
                         element={
@@ -506,198 +565,7 @@ export default function App() {
                         }
                     >
                         <Route index element={<LandingRoute />} />
-                        <Route path="customers" element={<PermissionRoute permission="crm.view" moduleKey="crm" title="Customer List"><Customers /></PermissionRoute>} />
-                        <Route path="customers/new" element={<PermissionRoute permission="crm.create" moduleKey="crm" title="Create Customer"><CustomerForm /></PermissionRoute>} />
-                        <Route path="customers/:id" element={<PermissionRoute permission="crm.view" moduleKey="crm" title="Customer Profile"><CustomerForm /></PermissionRoute>} />
-                        <Route path="customers/archived" element={<PermissionRoute permission="crm.view" moduleKey="crm" title="Archived Customers"><ArchivedCustomers /></PermissionRoute>} />
-                        <Route path="suppliers" element={<PermissionRoute permission="supplier.view" moduleKey="suppliers" title="Supplier List"><Suppliers /></PermissionRoute>} />
-                        <Route path="suppliers/ledger" element={<PermissionRoute permission="supplier.view" moduleKey="suppliers" title="Supplier Ledger"><SupplierLedger /></PermissionRoute>} />
-                        <Route path="suppliers/:id" element={<PermissionRoute permission="supplier.view" moduleKey="suppliers" title="Supplier Profile"><Suppliers /></PermissionRoute>} />
-
-                        {/* Items Module */}
-                        <Route path="items" element={<PermissionRoute permission="product.view" moduleKey="items" title="Item List"><ItemsList /></PermissionRoute>} />
-                        <Route path="items/new" element={<PermissionRoute permission="product.create" moduleKey="items" title="Create Item"><ItemForm /></PermissionRoute>} />
-                        <Route path="items/categories" element={<PermissionRoute permission="product.view" moduleKey="items" title="Categories"><Categories /></PermissionRoute>} />
-                        <Route path="items/groups" element={<PermissionRoute permission="product.view" moduleKey="items" title="Groups"><Groups /></PermissionRoute>} />
-                        <Route path="items/brands" element={<PermissionRoute permission="product.view" moduleKey="items" title="Brands"><Brands /></PermissionRoute>} />
-                        <Route path="items/unit-management" element={<PermissionRoute permission="product.view" moduleKey="items" title="Unit Management"><UnitManagement /></PermissionRoute>} />
-                        <Route path="items/price-channels" element={<PermissionRoute permission="product.editPricing" moduleKey="items" title="Price Channels"><PriceChannels /></PermissionRoute>} />
-                        <Route path="items/:id" element={<PermissionRoute permission="product.view" moduleKey="items" title="Item Detail"><ItemDetail /></PermissionRoute>} />
-                        <Route path="items/:id/edit" element={<PermissionRoute permission="product.edit" moduleKey="items" title="Edit Item"><ItemForm /></PermissionRoute>} />
-
-                        <Route path="inventory" element={<Navigate to="inventory/stock" replace />} />
-                        <Route path="inventory/stock" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Stock Overview"><StockOverview /></PermissionRoute>} />
-                        <Route path="inventory/warehouses" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Warehouses"><WarehouseList /></PermissionRoute>} />
-                        <Route path="inventory/warehouses/:id" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Warehouse Dashboard"><WarehouseDashboard /></PermissionRoute>} />
-                        <Route path="inventory/transfers" element={<PermissionRoute permission="inventory.transfer" moduleKey="inventory" title="Stock Transfers"><StockTransfers /></PermissionRoute>} />
-                        <Route path="inventory/transfers/new" element={<PermissionRoute permission="inventory.transfer" moduleKey="inventory" title="Create Transfer"><TransferForm /></PermissionRoute>} />
-                        <Route path="inventory/transfers/:id" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Transfer Detail"><TransferDetail /></PermissionRoute>} />
-                        <Route path="inventory/transfers/:id/edit" element={<PermissionRoute permission="inventory.transfer" moduleKey="inventory" title="Edit Transfer"><TransferForm /></PermissionRoute>} />
-                        {/* Legacy purchase routes kept for backward compatibility */}
-                        <Route path="inventory/purchases" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Stock Purchases"><StockPurchases /></PermissionRoute>} />
-                        <Route path="inventory/purchases/new" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Create Stock Purchase"><PurchaseForm /></PermissionRoute>} />
-                        <Route path="inventory/purchases/:id" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Purchase Detail"><PurchaseDetail /></PermissionRoute>} />
-                        <Route path="inventory/reports" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Inventory Reports"><InventoryReports /></PermissionRoute>} />
-                        <Route path="inventory/movements" element={<Navigate to="/reports/running-stock-ledger" replace />} />
-                        <Route path="inventory/stock-counts" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Stock Counts"><StockCounts /></PermissionRoute>} />
-                        <Route path="inventory/stock-counts/new" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Create Stock Count"><StockCountForm /></PermissionRoute>} />
-                        <Route path="inventory/stock-counts/:id" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Stock Count Detail"><StockCountDetail /></PermissionRoute>} />
-                        <Route path="inventory/stock-counts/:id/edit" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Edit Stock Count"><StockCountForm /></PermissionRoute>} />
-                        <Route path="inventory/analytics" element={<PermissionRoute permission="inventory.view" moduleKey="inventory" title="Inventory Analytics"><InventoryAnalytics /></PermissionRoute>} />
-                        <Route path="production" element={<Navigate to="/production/orders" replace />} />
-                        <Route path="production/bom" element={<PermissionRoute permission="bom.view" moduleKey="production" title="Production Recipes"><BomManagement /></PermissionRoute>} />
-                        <Route path="production/orders" element={<PermissionRoute permission="production.view" moduleKey="production" title="Production Orders"><ProductionOrders /></PermissionRoute>} />
-                        <Route path="pos" element={<PermissionRoute permissions={['pos.terminalOnly', 'pos.sell', 'pos.access']} moduleKey="pos" title="POS Terminal"><POS /></PermissionRoute>} />
-                        <Route path="pos/unposted" element={<PermissionRoute permissions={['pos.sell', 'pos.access']} moduleKey="pos" title="POS Unposted Invoices"><UnpostedInvoices /></PermissionRoute>} />
-                        <Route path="pos/terminals" element={<PermissionRoute permissions={['pos.manageTerminals', 'pos.access']} moduleKey="pos" title="POS Management"><POSTerminals /></PermissionRoute>} />
-                        <Route path="pos/shifts" element={<PermissionRoute permissions={['pos.viewShifts', 'pos.viewOwnShifts', 'pos.access', 'pos.closeShift']} moduleKey="pos" title="POS Shift History"><ShiftHistory /></PermissionRoute>} />
-                        <Route path="pos/hotkeys-shortcuts" element={<PermissionRoute permission="pos.sell" moduleKey="pos" title="POS Hotkeys and Shortcuts"><POSHotkeysShortcuts /></PermissionRoute>} />
-                        <Route path="pos/hold-resume" element={<PermissionRoute permission="pos.sell" moduleKey="pos" title="Hold and Resume Sale"><ModulePlaceholder title="Hold and Resume Sale" /></PermissionRoute>} />
-                        <Route path="pos/receipt-print" element={<PermissionRoute permission="pos.access" moduleKey="pos" title="Print Receipt"><ReceiptPrintingSettings /></PermissionRoute>} />
-                        <Route path="pos/loyalty-settings" element={<PermissionRoute permission="pos.access" moduleKey="pos" title="Happiness Price Settings"><POSLoyaltySettings /></PermissionRoute>} />
-                        <Route path="pos/loyalty-customers" element={<PermissionRoute permission="pos.access" moduleKey="pos" title="Walk-in Customers"><LoyaltyCustomers /></PermissionRoute>} />
-
-                        {/* Accounting */}
-                        <Route path="accounting" element={<Navigate to="/accounting/coa" replace />} />
-                        <Route path="accounting/coa" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Chart of Accounts"><ChartOfAccounts /></PermissionRoute>} />
-                        <Route path="accounting/mappings" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Account Mappings"><AccountMappings /></PermissionRoute>} />
-                        <Route path="accounting/journals" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Journal Entries"><JournalEntries /></PermissionRoute>} />
-                        <Route path="accounting/reports/general-ledger" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="General Ledger"><GeneralLedger /></PermissionRoute>} />
-                        <Route path="accounting/reports/trial-balance" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Trial Balance"><TrialBalance /></PermissionRoute>} />
-                        <Route path="accounting/reports/pl" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Profit & Loss"><ProfitAndLoss /></PermissionRoute>} />
-                        <Route path="accounting/reports/balance-sheet" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Balance Sheet"><BalanceSheet /></PermissionRoute>} />
-                        <Route path="accounting/fixed-assets" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Fixed Assets Register"><FixedAssetsList /></PermissionRoute>} />
-                        <Route path="accounting/fixed-assets/:id" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Fixed Asset Details"><FixedAssetDetail /></PermissionRoute>} />
-
-                        {/* Banking */}
-                        <Route path="bank" element={<Navigate to="/bank/accounts" replace />} />
-                        <Route path="bank/accounts" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Bank Accounts"><BankAccounts /></PermissionRoute>} />
-                        <Route path="bank/reconcile" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="Bank Reconciliation"><BankReconciliation /></PermissionRoute>} />
-
-                        {/* Aging / AR AP */}
-                        <Route path="aging/ar" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="AR Aging"><ARAging /></PermissionRoute>} />
-                        <Route path="aging/ap" element={<PermissionRoute permission="accounting.view" moduleKey="accounting" title="AP Aging"><APAging /></PermissionRoute>} />
-
-                        {/* Sales */}
-                        <Route path="sales" element={<Navigate to="/sales/dashboard" replace />} />
-                        <Route path="sales/overview/today-summary" element={<PermissionRoute permission="sales.view" moduleKey="sales" title="Today Sales Summary"><TodaySalesSummary /></PermissionRoute>} />
-                        <Route path="sales/overview/top-selling-items" element={<PermissionRoute permission="sales.view" moduleKey="sales" title="Top Selling Items"><TopSellingItems /></PermissionRoute>} />
-                        <Route path="sales/overview/recent-invoices" element={<Navigate to="/sales/invoices" replace />} />
-                        <Route path="sales/overview/pending-payments" element={<PermissionRoute permission="sales.paymentView" moduleKey="sales" title="Pending Payments"><PendingPayments /></PermissionRoute>} />
-
-                        <Route path="customers/groups" element={<PermissionRoute permission="crm.manageGroups" moduleKey="crm" title="Customer Groups"><ModulePlaceholder title="Customer Groups" /></PermissionRoute>} />
-                        <Route path="customers/credit-terms" element={<PermissionRoute permission="sales.creditControl" moduleKey="crm" title="Credit Limits and Terms"><CreditLimitsTerms /></PermissionRoute>} />
-                        <Route path="customers/ledger" element={<PermissionRoute permission="sales.customerLedger" moduleKey="crm" title="Customer Ledger"><CustomerLedger /></PermissionRoute>} />
-
-                        <Route path="sales/quotations" element={<PermissionRoute permission="sales.quotationView" moduleKey="sales" title="Quotation List"><SalesQuotations /></PermissionRoute>} />
-                        <Route path="sales/quotations/new" element={<PermissionRoute permission="sales.quotationCreate" moduleKey="sales" title="Create Quotation"><SalesQuotationForm /></PermissionRoute>} />
-                        <Route path="sales/quotations/:id" element={<PermissionRoute permission="sales.quotationView" moduleKey="sales" title="Quotation Details"><SalesQuotationDetail /></PermissionRoute>} />
-                        <Route path="sales/quotations/:id/edit" element={<PermissionRoute permission="sales.quotationEdit" moduleKey="sales" title="Edit Quotation"><SalesQuotationForm /></PermissionRoute>} />
-                        <Route path="sales/quotations/:id/convert" element={<PermissionRoute permission="sales.quotationConvert" moduleKey="sales" title="Convert Quotation to Order"><SalesQuotationConvert /></PermissionRoute>} />
-
-                        <Route path="sales/orders" element={<PermissionRoute permission="sales.orderView" moduleKey="sales" title="Sales Order List"><SalesOrders /></PermissionRoute>} />
-                        <Route path="sales/orders/new" element={<PermissionRoute permission="sales.orderCreate" moduleKey="sales" title="Create Sales Order"><SalesOrderForm /></PermissionRoute>} />
-                        <Route path="sales/orders/:id/edit" element={<PermissionRoute permission="sales.orderCreate" moduleKey="sales" title="Edit Sales Order"><SalesOrderForm /></PermissionRoute>} />
-                        <Route path="sales/orders/convert" element={<PermissionRoute permission="sales.create" moduleKey="sales" title="Convert Order"><SalesOrderConvert /></PermissionRoute>} />
-                        <Route path="sales/orders/status" element={<PermissionRoute permission="sales.orderView" moduleKey="sales" title="Order Status Tracking"><ModulePlaceholder title="Order Status Tracking" /></PermissionRoute>} />
-                        <Route path="sales/orders/fulfillment" element={<Navigate to="/sales/orders/convert" replace />} />
-
-                        <Route path="sales/invoices" element={<PermissionRoute permission="sales.view" moduleKey="sales" title="Sales Invoice List"><SalesList /></PermissionRoute>} />
-                        <Route path="sales/invoices/new" element={<PermissionRoute permission="sales.create" moduleKey="sales" title="Create Invoice"><SalesInvoiceForm /></PermissionRoute>} />
-                        <Route path="sales/invoices/service" element={<PermissionRoute permission="sales.view" moduleKey="sales" title="Service Invoices"><ServiceInvoicesList /></PermissionRoute>} />
-                        <Route path="sales/invoices/service/new" element={<PermissionRoute permission="sales.create" moduleKey="sales" title="Service Sales Invoice"><ServiceSalesInvoice /></PermissionRoute>} />
-                        <Route path="sales/invoices/service/:id" element={<PermissionRoute permission="sales.view" moduleKey="sales" title="Service Invoice Details"><ServiceInvoiceView /></PermissionRoute>} />
-                        <Route path="sales/invoices/cash" element={<PermissionRoute permission="sales.invoiceCash" moduleKey="sales" title="Cash Invoice"><CashInvoices /></PermissionRoute>} />
-                        <Route path="sales/invoices/credit" element={<PermissionRoute permission="sales.invoiceCredit" moduleKey="sales" title="Credit Invoice"><CreditInvoices /></PermissionRoute>} />
-                        <Route path="sales/invoices/proforma" element={<PermissionRoute permission="sales.invoiceProforma" moduleKey="sales" title="Proforma Invoice"><ProformaInvoices /></PermissionRoute>} />
-                        <Route path="sales/returns" element={<PermissionRoute permission="sales.return" moduleKey="sales" title="Sales Return"><SalesReturn /></PermissionRoute>} />
-                        <Route path="sales/returns/refund-adjustment" element={<PermissionRoute permission="sales.return" moduleKey="sales" title="Refund and Adjustment"><ModulePlaceholder title="Refund and Adjustment" /></PermissionRoute>} />
-
-                        <Route path="sales/payments" element={<PermissionRoute permission="sales.paymentView" moduleKey="sales" title="Payment List"><SalesPayments /></PermissionRoute>} />
-                        <Route path="sales/payments/receive" element={<PermissionRoute permission="sales.paymentReceive" moduleKey="sales" title="Receive Payment"><ReceiveSalesPayment /></PermissionRoute>} />
-                        <Route path="sales/payments/advance" element={<PermissionRoute permission="sales.paymentAdvance" moduleKey="sales" title="Advance Payments"><ModulePlaceholder title="Advance Payments" /></PermissionRoute>} />
-                        <Route path="sales/payments/allocate" element={<PermissionRoute permission="sales.paymentAllocate" moduleKey="sales" title="Allocate Payments"><ModulePlaceholder title="Allocate Payment to Invoices" /></PermissionRoute>} />
-                        <Route path="sales/cash" element={<PermissionRoute permission="sales.cashView" moduleKey="sales" title="Cash Collection Dashboard"><SalesCashDashboard /></PermissionRoute>} />
-                        <Route path="sales/cash/runs" element={<PermissionRoute permission="sales.cashView" moduleKey="sales" title="Cash Collection Runs"><SalesCashRuns /></PermissionRoute>} />
-                        <Route path="sales/cash/runs/:id" element={<PermissionRoute permission="sales.cashView" moduleKey="sales" title="Cash Collection Run Detail"><SalesCashRunDetail /></PermissionRoute>} />
-                        <Route path="sales/cash/vault" element={<PermissionRoute permission="sales.cashVault" moduleKey="sales" title="Cash Vault Intake"><SalesCashVault /></PermissionRoute>} />
-                        <Route path="sales/cash/deposits" element={<PermissionRoute permission="sales.cashDeposit" moduleKey="sales" title="Cash Bank Deposits"><SalesCashDeposits /></PermissionRoute>} />
-                        <Route path="sales/cash/reconciliation" element={<PermissionRoute permission="sales.cashReconcile" moduleKey="sales" title="Cash Reconciliation"><SalesCashReconciliation /></PermissionRoute>} />
-                        <Route path="sales/cash/audit" element={<PermissionRoute permission="sales.cashAudit" moduleKey="sales" title="Cash Audit Trail"><SalesCashAudit /></PermissionRoute>} />
-
-                        <Route path="sales/pricing/price-lists" element={<PermissionRoute permission="sales.pricingManage" moduleKey="sales" title="Price Lists"><SalesPriceLists /></PermissionRoute>} />
-                        <Route path="sales/pricing/customer-group-pricing" element={<PermissionRoute permission="sales.pricingManage" moduleKey="sales" title="Customer Group Pricing"><SalesCustomerGroupPricing /></PermissionRoute>} />
-                        <Route path="sales/pricing/promotions" element={<PermissionRoute permission="sales.pricingManage" moduleKey="sales" title="Promotions and Offers"><SalesPromotions /></PermissionRoute>} />
-                        <Route path="sales/pricing/discount-rules" element={<PermissionRoute permission="sales.pricingManage" moduleKey="sales" title="Discount Rules"><SalesDiscountRules /></PermissionRoute>} />
-
-                        <Route path="sales/delivery/notes" element={<PermissionRoute permission="sales.deliveryManage" moduleKey="sales" title="Delivery Note"><ModulePlaceholder title="Delivery Note" /></PermissionRoute>} />
-                        <Route path="sales/delivery/dispatch-tracking" element={<PermissionRoute permission="sales.deliveryManage" moduleKey="sales" title="Dispatch Tracking"><ModulePlaceholder title="Dispatch Tracking" /></PermissionRoute>} />
-                        <Route path="sales/delivery/partial-delivery" element={<PermissionRoute permission="sales.deliveryManage" moduleKey="sales" title="Partial Delivery"><ModulePlaceholder title="Partial Delivery" /></PermissionRoute>} />
-
-                        <Route path="sales/control/credit-control" element={<PermissionRoute permission="sales.creditControl" moduleKey="sales" title="Credit Control"><SalesCreditControl /></PermissionRoute>} />
-                        <Route path="sales/control/overdue-invoices" element={<PermissionRoute permission="sales.creditControl" moduleKey="sales" title="Overdue Invoices"><OverdueInvoices /></PermissionRoute>} />
-                        <Route path="sales/control/approvals" element={<PermissionRoute permission="sales.approvals" moduleKey="sales" title="Sales Approvals"><ModulePlaceholder title="Sales Approvals" /></PermissionRoute>} />
-
-                        <Route path="sales/reports/summary" element={<PermissionRoute permission="reports.view" moduleKey="sales" title="Sales Summary Report"><SalesSummaryReport /></PermissionRoute>} />
-                        <Route path="sales/reports/by-item" element={<PermissionRoute permission="reports.view" moduleKey="sales" title="Sales by Item Report"><ModulePlaceholder title="Sales by Item Report" /></PermissionRoute>} />
-                        <Route path="sales/reports/by-customer" element={<PermissionRoute permission="reports.view" moduleKey="sales" title="Sales by Customer Report"><ModulePlaceholder title="Sales by Customer Report" /></PermissionRoute>} />
-                        <Route path="sales/reports/invoices" element={<PermissionRoute permission="reports.view" moduleKey="sales" title="Invoice Report"><ModulePlaceholder title="Invoice Report" /></PermissionRoute>} />
-                        <Route path="sales/reports/payments" element={<PermissionRoute permission="reports.view" moduleKey="sales" title="Payment Report"><ModulePlaceholder title="Payment Report" /></PermissionRoute>} />
-                        <Route path="sales/reports/profit-margin" element={<PermissionRoute permission="reports.view" moduleKey="sales" title="Profit Margin Report"><ModulePlaceholder title="Profit Margin Report" /></PermissionRoute>} />
-                        <Route path="sales/reports/returns" element={<PermissionRoute permission="reports.view" moduleKey="sales" title="Return Report"><ModulePlaceholder title="Return Report" /></PermissionRoute>} />
-
-                        <Route path="sales/dashboard" element={<PermissionRoute permission="sales.view" moduleKey="sales" title="Sales Dashboard"><SalesAnalytics /></PermissionRoute>} />
-                        <Route path="sales/analytics" element={<Navigate to="/sales/dashboard" replace />} />
-                        <Route path="purchases" element={<PermissionRoute permission="purchase.view" moduleKey="purchases" title="Purchases"><Purchases /></PermissionRoute>} />
-                        <Route path="purchases/requisitions" element={<PermissionRoute permission="purchase.view" moduleKey="purchases" title="Purchase Requisitions"><PurchaseRequisitions /></PermissionRoute>} />
-                        <Route path="purchases/rfq" element={<PermissionRoute permission="purchase.view" moduleKey="purchases" title="Request for Quotation"><RequestForQuotation /></PermissionRoute>} />
-                        <Route path="purchases/orders" element={<PermissionRoute permission="purchase.view" moduleKey="purchases" title="Purchase Orders"><PurchaseOrders /></PermissionRoute>} />
-                        <Route path="purchases/orders/new" element={<PermissionRoute permission="purchase.create" moduleKey="purchases" title="Create Purchase Order"><PurchaseOrderForm /></PermissionRoute>} />
-                        <Route path="purchases/orders/:id" element={<PermissionRoute permission="purchase.view" moduleKey="purchases" title="Purchase Order Detail"><PurchaseOrderDetail /></PermissionRoute>} />
-                        <Route path="purchases/orders/:id/edit" element={<PermissionRoute permission="purchase.create" moduleKey="purchases" title="Edit Purchase Order"><PurchaseOrderForm /></PermissionRoute>} />
-                        <Route path="purchases/grn" element={<PermissionRoute permission="purchase.view" moduleKey="purchases" title="Goods Receipt (GRN)"><GoodsReceiptNotes /></PermissionRoute>} />
-                        <Route path="purchases/control" element={<PermissionRoute permission="purchase.view" moduleKey="purchases" title="Purchase Control"><PurchaseControl /></PermissionRoute>} />
-                        <Route path="purchases/invoices" element={<PermissionRoute permission="purchase.view" moduleKey="purchases" title="Purchase Invoices"><StockPurchases /></PermissionRoute>} />
-                        <Route path="purchases/new" element={<PermissionRoute permission="purchase.create" moduleKey="purchases" title="Create Purchase"><PurchaseForm /></PermissionRoute>} />
-                        <Route path="purchases/:id/edit" element={<PermissionRoute permission="purchase.edit" moduleKey="purchases" title="Edit Purchase"><PurchaseForm /></PermissionRoute>} />
-                        <Route path="purchases/payments" element={<PermissionRoute permission="purchase.payment" moduleKey="purchases" title="Purchase Payments"><PurchasePayments /></PermissionRoute>} />
-                        <Route path="purchases/payments/new" element={<PermissionRoute permission="purchase.payment" moduleKey="purchases" title="Record Purchase Payment"><PurchasePaymentForm /></PermissionRoute>} />
-                        <Route path="purchases/returns" element={<PermissionRoute permission="purchase.return" moduleKey="purchases" title="Purchase Returns"><PurchaseReturns /></PermissionRoute>} />
-                        <Route path="purchases/returns/new" element={<PermissionRoute permission="purchase.return" moduleKey="purchases" title="Create Purchase Return"><PurchaseReturnForm /></PermissionRoute>} />
-                        <Route path="purchases/returns/:id/edit" element={<PermissionRoute permission="purchase.return" moduleKey="purchases" title="Edit Purchase Return"><PurchaseReturnForm /></PermissionRoute>} />
-                        <Route path="purchases/returns/:id" element={<PermissionRoute permission="purchase.return" moduleKey="purchases" title="Purchase Return Detail"><PurchaseReturnDetail /></PermissionRoute>} />
-                        <Route path="purchases/:id" element={<PermissionRoute permission="purchase.view" moduleKey="purchases" title="Purchase Detail"><PurchaseDetail /></PermissionRoute>} />
-                        <Route path="purchases/reports" element={<PermissionRoute permission="purchase.view" moduleKey="purchases" title="Purchase Reports"><PurchaseReports /></PermissionRoute>} />
-
-                        {/* Expense Purchases */}
-                        <Route path="purchases/expense" element={<PermissionRoute permission="accounting.expense" moduleKey="purchases" title="Expense Purchases"><ExpensePurchaseList /></PermissionRoute>} />
-                        <Route path="purchases/expense/new" element={<PermissionRoute permission="accounting.expense" moduleKey="purchases" title="Create Expense"><ExpensePurchaseForm /></PermissionRoute>} />
-                        <Route path="purchases/expense/:id" element={<PermissionRoute permission="accounting.expense" moduleKey="purchases" title="Expense Detail"><ExpensePurchaseDetail /></PermissionRoute>} />
-                        <Route path="purchases/expense/:id/edit" element={<PermissionRoute permission="accounting.expense" moduleKey="purchases" title="Edit Expense"><ExpensePurchaseForm /></PermissionRoute>} />
-
-                        <Route path="reports" element={<Navigate to="/reports/sales" replace />} />
-                        <Route path="reports/:type" element={<PermissionRoute permission="reports.view" moduleKey="reports" title="Reports"><Reports /></PermissionRoute>} />
-                        <Route path="users" element={<PermissionRoute permission="admin.manageUsers" title="User Management"><Users /></PermissionRoute>} />
-                        <Route path="roles" element={<PermissionRoute permission="admin.manageRoles" title="Role Management"><Roles /></PermissionRoute>} />
-                        <Route path="hr/departments" element={<PermissionRoute permission="hr.departmentView" moduleKey="hr" title="Departments"><Departments /></PermissionRoute>} />
-                        <Route path="hr/positions" element={<PermissionRoute permission="hr.positionView" moduleKey="hr" title="Positions"><Positions /></PermissionRoute>} />
-                        <Route path="hr/employees" element={<PermissionRoute permission="hr.employeeView" moduleKey="hr" title="Employees"><Employees /></PermissionRoute>} />
-                        <Route path="hr/attendance" element={<PermissionRoute permission="hr.attendanceView" moduleKey="hr" title="Attendance"><Attendance /></PermissionRoute>} />
-                        <Route path="hr/leaves" element={<PermissionRoute permission="hr.leaveView" moduleKey="hr" title="Leave Management"><Leaves /></PermissionRoute>} />
-                        <Route path="services" element={<PermissionRoute permission="sales.view" moduleKey="hr" title="Sales Services"><Services /></PermissionRoute>} />
-                        <Route path="settings" element={<PermissionRoute permission="admin.manageSettings" title="Settings"><Settings /></PermissionRoute>} />
-                        <Route path="settings/taxes" element={<PermissionRoute permission="admin.manageSettings" title="Taxes"><Taxes /></PermissionRoute>} />
-                        <Route path="settings/global-strings" element={<PermissionRoute permission="admin.manageSettings" title="Global Strings"><GlobalStrings /></PermissionRoute>} />
-                        <Route path="super-admin" element={<SuperAdminShell />}>
-                            <Route index element={<Navigate to="dashboard" replace />} />
-                            <Route path="dashboard" element={<SuperAdminDashboard />} />
-                            <Route path="companies" element={<SuperAdminCompanies />} />
-                            <Route path="companies/:id" element={<SuperAdminCompanyProfile />} />
-                            <Route path="modules" element={<SuperAdminModules />} />
-                            <Route path="broadcasts" element={<SuperAdminBroadcasts />} />
-                            <Route path="audit" element={<SuperAdminAudit />} />
-                            <Route path="support-sessions" element={<SuperAdminSupportSessions />} />
-                        </Route>
+                        {renderProtectedRoutes(protectedRoutes)}
                     </Route>
                 </Routes>
             </Suspense>

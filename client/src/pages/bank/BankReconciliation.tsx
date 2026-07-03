@@ -27,6 +27,7 @@ import {
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
+import { DEFAULT_CURRENCY } from '@/lib/constants';
 import api, { getApiErrorMessage } from '@/lib/api';
 import { formatCompanyDate, toDateInputValue, useCompanyRegionalSettings } from '@/lib/companySettings';
 
@@ -306,7 +307,7 @@ export default function BankReconciliation() {
           {transaction.amount >= 0 ? '+' : ''}
           {Math.abs(transaction.amount).toLocaleString('en-US', {
             style: 'currency',
-            currency: selectedAccount?.currency || 'SAR',
+            currency: selectedAccount?.currency || DEFAULT_CURRENCY,
           })}
         </div>
       ),
@@ -347,7 +348,7 @@ export default function BankReconciliation() {
         <div className="text-right font-medium">
           {rec.closingBalance.toLocaleString('en-US', {
             style: 'currency',
-            currency: rec.bankAccount?.currency || 'SAR',
+            currency: rec.bankAccount?.currency || DEFAULT_CURRENCY,
           })}
         </div>
       ),
@@ -363,7 +364,7 @@ export default function BankReconciliation() {
         )}>
           {rec.difference.toLocaleString('en-US', {
             style: 'currency',
-            currency: rec.bankAccount?.currency || 'SAR',
+            currency: rec.bankAccount?.currency || DEFAULT_CURRENCY,
           })}
         </div>
       ),
@@ -432,7 +433,7 @@ export default function BankReconciliation() {
               <div className="text-xl font-semibold text-slate-900">
                 {activeReconciliation.openingBalance.toLocaleString('en-US', {
                   style: 'currency',
-                  currency: selectedAccount?.currency || 'SAR',
+                  currency: selectedAccount?.currency || DEFAULT_CURRENCY,
                 })}
               </div>
             </div>
@@ -442,7 +443,7 @@ export default function BankReconciliation() {
               <div className="text-xl font-semibold text-slate-900">
                 {activeReconciliation.closingBalance.toLocaleString('en-US', {
                   style: 'currency',
-                  currency: selectedAccount?.currency || 'SAR',
+                  currency: selectedAccount?.currency || DEFAULT_CURRENCY,
                 })}
               </div>
             </div>
@@ -452,7 +453,7 @@ export default function BankReconciliation() {
               <div className="text-xl font-semibold text-blue-700">
                 {selectedTotal.toLocaleString('en-US', {
                   style: 'currency',
-                  currency: selectedAccount?.currency || 'SAR',
+                  currency: selectedAccount?.currency || DEFAULT_CURRENCY,
                 })}
               </div>
               <div className="text-sm text-blue-600">
@@ -478,7 +479,7 @@ export default function BankReconciliation() {
               )}>
                 {difference.toLocaleString('en-US', {
                   style: 'currency',
-                  currency: selectedAccount?.currency || 'SAR',
+                  currency: selectedAccount?.currency || DEFAULT_CURRENCY,
                 })}
               </div>
             </div>

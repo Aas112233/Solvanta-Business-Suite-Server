@@ -3,6 +3,7 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import { authenticate } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
 import { requireSuperAdmin, requireSuperAdminPermission, resolveSuperAdminAccess } from '../../middleware/superAdmin.js';
 import { basePrisma } from '../../lib/prisma.js';
 import { sendSuccess } from '../../utils/response.js';
@@ -204,6 +205,50 @@ const createTenantSchema = z.object({
         suppliers: z.boolean(),
         hr: z.boolean(),
     }).optional(),
+});
+
+// ── Query Parameter Schemas ──
+
+const tenantListQuerySchema = z.object({
+    status: z.string().optional(),
+    plan: z.string().optional(),
+    maintenance: z.string().optional(),
+    paymentStatus: z.string().optional(),
+    limitState: z.string().optional(),
+    healthStatus: z.string().optional(),
+    healthMin: z.coerce.number().optional(),
+    healthMax: z.coerce.number().optional(),
+    trialEndingWithinDays: z.coerce.number().optional(),
+    module: z.string().optional(),
+    search: z.string().optional(),
+});
+
+const tenantUsersQuerySchema = z.object({
+    status: z.string().optional(),
+    search: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+});
+
+const supportSessionDetailQuerySchema = z.object({
+    format: z.string().optional(),
+});
+
+const supportSessionsQuerySchema = z.object({
+    companyId: z.string().optional(),
+    actor: z.string().optional(),
+    sessionId: z.string().optional(),
+    status: z.string().optional(),
+    search: z.string().optional(),
+});
+
+const auditQuerySchema = z.object({
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    action: z.string().optional(),
+    companyId: z.string().optional(),
+    search: z.string().optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    format: z.string().optional(),
 });
 
 function diffInDays(from: Date, to: Date) {
@@ -750,7 +795,7 @@ superAdminRoutes.get('/overview', requireSuperAdminPermission(SUPER_ADMIN_PERMIS
     }
 });
 
-superAdminRoutes.get('/tenants', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_READ), async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/tenants', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.TENANTS_READ), validate({ query: tenantListQuerySchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const statusFilter = String(req.query.status || 'All');
         const planFilter = String(req.query.plan || 'All');
@@ -955,7 +1000,7 @@ superAdminRoutes.get('/tenants/:id/control-center', requireSuperAdminPermission(
     }
 });
 
-superAdminRoutes.get('/tenants/:id/users', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.USERS_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/tenants/:id/users', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.USERS_MANAGE), validate({ query: tenantUsersQuerySchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = String(req.params.id);
         const company = await getTenantCompanyOrThrow(companyId);
@@ -1986,7 +2031,7 @@ superAdminRoutes.delete('/announcements/:id', requireSuperAdminPermission(SUPER_
     }
 });
 
-superAdminRoutes.get('/audit/support-sessions/:sessionId', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.AUDIT_READ), async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/audit/support-sessions/:sessionId', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.AUDIT_READ), validate({ query: supportSessionDetailQuerySchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const sessionId = String(req.params.sessionId || '').trim();
         const format = String(req.query.format || '').trim().toLowerCase();
@@ -2120,7 +2165,7 @@ superAdminRoutes.get('/audit/support-sessions/:sessionId', requireSuperAdminPerm
     }
 });
 
-superAdminRoutes.get('/audit/support-sessions', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.AUDIT_READ), async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/audit/support-sessions', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.AUDIT_READ), validate({ query: supportSessionsQuerySchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const companyId = String(req.query.companyId || '').trim();
         const actor = String(req.query.actor || '').trim().toLowerCase();
@@ -2231,7 +2276,7 @@ superAdminRoutes.get('/audit/support-sessions', requireSuperAdminPermission(SUPE
     }
 });
 
-superAdminRoutes.get('/audit', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.AUDIT_READ), async (req: Request, res: Response, next: NextFunction) => {
+superAdminRoutes.get('/audit', requireSuperAdminPermission(SUPER_ADMIN_PERMISSIONS.AUDIT_READ), validate({ query: auditQuerySchema }), async (req: Request, res: Response, next: NextFunction) => {
     try {
         const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
         const action = String(req.query.action || '').trim();

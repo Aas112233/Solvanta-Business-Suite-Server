@@ -58,7 +58,7 @@ function getPrismaErrorDetails(code: string, meta: any): ErrorDetails[] | undefi
             .replace(/group_?/g, '')
             .split('_')
             .filter(Boolean)
-            .map(s => s.charAt(0).toUpperCase() + s.slice(1))
+            .map((s: string) => s.charAt(0).toUpperCase() + s.slice(1))
             .join(' ') || 'Field';
 
         return {
@@ -87,7 +87,7 @@ function getPrismaErrorMessage(code: string, meta: any): { message: string; user
                 .replace(/group_?/g, '')
                 .split('_')
                 .filter(Boolean)
-                .map(s => s.charAt(0).toUpperCase() + s.slice(1))
+                .map((s: string) => s.charAt(0).toUpperCase() + s.slice(1))
                 .join(' ') || 'field';
 
             return {

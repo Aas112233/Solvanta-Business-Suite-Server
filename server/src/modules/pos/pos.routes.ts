@@ -16,11 +16,9 @@ import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { InventoryService } from '../inventory/InventoryService.js';
 import { POS_PAYMENT_METHODS, isCashType, isBankType, isCreditType, isMixedType } from '../../utils/paymentMethods.js';
 import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
+import { roundMoney } from '../../utils/money.js';
+import { asyncHandler } from '../../middleware/errorHandler.js';
 
-function roundMoney(value: number): number {
-    if (!Number.isFinite(value)) return 0;
-    return Math.round((value + Number.EPSILON) * 100) / 100;
-}
 export const posRoutes = Router();
 posRoutes.use(authenticate);
 
@@ -645,8 +643,7 @@ async function upsertLoyaltySettings(companyId: string, settings: PosLoyaltySett
 }
 
 // POST /pos/session/login
-posRoutes.post('/session/login', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), validate({ body: posSessionLoginSchema }), async (req, res, next) => {
-    try {
+posRoutes.post('/session/login', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), validate({ body: posSessionLoginSchema }), asyncHandler(async (req, res) => {
         const companyId = req.user!.companyId;
         const { terminalId, email, password } = req.body;
 
@@ -720,13 +717,11 @@ posRoutes.post('/session/login', requireAnyPermission(PERMISSIONS.POS_ACCESS, PE
                 managerOrAdmin,
             },
         });
-    } catch (error) { next(error); }
-});
+}))
 
 // POST /pos/session/bootstrap
 // Starts POS session for already authenticated user (no extra credentials).
-posRoutes.post('/session/bootstrap', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), validate({ body: posSessionBootstrapSchema }), async (req, res, next) => {
-    try {
+posRoutes.post('/session/bootstrap', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), validate({ body: posSessionBootstrapSchema }), asyncHandler(async (req, res) => {
         const companyId = req.user!.companyId;
         const { terminalId } = req.body as { terminalId?: string };
 
@@ -810,12 +805,10 @@ posRoutes.post('/session/bootstrap', requireAnyPermission(PERMISSIONS.POS_ACCESS
                 managerOrAdmin,
             },
         });
-    } catch (error) { next(error); }
-});
+}))
 
 // GET /pos/session/me
-posRoutes.get('/session/me', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), async (req, res, next) => {
-    try {
+posRoutes.get('/session/me', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), asyncHandler(async (req, res) => {
         const session = resolvePosSession(req);
         if (!session) throw AppError.unauthorized('POS session not found');
         if (session.companyId !== req.user!.companyId) throw AppError.unauthorized('Invalid POS session');
@@ -852,50 +845,40 @@ posRoutes.get('/session/me', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMIS
                 priceGroupId: terminal.priceGroupId || null,
             },
         });
-    } catch (error) { next(error); }
-});
+}))
 
 // POST /pos/session/logout
 // POS session token is stateless JWT; this endpoint confirms connectivity and session validity before client clears it.
-posRoutes.post('/session/logout', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), async (req, res, next) => {
-    try {
+posRoutes.post('/session/logout', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), asyncHandler(async (req, res) => {
         const session = resolvePosSession(req);
         if (!session) throw AppError.unauthorized('POS session not found');
         if (session.companyId !== req.user!.companyId) throw AppError.unauthorized('Invalid POS session');
 
         sendSuccess(res, { message: 'POS session ended' });
-    } catch (error) { next(error); }
-});
+}))
 
 // GET /pos/receipt-settings
-posRoutes.get('/receipt-settings', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), async (req, res, next) => {
-    try {
+posRoutes.get('/receipt-settings', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), asyncHandler(async (req, res) => {
         const settings = await getReceiptSettings(req.user!.companyId);
         sendSuccess(res, settings);
-    } catch (error) { next(error); }
-});
+}))
 
 // PATCH /pos/receipt-settings
-posRoutes.patch('/receipt-settings', requirePermission(PERMISSIONS.POS_MANAGE_TERMINALS), validate({ body: receiptSettingsPatchSchema }), async (req, res, next) => {
-    try {
+posRoutes.patch('/receipt-settings', requirePermission(PERMISSIONS.POS_MANAGE_TERMINALS), validate({ body: receiptSettingsPatchSchema }), asyncHandler(async (req, res) => {
         const current = await getReceiptSettings(req.user!.companyId);
         const merged = sanitizeReceiptSettings({ ...current, ...req.body });
         await upsertReceiptSettings(req.user!.companyId, merged);
         sendSuccess(res, merged);
-    } catch (error) { next(error); }
-});
+}))
 
 // GET /pos/hotkeys-shortcuts
-posRoutes.get('/hotkeys-shortcuts', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), async (req, res, next) => {
-    try {
+posRoutes.get('/hotkeys-shortcuts', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), asyncHandler(async (req, res) => {
         const settings = await getHotkeyShortcutSettings(req.user!.companyId);
         sendSuccess(res, settings);
-    } catch (error) { next(error); }
-});
+}))
 
 // PATCH /pos/hotkeys-shortcuts
-posRoutes.patch('/hotkeys-shortcuts', requirePermission(PERMISSIONS.POS_MANAGE_TERMINALS), validate({ body: hotkeyShortcutSettingsPatchSchema }), async (req, res, next) => {
-    try {
+posRoutes.patch('/hotkeys-shortcuts', requirePermission(PERMISSIONS.POS_MANAGE_TERMINALS), validate({ body: hotkeyShortcutSettingsPatchSchema }), asyncHandler(async (req, res) => {
         const companyId = req.user!.companyId;
         const current = await getHotkeyShortcutSettings(companyId);
         const merged = sanitizeHotkeyShortcutSettings({ ...current, ...req.body });
@@ -951,31 +934,25 @@ posRoutes.patch('/hotkeys-shortcuts', requirePermission(PERMISSIONS.POS_MANAGE_T
 
         await upsertHotkeyShortcutSettings(companyId, merged);
         sendSuccess(res, merged);
-    } catch (error) { next(error); }
-});
+}))
 
 // GET /pos/loyalty-settings
-posRoutes.get('/loyalty-settings', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), async (req, res, next) => {
-    try {
+posRoutes.get('/loyalty-settings', requireAnyPermission(PERMISSIONS.POS_ACCESS, PERMISSIONS.POS_SELL), asyncHandler(async (req, res) => {
         const settings = await getLoyaltySettings(req.user!.companyId);
         sendSuccess(res, settings);
-    } catch (error) { next(error); }
-});
+}))
 
 // PATCH /pos/loyalty-settings
-posRoutes.patch('/loyalty-settings', requirePermission(PERMISSIONS.POS_MANAGE_TERMINALS), validate({ body: loyaltySettingsPatchSchema }), async (req, res, next) => {
-    try {
+posRoutes.patch('/loyalty-settings', requirePermission(PERMISSIONS.POS_MANAGE_TERMINALS), validate({ body: loyaltySettingsPatchSchema }), asyncHandler(async (req, res) => {
         const companyId = req.user!.companyId;
         const current = await getLoyaltySettings(companyId);
         const merged = sanitizeLoyaltySettings({ ...current, ...req.body });
         await upsertLoyaltySettings(companyId, merged);
         sendSuccess(res, merged);
-    } catch (error) { next(error); }
-});
+}))
 
 // GET /pos/next-invoice-no
-posRoutes.get('/next-invoice-no', requireBranch, async (req, res, next) => {
-    try {
+posRoutes.get('/next-invoice-no', requireBranch, asyncHandler(async (req, res) => {
         const branch = await prisma.branch.findFirst({
             where: { id: req.activeBranchId!, companyId: req.user!.companyId },
             select: { id: true, code: true },
@@ -985,12 +962,10 @@ posRoutes.get('/next-invoice-no', requireBranch, async (req, res, next) => {
         const nextNum = await peekNextCounter(prisma as any, req.user!.companyId, 'POS_INVOICE', req.activeBranchId!);
         const invoiceNo = formatDocNo(branch.code, nextNum);
         sendSuccess(res, { invoiceNo });
-    } catch (error) { next(error); }
-});
+}))
 
 // GET /pos/invoices
-posRoutes.get('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), async (req, res, next) => {
-    try {
+posRoutes.get('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), asyncHandler(async (req, res) => {
         const query = paginationSchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const { branchId, customerId, status, dateFrom, dateTo } = req.query as any;
@@ -1027,12 +1002,10 @@ posRoutes.get('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSION
         ]);
 
         sendPaginated(res, invoices, total, page, limit);
-    } catch (error) { next(error); }
-});
+}))
 
 // GET /pos/invoices/:id
-posRoutes.get('/invoices/:id', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), async (req, res, next) => {
-    try {
+posRoutes.get('/invoices/:id', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), asyncHandler(async (req, res) => {
         const invoiceId = String(req.params.id);
         const branchScope = isBranchAdmin(req) ? {} : { branchId: { in: req.user!.branchIds } };
         const invoice = await prisma.pOSInvoice.findFirst({
@@ -1049,12 +1022,10 @@ posRoutes.get('/invoices/:id', requireAnyPermission(PERMISSIONS.POS_SELL, PERMIS
         });
         if (!invoice) throw AppError.notFound('Invoice');
         sendSuccess(res, invoice);
-    } catch (error) { next(error); }
-});
+}))
 
 // GET /pos/invoices/by-no/:invoiceNo
-posRoutes.get('/invoices/by-no/:invoiceNo', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), async (req, res, next) => {
-    try {
+posRoutes.get('/invoices/by-no/:invoiceNo', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), asyncHandler(async (req, res) => {
         const invoiceNo = String(req.params.invoiceNo || '').trim();
         if (!invoiceNo) throw AppError.badRequest('Invoice number is required');
 
@@ -1084,15 +1055,13 @@ posRoutes.get('/invoices/by-no/:invoiceNo', requireAnyPermission(PERMISSIONS.POS
         if (!invoice) throw AppError.notFound('Invoice');
 
         sendSuccess(res, invoice);
-    } catch (error) { next(error); }
-});
+}))
 
 // ══════════════════════════════════════════════════════════════
 // LOYALTY CUSTOMERS
 // ══════════════════════════════════════════════════════════════
 
-posRoutes.get('/loyalty-customers', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), async (req, res, next) => {
-    try {
+posRoutes.get('/loyalty-customers', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), asyncHandler(async (req, res) => {
         const raw = typeof req.query.q === 'string'
             ? req.query.q
             : typeof req.query.search === 'string'
@@ -1116,11 +1085,9 @@ posRoutes.get('/loyalty-customers', requireAnyPermission(PERMISSIONS.POS_SELL, P
         });
 
         sendSuccess(res, customers);
-    } catch (error) { next(error); }
-});
+}))
 
-posRoutes.post('/loyalty-customers', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), validate({ body: loyaltyCustomerSchema }), async (req, res, next) => {
-    try {
+posRoutes.post('/loyalty-customers', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), validate({ body: loyaltyCustomerSchema }), asyncHandler(async (req, res) => {
         const companyId = req.user!.companyId;
         const { name, phone } = req.body;
 
@@ -1143,11 +1110,9 @@ posRoutes.post('/loyalty-customers', requireAnyPermission(PERMISSIONS.POS_SELL, 
         });
 
         sendSuccess(res, customer, undefined, 201);
-    } catch (error) { next(error); }
-});
+}))
 
-posRoutes.get('/loyalty-customers/:id', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), async (req, res, next) => {
-    try {
+posRoutes.get('/loyalty-customers/:id', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), asyncHandler(async (req, res) => {
         const companyId = req.user!.companyId;
         const customer = await (prisma as any).loyaltyCustomer.findFirst({
             where: { id: req.params.id, companyId },
@@ -1169,11 +1134,9 @@ posRoutes.get('/loyalty-customers/:id', requireAnyPermission(PERMISSIONS.POS_SEL
 
         if (!customer) throw AppError.notFound('Loyalty Customer');
         sendSuccess(res, { customer, history: customer.pointHistory });
-    } catch (error) { next(error); }
-});
+}))
 
-posRoutes.get('/loyalty-customers/:id/history', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), async (req, res, next) => {
-    try {
+posRoutes.get('/loyalty-customers/:id/history', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), asyncHandler(async (req, res) => {
         const companyId = req.user!.companyId;
         const customer = await (prisma as any).loyaltyCustomer.findFirst({
             where: { id: req.params.id, companyId },
@@ -1196,12 +1159,10 @@ posRoutes.get('/loyalty-customers/:id/history', requireAnyPermission(PERMISSIONS
         });
 
         sendSuccess(res, history);
-    } catch (error) { next(error); }
-});
+}))
 
 // POST /pos/invoices — TRANSACTIONAL: create invoice + deduct stock + movements + journal entry
-posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS, PERMISSIONS.SALES_CREATE), requireBranch, validate({ body: posInvoiceSchema }), async (req, res, next) => {
-    try {
+posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS, PERMISSIONS.SALES_CREATE), requireBranch, validate({ body: posInvoiceSchema }), asyncHandler(async (req, res) => {
         const {
             customerId,
             clientRequestId,
@@ -1257,21 +1218,6 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
             }
         }
 
-        if (normalizedClientRequestId) {
-            const existingInvoice = await prisma.pOSInvoice.findFirst({
-                where: {
-                    companyId,
-                    clientRequestId: normalizedClientRequestId,
-                } as any,
-                include: { items: true },
-            });
-
-            if (existingInvoice) {
-                sendSuccess(res, existingInvoice);
-                return;
-            }
-        }
-
         const requestingUser: any = await prisma.user.findFirst({
             where: { id: userId, companyId },
             include: { role: { select: { name: true, permissions: true } } }
@@ -1279,6 +1225,15 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
         const managerOrAdmin = requestingUser ? isManagerOrAdmin(requestingUser.role?.name || '', requestingUser.role?.permissions || []) : false;
 
         const result = await prisma.$transaction(async (tx) => {
+            // Idempotency check INSIDE transaction — prevents race condition
+            if (normalizedClientRequestId) {
+                const existingInvoice = await tx.pOSInvoice.findFirst({
+                    where: { companyId, clientRequestId: normalizedClientRequestId } as any,
+                    include: { items: true },
+                });
+                if (existingInvoice) return existingInvoice;
+            }
+
             const requestedItems = items as Array<{
                 productId: string;
                 serviceId?: string;
@@ -1807,30 +1762,25 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
 
             // Only process stock and accounting if posted
             if (isPosted) {
-                // Deduct inventory stock for each PRODUCT item (skip services)
-                for (const item of computedItems) {
-                    // Skip service items - they don't have inventory impact
-                    if (item.serviceId) continue;
-
-                    const cachedProduct = productUnitCache.get(item.productId!);
-
-                    // Stock check already passed above; use pre-fetched product for mutation
-                    const { movement } = await InventoryService.mutateStock(tx, {
-                        companyId,
-                        branchId,
-                        productId: item.productId!,
-                        unitCode: item.unitCode,
-                        qtyChange: -item.qty,
-                        cost: 0,
-                        price: item.unitPrice,
-                        type: 'POS_SALE',
-                        referenceType: 'POSInvoice',
-                        referenceId: invoice.id,
-                        createdById: userId,
-                    }, cachedProduct);
-
-                    (item as any).cost = Number(movement?.cost || 0);
-                }
+                // Deduct inventory stock for each PRODUCT item (skip services) — batched
+                const productItems = computedItems.filter((item: any) => !item.serviceId);
+                const posStockMutations = productItems.map((item: any) => ({
+                    companyId,
+                    branchId,
+                    productId: item.productId!,
+                    unitCode: item.unitCode,
+                    qtyChange: -item.qty,
+                    cost: 0,
+                    price: item.unitPrice,
+                    type: 'POS_SALE',
+                    referenceType: 'POSInvoice',
+                    referenceId: invoice.id,
+                    createdById: userId,
+                }));
+                const posBatchResults = await InventoryService.mutateStockBatch(tx, posStockMutations);
+                productItems.forEach((item: any, i: number) => {
+                    (item as any).cost = Number(posBatchResults[i]?.movement?.cost || 0);
+                });
 
                 // Core Accounting Emission
                 await CoreAccountingService.recordPOSSale(tx as any, {
@@ -1864,12 +1814,10 @@ posRoutes.post('/invoices', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIO
         }, { maxWait: 10000, timeout: 20000 });
 
         sendSuccess(res, result, undefined, 201);
-    } catch (error) { next(error); }
-});
+}))
 
 // GET /pos/unposted
-posRoutes.get('/unposted', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), requireBranch, async (req, res, next) => {
-    try {
+posRoutes.get('/unposted', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), requireBranch, asyncHandler(async (req, res) => {
         const {
             branchId,
             dateFrom,
@@ -1968,12 +1916,10 @@ posRoutes.get('/unposted', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSION
         }));
 
         sendSuccess(res, enriched);
-    } catch (error) { next(error); }
-});
+}))
 
 // POST /pos/post-batch
-posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), requireBranch, async (req, res, next) => {
-    try {
+posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSIONS.POS_ACCESS), requireBranch, asyncHandler(async (req, res) => {
         const { invoiceIds } = req.body;
         if (!Array.isArray(invoiceIds)) throw AppError.badRequest('Expected array of invoice IDs');
 
@@ -1992,7 +1938,7 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
                     if (!invoice) throw AppError.notFound(`Invoice ${id} not found or already posted`);
                     await assertBranchAccessible(req, invoice.branchId);
 
-                    const accountingItems: Array<{
+                    let accountingItems: Array<{
                         productId: string;
                         qty: number;
                         unitPrice: number;
@@ -2002,6 +1948,7 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
                     }> = [];
 
                     // Check stock again
+                    // Stock check loop (throws early if insufficient stock)
                     for (const item of invoice.items) {
                         const qtyAvailable = await InventoryService.getAvailableStockQty(tx as any, {
                             companyId,
@@ -2013,29 +1960,31 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
                         if (qtyAvailable < item.qty) {
                             throw AppError.badRequest(`Insufficient stock for product ${item.productId} in invoice ${invoice.invoiceNo}`);
                         }
-
-                        const { movement } = await InventoryService.mutateStock(tx as any, {
-                            companyId,
-                            branchId: invoice.branchId,
-                            productId: item.productId,
-                            unitCode: item.unitCode,
-                            qtyChange: -Number(item.qty),
-                            cost: 0,
-                            price: Number(item.unitPrice || 0),
-                            type: 'POS_SALE',
-                            referenceType: 'POSInvoice',
-                            referenceId: invoice.id,
-                            createdById: userId,
-                        });
-                        accountingItems.push({
-                            productId: String(item.productId),
-                            qty: Number(item.qty || 0),
-                            unitPrice: Number(item.unitPrice || 0),
-                            lineTotal: Number(item.lineTotal || 0),
-                            taxAmount: Number(item.taxAmount || 0),
-                            cost: Number(movement?.cost || 0),
-                        });
                     }
+
+                    // Batch-deduct inventory stock
+                    const postStockMutations = invoice.items.map((item: any) => ({
+                        companyId,
+                        branchId: invoice.branchId,
+                        productId: item.productId,
+                        unitCode: item.unitCode,
+                        qtyChange: -Number(item.qty),
+                        cost: 0,
+                        price: Number(item.unitPrice || 0),
+                        type: 'POS_SALE',
+                        referenceType: 'POSInvoice',
+                        referenceId: invoice.id,
+                        createdById: userId,
+                    }));
+                    const postBatchResults = await InventoryService.mutateStockBatch(tx as any, postStockMutations);
+                    accountingItems = invoice.items.map((item: any, i: number) => ({
+                        productId: String(item.productId),
+                        qty: Number(item.qty || 0),
+                        unitPrice: Number(item.unitPrice || 0),
+                        lineTotal: Number(item.lineTotal || 0),
+                        taxAmount: Number(item.taxAmount || 0),
+                        cost: Number(postBatchResults[i]?.movement?.cost || 0),
+                    }));
 
                     // Strict accounting posting (mapping-driven + balanced journal enforced).
                     await CoreAccountingService.recordPOSSale(tx as any, {
@@ -2071,5 +2020,4 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
         }
 
         sendSuccess(res, results);
-    } catch (error) { next(error); }
-});
+}))

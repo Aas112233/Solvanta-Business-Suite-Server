@@ -60,7 +60,7 @@ export function FormField({
           <label
             htmlFor={id}
             className={clsx(
-              'font-medium text-text-secondary dark:text-gray-300 shrink-0 pt-2',
+              'font-medium text-text-secondary shrink-0 pt-2',
               labelSizeClasses[size]
             )}
             style={{ width: labelWidth }}
@@ -72,13 +72,13 @@ export function FormField({
         <div className="flex-1 space-y-1">
           {childWithProps}
           {error && (
-            <p id={errorId} className="text-sm text-danger dark:text-red-400 flex items-center gap-1">
+            <p id={errorId} className="text-sm text-danger flex items-center gap-1">
               <AlertCircle className="w-4 h-4" />
               {error}
             </p>
           )}
           {!error && hint && (
-            <p id={hintId} className="text-sm text-text-tertiary dark:text-gray-400">
+            <p id={hintId} className="text-sm text-text-tertiary">
               {hint}
             </p>
           )}
@@ -93,7 +93,7 @@ export function FormField({
         <label
           htmlFor={id}
           className={clsx(
-            'block font-medium text-text-secondary dark:text-gray-300',
+            'block font-medium text-text-secondary',
             labelSizeClasses[size]
           )}
         >
@@ -103,13 +103,13 @@ export function FormField({
       )}
       {childWithProps}
       {error && (
-        <p id={errorId} className="text-sm text-danger dark:text-red-400 flex items-center gap-1">
+        <p id={errorId} className="text-sm text-danger flex items-center gap-1">
           <AlertCircle className="w-4 h-4" />
           {error}
         </p>
       )}
       {!error && hint && (
-        <p id={hintId} className="text-sm text-text-tertiary dark:text-gray-400">
+        <p id={hintId} className="text-sm text-text-tertiary">
           {hint}
         </p>
       )}
@@ -151,12 +151,12 @@ export function FormSection({
       {(title || description) && (
         <div>
           {title && (
-            <h3 className="text-lg font-medium text-text-primary dark:text-white">
+            <h3 className="text-lg font-medium text-text-primary">
               {title}
             </h3>
           )}
           {description && (
-            <p className="mt-1 text-sm text-text-tertiary dark:text-gray-400">
+            <p className="mt-1 text-sm text-text-tertiary">
               {description}
             </p>
           )}
@@ -192,7 +192,7 @@ export function FormActions({
       className={clsx(
         'flex items-center gap-3',
         alignClasses[align],
-        border && 'pt-6 border-t border-border dark:border-gray-700',
+        border && 'pt-6 border-t border-border',
         className
       )}
     >

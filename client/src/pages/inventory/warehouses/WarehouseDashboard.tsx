@@ -20,11 +20,12 @@ import {
     Loader2
 } from 'lucide-react';
 import ModuleRefreshButton from '../../../components/ModuleRefreshButton';
+import { DEFAULT_CURRENCY } from '../../../lib/constants';
 
 export default function WarehouseDashboard() {
     const { id } = useParams();
     const navigate = useNavigate();
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     const { data: warehouse, isLoading: warehouseLoading } = useQuery({
         queryKey: ['warehouse', id],

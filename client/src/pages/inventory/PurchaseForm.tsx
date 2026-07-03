@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import toast from '@/lib/toast';
 import { ArrowLeft, Plus, Save, Trash, Pencil, Search, FileDown, Loader2, FileSpreadsheet } from 'lucide-react';
 import { z } from 'zod';
+import { DEFAULT_CURRENCY, FETCH_ALL_LIMIT } from '../../lib/constants';
 import api from '@/lib/api';
 import ItemSelectorModal from '@/components/inventory/ItemSelectorModal';
 import SupplierCreateModal from '@/components/suppliers/SupplierCreateModal';
@@ -120,7 +121,7 @@ export default function PurchaseForm() {
     const isEdit = Boolean(id && id !== 'new');
     const queryClient = useQueryClient();
     const companyTax = useCompanyTaxSettings();
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const [supplierId, setSupplierId] = useState('');
     const [branchId, setBranchId] = useState('');
     const [paymentMethod, setPaymentMethod] = useState('');
@@ -142,7 +143,7 @@ export default function PurchaseForm() {
         isFetching: isFetchingSuppliers,
     } = useQuery({
         queryKey: ['suppliers'],
-        queryFn: () => api.get('/suppliers', { params: { page: 1, limit: 1000 } }).then(r => r.data.data)
+        queryFn: () => api.get('/suppliers', { params: { page: 1, limit: FETCH_ALL_LIMIT } }).then(r => r.data.data)
     });
 
     const { data: branches, refetch: refetchBranches, isFetching: isFetchingBranches } = useQuery({

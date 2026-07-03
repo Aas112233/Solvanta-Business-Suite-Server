@@ -7,6 +7,7 @@ import { useAuthStore } from '../../stores/authStore';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import AppLoader from '../../components/ui/AppLoader';
 import Modal from '../../components/ui/Modal';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 type PriceGroup = {
     id: string;
@@ -18,7 +19,7 @@ type PriceGroup = {
 
 export default function SalesPriceLists() {
     const queryClient = useQueryClient();
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     const [selectedGroupId, setSelectedGroupId] = useState('');
     const [search, setSearch] = useState('');

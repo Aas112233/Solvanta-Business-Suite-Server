@@ -1,6 +1,7 @@
 import { format } from 'date-fns';
 import { Building2, User, Printer, Download, X } from 'lucide-react';
 import { getSalesCustomerDisplay, getSalesInvoiceDiscountBreakdown } from '../../lib/salesCustomerDisplay';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 import Modal from '../ui/Modal';
 
 interface InvoicePreviewModalProps {
@@ -16,7 +17,7 @@ export default function InvoicePreviewModal({
     isOpen,
     onClose,
     invoice,
-    currency = 'SAR',
+    currency = DEFAULT_CURRENCY,
     onPrint,
     onDownload
 }: InvoicePreviewModalProps) {

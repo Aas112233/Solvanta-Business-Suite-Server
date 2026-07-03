@@ -9,11 +9,12 @@ import ModuleRefreshButton from '../../../components/ModuleRefreshButton';
 import Pagination from '../../../components/ui/Pagination';
 import { cashStatusColor, formatMoney } from './utils';
 import AppDropdown from '../../../components/ui/AppDropdown';
+import { DEFAULT_CURRENCY } from '../../../lib/constants';
 
 export default function SalesCashRuns() {
     const queryClient = useQueryClient();
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     const [page, setPage] = useState(1);
     const [limit, setLimit] = useState(20);

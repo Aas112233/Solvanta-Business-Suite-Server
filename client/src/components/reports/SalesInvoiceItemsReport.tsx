@@ -1,20 +1,20 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { CheckSquare, FileSpreadsheet, FileText, Filter, Loader2, Search, Square, Warehouse } from 'lucide-react';
+import { CheckSquare, FileSpreadsheet, FileText, Loader2, Search, Square, Warehouse } from 'lucide-react';
+import { DEFAULT_CURRENCY, FETCH_ALL_LIMIT } from '../../lib/constants';
 import api from '../../lib/api';
 import { useAuthStore } from '../../stores/authStore';
 import Pagination from '../ui/Pagination';
-import DateRangeFilter from '../ui/DateRangeFilter';
 import { getSalesCustomerDisplay } from '../../lib/salesCustomerDisplay';
 import { exportExcel, exportPdfFromHtml } from '../../lib/fileExport';
 import toast from '@/lib/toast';
-import AppDropdown from '../ui/AppDropdown';
 import {
     buildPaymentMethodOptions,
     DEFAULT_SALE_PAYMENT_METHOD_OPTIONS,
     GLOBAL_STRING_GROUPS,
 } from '../../lib/globalStrings';
+import { PageTemplate, Section, KpiCard, Button, FilterBar, Select } from '../ui';
 
 type InvoiceSelectionMode = 'all' | 'single' | 'multiple';
 type PostedFilterMode = 'all' | 'posted';
@@ -118,7 +118,7 @@ const normalizeFilters = (filters: ReportFilters): ReportFilters => {
 };
 
 export default function SalesInvoiceItemsReport() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const companyName = useAuthStore((s) => s.user?.company?.name) || 'SOLVANTA ERP';
 
     const [page, setPage] = useState(1);
@@ -160,7 +160,7 @@ export default function SalesInvoiceItemsReport() {
                 dateFrom: draftFilters.startDate || undefined,
                 dateTo: draftFilters.endDate || undefined,
                 search: invoiceLookupSearch.trim() || undefined,
-                limit: 120,
+                limit: FETCH_ALL_LIMIT,
             },
         }).then((res) => res.data.data),
         enabled: draftFilters.mode !== 'all',
@@ -529,168 +529,185 @@ export default function SalesInvoiceItemsReport() {
     };
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col gap-3">
-                <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Sales Invoice Items</h1>
-                    <p className="text-sm text-gray-500">Invoice-level item report with period, warehouse, and invoice selection filters.</p>
+        <PageTemplate
+            title="Sales Invoice Items Report"
+            subtitle="Invoice-level item report with period, warehouse, and invoice selection filters."
+            breadcrumb={[
+                { label: 'Home', href: '/' },
+                { label: 'Reports', href: '/reports' },
+                { label: 'Sales Invoice Items' },
+            ]}
+            action={
+                <div className="flex items-center gap-2">
+                    <Button
+                        variant="success"
+                        size="sm"
+                        icon={isExportingExcel ? <Loader2 size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />}
+                        onClick={handleExportExcel}
+                        disabled={!hasAppliedFilters || isExportingExcel || isExportingPdf || isLoading || isFetching}
+                        loading={isExportingExcel}
+                    >
+                        {isExportingExcel ? 'Exporting...' : 'Download Excel'}
+                    </Button>
+                    <Button
+                        variant="primary"
+                        size="sm"
+                        icon={isExportingPdf ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                        onClick={handleExportPdf}
+                        disabled={!hasAppliedFilters || isExportingPdf || isExportingExcel || isLoading || isFetching}
+                        loading={isExportingPdf}
+                    >
+                        {isExportingPdf ? 'Exporting...' : 'Download PDF'}
+                    </Button>
                 </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                    <p className="text-xs uppercase tracking-wide text-gray-500">Item Lines</p>
-                    <p className="text-xl font-semibold text-gray-900">{Number(summary?.lineCount || 0).toLocaleString()}</p>
-                </div>
-                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                    <p className="text-xs uppercase tracking-wide text-gray-500">Total Qty</p>
-                    <p className="text-xl font-semibold text-gray-900">{Number(summary?.totalQty || 0).toLocaleString()}</p>
-                </div>
-                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                    <p className="text-xs uppercase tracking-wide text-gray-500">Subtotal</p>
-                    <p className="text-xl font-semibold text-gray-900">{Number(summary?.subtotal || 0).toLocaleString()} {currency}</p>
-                </div>
-                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                    <p className="text-xs uppercase tracking-wide text-gray-500">Grand Total</p>
-                    <p className="text-xl font-semibold text-blue-700">{Number(summary?.grandTotal || 0).toLocaleString()} {currency}</p>
-                </div>
-            </div>
-
-            <div className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-                    <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                        <input
-                            value={draftFilters.search}
-                            onChange={(e) => setDraftFilters((prev) => ({ ...prev, search: e.target.value }))}
-                            onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
-                            placeholder="Search invoice, item, customer, phone..."
-                            className="w-full rounded-xl border border-gray-200 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500"
-                        />
-                    </div>
-
-                    <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                        <Warehouse size={14} className="text-gray-500" />
-                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Warehouse</span>
-                        <AppDropdown
-                            value={draftFilters.branchId}
-                            onChange={(v) => setDraftFilters(prev => ({ ...prev, branchId: v }))}
-                            options={[{ value: '', label: 'All Warehouses' }, ...branches.map((branch: any) => ({ value: branch.id, label: branch.name }))]}
-                            placeholder='All Warehouses'
-                            searchable
-                        />
-                    </div>
-
-                    <DateRangeFilter
-                        startDate={draftFilters.startDate}
-                        endDate={draftFilters.endDate}
-                        onChange={(start, end) => setDraftFilters((prev) => ({ ...prev, startDate: start, endDate: end }))}
-                        onClear={() => setDraftFilters((prev) => ({ ...prev, startDate: '', endDate: '' }))}
-                    />
+            }
+            loading={isLoading}
+            maxWidth="full"
+        >
+            <div className="space-y-6">
+                {/* KPI Summary */}
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                    <KpiCard label="Item Lines" value={Number(summary?.lineCount || 0).toLocaleString()} />
+                    <KpiCard label="Total Qty" value={Number(summary?.totalQty || 0).toLocaleString()} />
+                    <KpiCard label="Subtotal" value={`${Number(summary?.subtotal || 0).toLocaleString()} ${currency}`} />
+                    <KpiCard label="Grand Total" value={`${Number(summary?.grandTotal || 0).toLocaleString()} ${currency}`} />
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
-                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Invoice Selection</p>
-                        <AppDropdown
+                {/* Filters */}
+                <FilterBar>
+                    <div className="flex flex-wrap items-center gap-3 w-full">
+                        <div className="relative flex-1 min-w-[200px]">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" size={18} />
+                            <input
+                                value={draftFilters.search}
+                                onChange={(e) => setDraftFilters((prev) => ({ ...prev, search: e.target.value }))}
+                                onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+                                placeholder="Search invoice, item, customer, phone..."
+                                className="w-full h-10 rounded-lg border border-border bg-background-card pl-10 pr-3 text-sm text-text-primary outline-none focus:border-brand"
+                            />
+                        </div>
+
+                        <div className="flex items-center gap-2 rounded-lg border border-border bg-background-card px-3 py-2">
+                            <Warehouse size={14} className="text-text-tertiary" />
+                            <span className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">Warehouse</span>
+                            <Select
+                                value={draftFilters.branchId}
+                                onChange={(e) => setDraftFilters(prev => ({ ...prev, branchId: e.target.value }))}
+                                options={[{ value: '', label: 'All Warehouses' }, ...branches.map((branch: any) => ({ value: branch.id, label: branch.name }))]}
+                                placeholder="All Warehouses"
+                                className="min-w-[150px]"
+                                fieldSize="sm"
+                            />
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="date"
+                                value={draftFilters.startDate}
+                                onChange={(e) => setDraftFilters((prev) => ({ ...prev, startDate: e.target.value }))}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
+                            <span className="text-text-tertiary text-sm">to</span>
+                            <input
+                                type="date"
+                                value={draftFilters.endDate}
+                                onChange={(e) => setDraftFilters((prev) => ({ ...prev, endDate: e.target.value }))}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
+                        </div>
+
+                        <Select
                             value={draftFilters.mode}
-                            onChange={(v) => setDraftFilters(prev => ({ ...prev, mode: v as InvoiceSelectionMode }))}
-                            options={[{ value: 'all', label: 'All Invoices' }, { value: 'single', label: 'Single Invoice' }, { value: 'multiple', label: 'Multiple Invoices' }]}
-                            placeholder='All Invoices'
+                            onChange={(e) => onModeChange(e.target.value as InvoiceSelectionMode)}
+                            options={[
+                                { value: 'all', label: 'All Invoices' },
+                                { value: 'single', label: 'Single Invoice' },
+                                { value: 'multiple', label: 'Multiple Invoices' }
+                            ]}
+                            placeholder="Invoice Selection"
+                            className="min-w-[160px]"
                         />
-                    </div>
 
-                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Payment Method</p>
-                        <AppDropdown
+                        <Select
                             value={draftFilters.paymentMethod}
-                            onChange={(v) => setDraftFilters(prev => ({ ...prev, paymentMethod: v }))}
+                            onChange={(e) => setDraftFilters(prev => ({ ...prev, paymentMethod: e.target.value }))}
                             options={paymentMethodOptions}
-                            placeholder='All Methods'
+                            placeholder="Payment Method"
+                            className="min-w-[160px]"
                         />
-                    </div>
 
-                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Invoice State</p>
-                        <AppDropdown
+                        <Select
                             value={draftFilters.postedOnly}
-                            onChange={(v) => setDraftFilters(prev => ({ ...prev, postedOnly: v as PostedFilterMode }))}
-                            options={[{ value: 'all', label: 'All' }, { value: 'posted', label: 'Posted Only' }]}
-                            placeholder='All'
+                            onChange={(e) => setDraftFilters(prev => ({ ...prev, postedOnly: e.target.value as PostedFilterMode }))}
+                            options={[
+                                { value: 'all', label: 'All' },
+                                { value: 'posted', label: 'Posted Only' }
+                            ]}
+                            placeholder="Invoice State"
+                            className="min-w-[140px]"
                         />
-                    </div>
 
-                    <div className="flex items-end">
-                        <button
+                        <Button
+                            variant="primary"
+                            size="md"
                             onClick={applyFilters}
                             disabled={isFetching}
-                            className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-70"
+                            loading={isFetching}
                         >
-                            {isFetching ? <Loader2 size={16} className="animate-spin" /> : <Filter size={16} />}
                             {isFetching ? 'Loading...' : 'Apply Filters'}
-                        </button>
+                        </Button>
                     </div>
-                </div>
+                </FilterBar>
 
+                {/* Invoice Selection Panel */}
                 {draftFilters.mode !== 'all' && (
-                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <Section variant="card" title={draftFilters.mode === 'single' ? 'Select Single Invoice' : 'Select Multiple Invoices'} headerBorder>
+                        <p className="text-sm text-text-secondary mb-3">
+                            Available invoices are filtered by selected period and warehouse.
+                        </p>
                         <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                            <div>
-                                <p className="text-sm font-semibold text-gray-900">
-                                    {draftFilters.mode === 'single' ? 'Select Single Invoice' : 'Select Multiple Invoices'}
-                                </p>
-                                <p className="text-xs text-gray-500">
-                                    Available invoices are filtered by selected period and warehouse.
-                                </p>
-                            </div>
                             <div className="relative w-full md:w-80">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" size={16} />
                                 <input
                                     value={invoiceLookupSearch}
                                     onChange={(e) => setInvoiceLookupSearch(e.target.value)}
                                     placeholder="Search invoice options..."
-                                    className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500"
+                                    className="w-full h-10 rounded-lg border border-border bg-background-card pl-9 pr-3 text-sm text-text-primary outline-none focus:border-brand"
                                 />
                             </div>
                         </div>
 
                         {draftFilters.mode === 'single' ? (
-                            <AppDropdown
+                            <Select
                                 value={draftFilters.selectedInvoiceIds[0] || ''}
-                                onChange={(v) => { if (v) toggleInvoiceSelection(v); }}
-                                options={[{ value: '', label: 'Select an invoice' }, ...invoiceOptions.map((inv: any) => ({ value: inv.id, label: `${inv.invoiceNo} • ${format(new Date(inv.createdAt), 'dd/MM/yyyy')} • ${Number(inv.grandTotal || 0).toLocaleString()} ${currency}` }))]}
-                                placeholder='Select an invoice'
-                                searchable
+                                onChange={(e) => { if (e.target.value) toggleInvoiceSelection(e.target.value); }}
+                                options={[
+                                    { value: '', label: 'Select an invoice' },
+                                    ...invoiceOptions.map((inv: any) => ({
+                                        value: inv.id,
+                                        label: `${inv.invoiceNo} • ${format(new Date(inv.createdAt), 'dd/MM/yyyy')} • ${Number(inv.grandTotal || 0).toLocaleString()} ${currency}`
+                                    }))
+                                ]}
+                                placeholder="Select an invoice"
+                                className="w-full"
                             />
                         ) : (
                             <>
-                                <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
+                                <div className="mb-2 flex items-center justify-between text-xs text-text-secondary">
                                     <span>{draftFilters.selectedInvoiceIds.length} invoice(s) selected</span>
                                     <div className="flex items-center gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={selectAllVisibleInvoices}
-                                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
-                                        >
-                                            Select Visible
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={clearSelectedInvoices}
-                                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
-                                        >
-                                            Clear
-                                        </button>
+                                        <Button size="sm" variant="outline" onClick={selectAllVisibleInvoices}>Select Visible</Button>
+                                        <Button size="sm" variant="outline" onClick={clearSelectedInvoices}>Clear</Button>
                                     </div>
                                 </div>
-                                <div className="max-h-56 overflow-auto rounded-lg border border-gray-200 bg-white">
+                                <div className="max-h-56 overflow-auto rounded-lg border border-border bg-background-card">
                                     {isFetchingInvoiceOptions ? (
-                                        <div className="px-3 py-8 text-center text-sm text-gray-500">
+                                        <div className="px-3 py-8 text-center text-sm text-text-tertiary">
                                             <Loader2 size={16} className="mx-auto mb-2 animate-spin" />
                                             Loading invoice options...
                                         </div>
                                     ) : invoiceOptions.length === 0 ? (
-                                        <div className="px-3 py-8 text-center text-sm text-gray-500">
+                                        <div className="px-3 py-8 text-center text-sm text-text-tertiary">
                                             No invoices found for selected filters.
                                         </div>
                                     ) : (
@@ -702,18 +719,18 @@ export default function SalesInvoiceItemsReport() {
                                                     key={inv.id}
                                                     type="button"
                                                     onClick={() => toggleInvoiceSelection(inv.id)}
-                                                    className="flex w-full items-center gap-3 border-b border-gray-100 px-3 py-2 text-left hover:bg-blue-50"
+                                                    className="flex w-full items-center gap-3 border-b border-border px-3 py-2 text-left hover:bg-background-subtle"
                                                 >
                                                     {checked ? (
-                                                        <CheckSquare size={16} className="text-blue-600" />
+                                                        <CheckSquare size={16} className="text-brand shrink-0" />
                                                     ) : (
-                                                        <Square size={16} className="text-gray-300" />
+                                                        <Square size={16} className="text-text-tertiary shrink-0" />
                                                     )}
                                                     <div className="min-w-0">
-                                                        <p className="truncate text-sm font-semibold text-gray-900">
+                                                        <p className="truncate text-sm font-semibold text-text-primary">
                                                             {inv.invoiceNo} • {customerLabel}
                                                         </p>
-                                                        <p className="text-xs text-gray-500">
+                                                        <p className="text-xs text-text-secondary">
                                                             {format(new Date(inv.createdAt), 'dd/MM/yyyy')} • {inv.branch?.name || '-'} • {Number(inv.grandTotal || 0).toLocaleString()} {currency}
                                                         </p>
                                                     </div>
@@ -724,120 +741,94 @@ export default function SalesInvoiceItemsReport() {
                                 </div>
                             </>
                         )}
-                    </div>
+                    </Section>
                 )}
 
-                <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-slate-50 p-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                        <p className="text-sm font-semibold text-gray-900">Download Report</p>
-                        <p className="text-xs text-gray-500">Export this report with current applied filters as Excel or PDF.</p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <button
-                            type="button"
-                            onClick={handleExportExcel}
-                            disabled={!hasAppliedFilters || isExportingExcel || isExportingPdf || isLoading || isFetching}
-                            className="inline-flex h-10 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            {isExportingExcel ? <Loader2 size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />}
-                            {isExportingExcel ? 'Exporting Excel...' : 'Download Excel'}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleExportPdf}
-                            disabled={!hasAppliedFilters || isExportingPdf || isExportingExcel || isLoading || isFetching}
-                            className="inline-flex h-10 items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            {isExportingPdf ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-                            {isExportingPdf ? 'Exporting PDF...' : 'Download PDF'}
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
-                <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                        <thead>
-                            <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
-                                <th className="px-4 py-3">Invoice</th>
-                                <th className="px-4 py-3">Date</th>
-                                <th className="px-4 py-3">Warehouse</th>
-                                <th className="px-4 py-3">Customer</th>
-                                <th className="px-4 py-3">Item</th>
-                                <th className="px-4 py-3">Unit</th>
-                                <th className="px-4 py-3 text-right">Qty</th>
-                                <th className="px-4 py-3 text-right">Unit Price</th>
-                                <th className="px-4 py-3 text-right">Net</th>
-                                <th className="px-4 py-3 text-right">Tax</th>
-                                <th className="px-4 py-3 text-right">Total</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {(isLoading || isFetching) && rows.length === 0 ? (
+                {/* Table */}
+                <Section variant="card" headerBorder>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-background-subtle text-xs uppercase tracking-wider text-text-tertiary">
                                 <tr>
-                                    <td colSpan={11} className="px-4 py-12 text-center text-gray-500">
-                                        <Loader2 size={18} className="mx-auto mb-2 animate-spin" />
-                                        Loading sales invoice item report...
-                                    </td>
+                                    <th className="px-4 py-3 text-left">Invoice</th>
+                                    <th className="px-4 py-3 text-left">Date</th>
+                                    <th className="px-4 py-3 text-left">Warehouse</th>
+                                    <th className="px-4 py-3 text-left">Customer</th>
+                                    <th className="px-4 py-3 text-left">Item</th>
+                                    <th className="px-4 py-3 text-left">Unit</th>
+                                    <th className="px-4 py-3 text-right">Qty</th>
+                                    <th className="px-4 py-3 text-right">Unit Price</th>
+                                    <th className="px-4 py-3 text-right">Net</th>
+                                    <th className="px-4 py-3 text-right">Tax</th>
+                                    <th className="px-4 py-3 text-right">Total</th>
                                 </tr>
-                            ) : !hasAppliedFilters ? (
-                                <tr>
-                                    <td colSpan={11} className="px-4 py-12 text-center text-gray-500">
-                                        Apply filters to load sales invoice items report data.
-                                    </td>
-                                </tr>
-                            ) : rows.length === 0 ? (
-                                <tr>
-                                    <td colSpan={11} className="px-4 py-12 text-center text-gray-500">
-                                        No invoice items found for the selected filters.
-                                    </td>
-                                </tr>
-                            ) : rows.map((row) => {
-                                const customer = getSalesCustomerDisplay(row);
-                                return (
-                                    <tr key={row.id} className="border-b border-gray-50">
-                                        <td className="px-4 py-3">
-                                            <p className="font-mono text-xs font-semibold text-gray-900">{row.invoiceNo}</p>
-                                            <p className="text-[11px] text-gray-500">{row.paymentMethod || '-'} • {row.invoicePosted ? 'Posted' : 'Unposted'}</p>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {(isLoading || isFetching) && rows.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={11} className="px-4 py-12 text-center text-text-tertiary">
+                                            <Loader2 size={18} className="mx-auto mb-2 animate-spin" />
+                                            Loading sales invoice item report...
                                         </td>
-                                        <td className="px-4 py-3 text-gray-700">
-                                            {row.invoiceDate ? format(new Date(row.invoiceDate), 'MMM dd, yyyy') : '-'}
-                                        </td>
-                                        <td className="px-4 py-3 text-gray-700">{row.branch?.name || '-'}</td>
-                                        <td className="px-4 py-3">
-                                            <p className="font-semibold text-gray-900">{customer.title}</p>
-                                            <p className="text-xs text-gray-500">{customer.detail || '-'}</p>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <p className="font-semibold text-gray-900">{row.product?.name || 'Unnamed Item'}</p>
-                                            <p className="text-xs text-gray-500">{row.product?.itemCode || '-'}</p>
-                                        </td>
-                                        <td className="px-4 py-3 text-gray-700">{row.unitCode || '-'}</td>
-                                        <td className="px-4 py-3 text-right text-gray-900">{Number(row.qty || 0).toLocaleString()}</td>
-                                        <td className="px-4 py-3 text-right text-gray-900">{Number(row.unitPrice || 0).toLocaleString()} {currency}</td>
-                                        <td className="px-4 py-3 text-right text-gray-900">{Number(row.lineTotal || 0).toLocaleString()} {currency}</td>
-                                        <td className="px-4 py-3 text-right text-gray-900">{Number(row.taxAmount || 0).toLocaleString()} {currency}</td>
-                                        <td className="px-4 py-3 text-right font-semibold text-blue-700">{Number(row.grandTotal || 0).toLocaleString()} {currency}</td>
                                     </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
+                                ) : !hasAppliedFilters ? (
+                                    <tr>
+                                        <td colSpan={11} className="px-4 py-12 text-center text-text-tertiary">
+                                            Apply filters to load sales invoice items report data.
+                                        </td>
+                                    </tr>
+                                ) : rows.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={11} className="px-4 py-12 text-center text-text-tertiary">
+                                            No invoice items found for the selected filters.
+                                        </td>
+                                    </tr>
+                                ) : rows.map((row) => {
+                                    const customer = getSalesCustomerDisplay(row);
+                                    return (
+                                        <tr key={row.id} className="border-b border-border hover:bg-background-subtle transition-colors">
+                                            <td className="px-4 py-3">
+                                                <p className="font-mono text-xs font-semibold text-text-primary">{row.invoiceNo}</p>
+                                                <p className="text-[11px] text-text-tertiary">{row.paymentMethod || '-'} • {row.invoicePosted ? 'Posted' : 'Unposted'}</p>
+                                            </td>
+                                            <td className="px-4 py-3 text-text-secondary">
+                                                {row.invoiceDate ? format(new Date(row.invoiceDate), 'MMM dd, yyyy') : '-'}
+                                            </td>
+                                            <td className="px-4 py-3 text-text-secondary">{row.branch?.name || '-'}</td>
+                                            <td className="px-4 py-3">
+                                                <p className="font-semibold text-text-primary">{customer.title}</p>
+                                                <p className="text-xs text-text-tertiary">{customer.detail || '-'}</p>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <p className="font-semibold text-text-primary">{row.product?.name || 'Unnamed Item'}</p>
+                                                <p className="text-xs text-text-tertiary">{row.product?.itemCode || '-'}</p>
+                                            </td>
+                                            <td className="px-4 py-3 text-text-secondary">{row.unitCode || '-'}</td>
+                                            <td className="px-4 py-3 text-right text-text-primary">{Number(row.qty || 0).toLocaleString()}</td>
+                                            <td className="px-4 py-3 text-right text-text-primary">{Number(row.unitPrice || 0).toLocaleString()} {currency}</td>
+                                            <td className="px-4 py-3 text-right text-text-primary">{Number(row.lineTotal || 0).toLocaleString()} {currency}</td>
+                                            <td className="px-4 py-3 text-right text-text-primary">{Number(row.taxAmount || 0).toLocaleString()} {currency}</td>
+                                            <td className="px-4 py-3 text-right font-semibold text-text-brand">{Number(row.grandTotal || 0).toLocaleString()} {currency}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
 
-                {hasAppliedFilters && pagination && (
-                    <Pagination
-                        currentPage={page}
-                        totalPages={pagination.totalPages}
-                        totalItems={pagination.total}
-                        itemsPerPage={limit}
-                        onPageChange={setPage}
-                        onItemsPerPageChange={setLimit}
-                        isLoading={isFetching}
-                    />
-                )}
+                    {hasAppliedFilters && pagination && (
+                        <Pagination
+                            currentPage={page}
+                            totalPages={pagination.totalPages}
+                            totalItems={pagination.total}
+                            itemsPerPage={limit}
+                            onPageChange={setPage}
+                            onItemsPerPageChange={setLimit}
+                            isLoading={isFetching}
+                        />
+                    )}
+                </Section>
             </div>
-        </div >
+        </PageTemplate>
     );
 }

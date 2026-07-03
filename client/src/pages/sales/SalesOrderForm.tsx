@@ -10,6 +10,7 @@ import ItemSelectorModal from '@/components/inventory/ItemSelectorModal';
 import Modal from '@/components/ui/Modal';
 import AppDropdown from '../../components/ui/AppDropdown';
 import { toDateInputValue } from '../../lib/companySettings';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 type OrderItem = {
     productId: string;
@@ -129,7 +130,7 @@ export default function SalesOrderForm() {
     const queryClient = useQueryClient();
     const activeBranchId = useAuthStore(s => s.activeBranchId);
     const company = useAuthStore(s => s.user?.company);
-    const currency = useAuthStore(s => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore(s => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     const [customerId, setCustomerId] = useState('');
     const [customerName, setCustomerName] = useState('');

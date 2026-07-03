@@ -23,8 +23,6 @@ import {
     SearchInput,
     Tabs,
     TabPanel,
-    toast,
-    useToast,
     EmptyState,
     Skeleton,
     SkeletonText,
@@ -38,6 +36,7 @@ import {
     LanguageSwitcher,
     useAppTranslation,
 } from '@/components/ui';
+import toast from '@/lib/toast';
 import { DollarSign, Users, Package, TrendingUp, Plus, Edit2, Trash2, Search, Calendar, Upload } from 'lucide-react';
 import { useState } from 'react';
 
@@ -46,11 +45,10 @@ export default function DesignSystemShowcase() {
     const [selectedStatus, setSelectedStatus] = useState('active');
     const [activeTab, setActiveTab] = useState('overview');
     const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
-    const { success, error } = useToast();
     const { t } = useAppTranslation();
 
     const handleShowToast = (type: 'success' | 'error' | 'warning' | 'info') => {
-        toast[type](`${type} Toast`, `This is a ${type} notification message`);
+        toast[type](`${type}: This is a ${type} notification message`);
     };
 
     const sampleTableData = [

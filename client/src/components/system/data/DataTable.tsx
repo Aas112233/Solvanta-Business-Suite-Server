@@ -5,7 +5,7 @@ import type { BaseComponentProps, Column, PaginationInfo, SortDirection } from '
 import { Skeleton } from '../core/Skeleton';
 
 // ============================================================================
-// Table Header
+// Table Head
 // ============================================================================
 
 interface TableHeadProps {
@@ -24,9 +24,9 @@ function TableHead({ column, sortDirection, onSort }: TableHeadProps) {
   return (
     <th
       className={clsx(
-        'px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400',
-        'bg-gray-50 dark:bg-gray-800/50',
-        column.sortable && 'cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-800',
+        'px-4 py-3 text-xs font-semibold uppercase tracking-wider text-text-tertiary',
+        'bg-background-subtle',
+        column.sortable && 'cursor-pointer select-none hover:bg-border-subtle',
         alignClasses[column.align || 'left']
       )}
       style={{ width: column.width }}
@@ -43,17 +43,17 @@ function TableHead({ column, sortDirection, onSort }: TableHeadProps) {
         {column.header}
         {column.sortable && (
           <span className="inline-flex flex-col">
-            <ChevronUp 
+            <ChevronUp
               className={clsx(
                 'w-3 h-3 -mb-1',
-                sortDirection === 'asc' ? 'text-gray-900 dark:text-white' : 'text-gray-300 dark:text-gray-600'
-              )} 
+                sortDirection === 'asc' ? 'text-text-primary' : 'text-text-tertiary'
+              )}
             />
-            <ChevronDown 
+            <ChevronDown
               className={clsx(
                 'w-3 h-3',
-                sortDirection === 'desc' ? 'text-gray-900 dark:text-white' : 'text-gray-300 dark:text-gray-600'
-              )} 
+                sortDirection === 'desc' ? 'text-text-primary' : 'text-text-tertiary'
+              )}
             />
           </span>
         )}
@@ -79,7 +79,7 @@ function TableCell({ children, align = 'left' }: TableCellProps) {
   };
 
   return (
-    <td className={clsx('px-4 py-3 text-sm text-gray-900 dark:text-gray-100', alignClasses[align])}>
+    <td className={clsx('px-4 py-3 text-sm text-text-primary', alignClasses[align])}>
       {children}
     </td>
   );
@@ -107,21 +107,21 @@ function Pagination({
   const endItem = Math.min(page * limit, total);
 
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 px-4 py-3 border-t border-gray-200 dark:border-gray-700">
-      <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 px-4 py-3 border-t border-border">
+      <div className="flex items-center gap-2 text-sm text-text-tertiary">
         <span>Showing</span>
-        <span className="font-medium text-gray-900 dark:text-white">{startItem}</span>
+        <span className="font-medium text-text-primary">{startItem}</span>
         <span>to</span>
-        <span className="font-medium text-gray-900 dark:text-white">{endItem}</span>
+        <span className="font-medium text-text-primary">{endItem}</span>
         <span>of</span>
-        <span className="font-medium text-gray-900 dark:text-white">{total}</span>
+        <span className="font-medium text-text-primary">{total}</span>
         <span>results</span>
-        
+
         {onLimitChange && (
           <select
             value={limit}
             onChange={(e) => onLimitChange(Number(e.target.value))}
-            className="ml-2 h-8 px-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800"
+            className="ml-2 h-8 px-2 text-sm border border-border rounded-md bg-background-card"
           >
             {limitOptions.map((opt) => (
               <option key={opt} value={opt}>{opt} / page</option>
@@ -134,12 +134,12 @@ function Pagination({
         <button
           onClick={() => onPageChange(page - 1)}
           disabled={page <= 1}
-          className="p-2 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="p-2 rounded-lg border border-border hover:bg-background-subtle disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           aria-label="Previous page"
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
-        
+
         <div className="flex items-center gap-1">
           {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
             let pageNum: number;
@@ -160,8 +160,8 @@ function Pagination({
                 className={clsx(
                   'min-w-[36px] h-9 px-3 rounded-lg text-sm font-medium transition-colors',
                   page === pageNum
-                    ? 'bg-blue-600 text-white'
-                    : 'border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                    ? 'bg-brand text-white'
+                    : 'border border-border hover:bg-background-subtle text-text-secondary'
                 )}
               >
                 {pageNum}
@@ -173,7 +173,7 @@ function Pagination({
         <button
           onClick={() => onPageChange(page + 1)}
           disabled={page >= totalPages}
-          className="p-2 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="p-2 rounded-lg border border-border hover:bg-background-subtle disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           aria-label="Next page"
         >
           <ChevronRight className="w-4 h-4" />
@@ -200,9 +200,9 @@ function EmptyState({
 }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-      <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mb-4">
+      <div className="w-16 h-16 bg-background-subtle rounded-full flex items-center justify-center mb-4">
         <svg
-          className="w-8 h-8 text-gray-400"
+          className="w-8 h-8 text-text-tertiary"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -215,10 +215,10 @@ function EmptyState({
           />
         </svg>
       </div>
-      <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">
+      <h3 className="text-lg font-medium text-text-primary mb-1">
         {title}
       </h3>
-      <p className="text-sm text-gray-500 dark:text-gray-400 max-w-sm mb-4">
+      <p className="text-sm text-text-tertiary max-w-sm mb-4">
         {description}
       </p>
       {action}
@@ -270,7 +270,7 @@ export interface DataTableProps<T = any> extends BaseComponentProps {
 /**
  * DataTable - A comprehensive data table component with sorting, pagination,
  * selection, and loading states.
- * 
+ *
  * @example
  * ```tsx
  * <DataTable
@@ -346,13 +346,13 @@ export function DataTable<T>({
   const containerStyle = scrollHeight ? { maxHeight: scrollHeight, overflow: 'auto' } : undefined;
 
   return (
-    <div className={clsx('bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700', className)}>
+    <div className={clsx('bg-background-card rounded-lg border border-border', className)}>
       <div style={containerStyle}>
-        <table className="w-full min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <table className="w-full min-w-full divide-y divide-border">
           <thead className="sticky top-0 z-10">
             <tr>
               {selectable && (
-                <th className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 w-12">
+                <th className="px-4 py-3 bg-background-subtle w-12">
                   <input
                     type="checkbox"
                     ref={(input) => {
@@ -362,7 +362,7 @@ export function DataTable<T>({
                     }}
                     checked={data.length > 0 && selectedRows.length === data.length}
                     onChange={handleSelectAll}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="rounded border-border text-brand focus:ring-brand-200"
                   />
                 </th>
               )}
@@ -377,7 +377,7 @@ export function DataTable<T>({
             </tr>
           </thead>
 
-          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+          <tbody className="divide-y divide-border">
             {loading ? (
               Array.from({ length: skeletonRows }).map((_, rowIndex) => (
                 <tr key={rowIndex}>
@@ -413,8 +413,8 @@ export function DataTable<T>({
                     key={key}
                     className={clsx(
                       'transition-colors',
-                      onRowClick && 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50',
-                      isSelected && 'bg-blue-50 dark:bg-blue-900/20',
+                      onRowClick && 'cursor-pointer hover:bg-background-subtle',
+                      isSelected && 'bg-accent-soft',
                       rowClassName?.(row)
                     )}
                     onClick={() => onRowClick?.(row)}
@@ -425,7 +425,7 @@ export function DataTable<T>({
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => handleSelectRow(key)}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          className="rounded border-border text-brand focus:ring-brand-200"
                         />
                       </td>
                     )}

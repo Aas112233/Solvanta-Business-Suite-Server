@@ -5,6 +5,7 @@ import {
     PosReceiptSettings
 } from '../../lib/posReceiptTemplates';
 import { useAuthStore } from '../../stores/authStore';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 interface ReceiptPreviewProps {
     receipt: PosReceiptData;
@@ -16,7 +17,7 @@ interface ReceiptPreviewProps {
 export default function ReceiptPreview({ receipt, settings, width, height }: ReceiptPreviewProps) {
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const companyName = useAuthStore((s) => s.user?.company?.name) || 'SOLVANTA ERP';
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     const { html, styles } = buildPosReceiptPrintDocument({
         receipt,

@@ -1,10 +1,10 @@
 import toast from '@/lib/toast';
-import { 
-  CheckCircle, 
-  XCircle, 
-  AlertTriangle, 
+import {
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
   Info,
-  type LucideIcon 
+  type LucideIcon
 } from 'lucide-react';
 import React from 'react';
 
@@ -26,22 +26,22 @@ interface ToastConfig {
 const toastConfigs: Record<ToastType, ToastConfig> = {
   success: {
     icon: CheckCircle,
-    iconClass: 'text-emerald-500',
+    iconClass: 'text-success',
     duration: 3000,
   },
   error: {
     icon: XCircle,
-    iconClass: 'text-red-500',
+    iconClass: 'text-danger',
     duration: 5000,
   },
   warning: {
     icon: AlertTriangle,
-    iconClass: 'text-amber-500',
+    iconClass: 'text-warning',
     duration: 4000,
   },
   info: {
     icon: Info,
-    iconClass: 'text-blue-500',
+    iconClass: 'text-text-brand',
     duration: 3000,
   },
 };
@@ -59,11 +59,11 @@ function createToastContent(
       <Icon className={`w-5 h-5 mt-0.5 ${config.iconClass}`} />
       <div className="flex-1">
         {title && (
-          <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">
+          <p className="font-semibold text-sm text-text-primary">
             {title}
           </p>
         )}
-        <p className={`text-sm ${title ? 'text-gray-600 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100'}`}>
+        <p className={`text-sm ${title ? 'text-text-secondary' : 'text-text-primary'}`}>
           {message}
         </p>
       </div>
@@ -73,12 +73,12 @@ function createToastContent(
 
 /**
  * Hook for displaying consistent toast notifications throughout the application.
- * 
+ *
  * @example
  * ```tsx
  * function MyComponent() {
  *   const notify = useNotification();
- *   
+ *
  *   const handleSave = async () => {
  *     try {
  *       await saveData();
@@ -108,57 +108,22 @@ export function useNotification() {
   };
 
   return {
-    /**
-     * Show a success toast
-     * @param message - The main message to display
-     * @param title - Optional title (bold, above message)
-     * @param options - Additional toast options
-     */
     success: (message: string, title?: string, options?: ToastOptions) =>
       show('success', message, title, options),
 
-    /**
-     * Show an error toast
-     * @param message - The main error message
-     * @param title - Optional title (defaults to 'Error')
-     * @param options - Additional toast options
-     */
     error: (message: string, title?: string, options?: ToastOptions) =>
       show('error', message, title ?? 'Error', options),
 
-    /**
-     * Show a warning toast
-     * @param message - The warning message
-     * @param title - Optional title
-     * @param options - Additional toast options
-     */
     warning: (message: string, title?: string, options?: ToastOptions) =>
       show('warning', message, title, options),
 
-    /**
-     * Show an info toast
-     * @param message - The informational message
-     * @param title - Optional title
-     * @param options - Additional toast options
-     */
     info: (message: string, title?: string, options?: ToastOptions) =>
       show('info', message, title, options),
 
-    /**
-     * Dismiss a specific toast by ID
-     */
     dismiss: (toastId: string) => toast.dismiss(toastId),
 
-    /**
-     * Dismiss all toasts
-     */
     dismissAll: () => toast.dismiss(),
 
-    /**
-     * Show a promise-based toast that updates based on promise state
-     * @param promise - The promise to track
-     * @param messages - Messages for loading, success, and error states
-     */
     promise: <T,>(
       promise: Promise<T>,
       messages: {

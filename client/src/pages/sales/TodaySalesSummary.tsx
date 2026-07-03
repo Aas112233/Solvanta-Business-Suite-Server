@@ -21,6 +21,7 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 const PAYMENT_COLORS = ['#2563eb', '#0ea5e9', '#0f766e', '#f97316', '#7c3aed', '#be123c'];
 const chartTooltipStyle = {
@@ -32,7 +33,7 @@ const chartTooltipStyle = {
 
 export default function TodaySalesSummary() {
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const today = format(new Date(), 'yyyy-MM-dd');
 
     const { data, isLoading, isFetching } = useQuery({

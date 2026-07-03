@@ -3,12 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { exportExcel } from '../../lib/fileExport';
 import type { ExcelColumn } from '../../lib/excelReport';
-import { Loader2, Download, CheckSquare, Square, ShoppingBag } from 'lucide-react';
+import { Loader2, Download } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
-import AppDropdown from '../ui/AppDropdown';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
+import { PageTemplate, Section, KpiCard, Button, FilterBar, Select } from '../ui';
 
 export default function MovingNonMovingStockReport() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     const [localBranchId, setLocalBranchId] = useState<string>('');
     const [itemQuery, setItemQuery] = useState<string>('');
@@ -47,7 +48,7 @@ export default function MovingNonMovingStockReport() {
         if (!stockData) return;
         setIsExporting(true);
         try {
-            let combinedStocks = [];
+            let combinedStocks: any[] = [];
 
             if (statusFilter === 'all' || statusFilter === 'moving') {
                 const movingWithStatus = (stockData.moving || []).map((s: any) => ({ ...s, movingStatus: 'Moving' }));
@@ -58,7 +59,6 @@ export default function MovingNonMovingStockReport() {
                 combinedStocks.push(...nonMovingWithStatus);
             }
 
-            // Apply frontend-level filtering for exact local searches
             if (selectedColumns.itemName && itemQuery) {
                 combinedStocks = combinedStocks.filter((s: any) =>
                     s.product?.name?.toLowerCase().includes(itemQuery.toLowerCase()) ||
@@ -113,13 +113,10 @@ export default function MovingNonMovingStockReport() {
         }
     };
 
-    const baseCols = [
+    const columns = [
         { key: 'itemCode', label: 'SKU/Code' },
-        { key: 'itemName', label: 'Product Name', type: 'text', state: itemQuery, onChange: (e: any) => setItemQuery(e.target.value), placeholder: 'Search by Product Name/Code...' },
-        {
-            key: 'warehouse', label: 'Warehouse / Branch', type: 'select', state: localBranchId, onChange: (e: any) => setLocalBranchId(e.target.value),
-            options: [{ value: '', label: 'All Warehouses' }, ...branches.map((b: any) => ({ value: b.id, label: b.name }))]
-        },
+        { key: 'itemName', label: 'Product Name' },
+        { key: 'warehouse', label: 'Warehouse / Branch' },
         { key: 'status', label: 'Movement Status' },
         { key: 'recentMovementQty', label: 'Recent Outbound Qty' },
         { key: 'qtyOnHand', label: 'Current Stock Qty' },
@@ -127,137 +124,125 @@ export default function MovingNonMovingStockReport() {
         { key: 'valuation', label: 'Stock Valuation' }
     ];
 
+    const selectedColCount = columns.filter((col) => selectedColumns[col.key]).length;
+    const activeFilterCount = [localBranchId, itemQuery, days !== 30 ? days : '', statusFilter !== 'all' ? statusFilter : ''].filter(Boolean).length;
+
     return (
-        <div className="space-y-6">
-            <div className="bg-white p-5 rounded-xl border border-gray-200 flex flex-col sm:flex-row items-start sm:items-center gap-6 shadow-sm">
-                <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Time Period (Days)</label>
-                    <input
-                        type="number"
-                        value={days}
-                        onChange={(e) => setDays(parseInt(e.target.value) || 30)}
-                        className="rounded-lg border-gray-300 p-2 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm w-32"
-                        min={1}
-                        max={3650}
-                    />
-                </div>
-                <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Filter By Status</label>
-                    <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200">
-                        {['all', 'moving', 'non-moving'].map(opt => (
-                            <button
-                                key={opt}
-                                onClick={() => setStatusFilter(opt as any)}
-                                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${statusFilter === opt
-                                        ? 'bg-white text-blue-600 shadow-sm border border-gray-200'
-                                        : 'text-gray-600 hover:text-gray-900'
-                                    }`}
-                            >
-                                {opt.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            </div>
-
-            {stockLoading ? (
-                <div className="flex justify-center p-10"><Loader2 size={24} className="animate-spin text-blue-600" /></div>
-            ) : stockData && (
-                <>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                        <div className="rounded-xl p-5" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
-                            <p className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>Moving Items</p>
-                            <p className="text-2xl font-bold mt-1 text-green-600">{stockData.moving?.length || 0}</p>
-                            <p className="text-xs text-gray-500 mt-1">Had outbound movements in last {days} days</p>
-                        </div>
-                        <div className="rounded-xl p-5" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
-                            <p className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>Non-Moving Items</p>
-                            <p className="text-2xl font-bold mt-1 text-red-600">{stockData.nonMoving?.length || 0}</p>
-                            <p className="text-xs text-gray-500 mt-1">Stagnant stock during the last {days} days</p>
-                        </div>
-                    </div>
-                </>
-            )}
-
-            <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm mt-8">
-                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600">
-                            <ShoppingBag size={20} />
+        <PageTemplate
+            title="Moving & Non-Moving Stock Report"
+            subtitle="Identify inventory items that are actively moving or stagnant within a specified time period."
+            breadcrumb={[
+                { label: 'Home', href: '/' },
+                { label: 'Reports', href: '/reports' },
+                { label: 'Moving & Non-Moving Stock' },
+            ]}
+            action={
+                <Button
+                    variant="primary"
+                    size="sm"
+                    icon={isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    onClick={handleExport}
+                    disabled={isExporting || !stockData || stockLoading}
+                    loading={isExporting}
+                >
+                    {isExporting ? 'Generating...' : 'Export Excel'}
+                </Button>
+            }
+            loading={stockLoading}
+            maxWidth="full"
+        >
+            <div className="space-y-6">
+                {/* Filters */}
+                <FilterBar>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <div>
+                            <label className="block text-xs font-semibold text-text-secondary mb-1 uppercase">Time Period (Days)</label>
+                            <input
+                                type="number"
+                                value={days}
+                                onChange={(e) => setDays(parseInt(e.target.value) || 30)}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary w-32"
+                                min={1}
+                                max={3650}
+                            />
                         </div>
                         <div>
-                            <h2 className="text-lg font-semibold text-gray-900">Configure & Download Export</h2>
-                            <p className="text-sm text-gray-500">Toggle fields below to include them in the export or apply specific filters.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="space-y-6 bg-gray-50/50 p-5 rounded-lg border border-gray-100">
-                    <div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {baseCols.map(col => {
-                                const isSelected = selectedColumns[col.key] !== false;
-                                return (
-                                    <div
-                                        key={col.key}
-                                        className={`flex flex-col transition-all rounded-xl border overflow-hidden ${isSelected
-                                            ? 'border-blue-500 bg-blue-50 shadow-sm ring-1 ring-blue-500/20'
-                                            : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
-                                            }`}
+                            <label className="block text-xs font-semibold text-text-secondary mb-1 uppercase">Filter By Status</label>
+                            <div className="flex bg-background-subtle p-1 rounded-lg border border-border">
+                                {['all', 'moving', 'non-moving'].map(opt => (
+                                    <button
+                                        key={opt}
+                                        onClick={() => setStatusFilter(opt as any)}
+                                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                                            statusFilter === opt
+                                                ? 'bg-background-card text-text-primary shadow-sm border border-border'
+                                                : 'text-text-secondary hover:text-text-primary'
+                                        }`}
                                     >
-                                        <button
-                                            onClick={() => toggleColumn(col.key)}
-                                            className="flex items-center gap-3 text-sm transition-all text-left p-3"
-                                        >
-                                            {isSelected ? (
-                                                <CheckSquare size={18} className="text-blue-600 flex-shrink-0" />
-                                            ) : (
-                                                <Square size={18} className="text-gray-300 flex-shrink-0" />
-                                            )}
-                                            <span className={`font-medium ${isSelected ? 'text-blue-800' : 'text-gray-700'}`}>{col.label}</span>
-                                        </button>
-
-                                        {isSelected && col.type === 'select' && (
-                                            <div className="px-3 pb-3">
-                                                                                                <AppDropdown
-                                                    value={col.state || ''}
-                                                    onChange={(v) => col.onChange?.({ target: { value: v } } as any)}
-                                                    options={[...(col.options || []).map((opt: any) => ({ value: opt.value, label: opt.label }))]}
-                                                    placeholder='Select'
-                                                    searchable
-                                                />
-                                            </div>
-                                        )}
-
-                                        {isSelected && col.type === 'text' && (
-                                            <div className="px-3 pb-3">
-                                                <input
-                                                    type="text"
-                                                    placeholder={col.placeholder || 'Search...'}
-                                                    value={col.state || ''}
-                                                    onChange={(v) => col.onChange?.({ target: { value: v } } as any)}
-                                                    className="w-full text-xs rounded-lg border-gray-300 p-2 shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white"
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                                        {opt.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
+                        <Select
+                            options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b: any) => ({ value: b.id, label: b.name }))]}
+                            value={localBranchId}
+                            onChange={(e) => setLocalBranchId(e.target.value)}
+                            placeholder="Warehouse"
+                            className="min-w-[180px]"
+                        />
+                        <input
+                            type="text"
+                            placeholder="Search by Product Name/Code..."
+                            value={itemQuery}
+                            onChange={(e) => setItemQuery(e.target.value)}
+                            className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary min-w-[200px]"
+                        />
+                        <span className="text-xs text-text-tertiary ml-auto">{activeFilterCount} active filter{activeFilterCount !== 1 ? 's' : ''}</span>
                     </div>
+                </FilterBar>
 
-                    <div className="pt-6 mt-4 border-t border-gray-200 flex justify-end">
-                        <button
-                            onClick={handleExport}
-                            disabled={isExporting || !stockData || stockLoading}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl flex items-center gap-2 font-bold transition-all shadow-lg shadow-blue-100 disabled:opacity-50 disabled:shadow-none"
-                        >
-                            {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                            {isExporting ? 'Generating Excel...' : 'Generate & Download Excel'}
-                        </button>
+                {/* KPI Summary */}
+                {stockData && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <KpiCard label="Moving Items" value={stockData.moving?.length || 0} sub={`Had outbound movements in last ${days} days`} />
+                        <KpiCard label="Non-Moving Items" value={stockData.nonMoving?.length || 0} sub={`Stagnant stock during the last ${days} days`} />
                     </div>
-                </div>
+                )}
+
+                {/* Column Toggles */}
+                <Section variant="card" title="Export Columns" headerBorder>
+                    <div className="flex items-center gap-2 mb-3">
+                        <Button size="sm" variant="ghost" onClick={() => {
+                            const next: Record<string, boolean> = {};
+                            columns.forEach((col) => { next[col.key] = true; });
+                            setSelectedColumns(next);
+                        }}>Select All</Button>
+                        <Button size="sm" variant="ghost" onClick={() => {
+                            const next: Record<string, boolean> = {};
+                            columns.forEach((col) => { next[col.key] = false; });
+                            setSelectedColumns(next);
+                        }}>Clear All</Button>
+                        <span className="text-xs text-text-tertiary ml-auto">{selectedColCount} selected</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {columns.map((col) => (
+                            <label
+                                key={col.key}
+                                className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer hover:text-text-primary transition-colors"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedColumns[col.key] !== false}
+                                    onChange={() => toggleColumn(col.key)}
+                                    className="rounded border-border text-brand focus:ring-brand-200"
+                                />
+                                {col.label}
+                            </label>
+                        ))}
+                    </div>
+                </Section>
             </div>
-        </div>
+        </PageTemplate>
     );
 }

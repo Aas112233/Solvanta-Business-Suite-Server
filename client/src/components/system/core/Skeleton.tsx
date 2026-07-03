@@ -16,7 +16,7 @@ export function Skeleton({
   className,
 }: SkeletonProps) {
   const baseStyles = clsx(
-    'bg-gray-200 dark:bg-gray-700',
+    'bg-background-subtle',
     animation === 'pulse' && 'animate-pulse',
     className
   );
@@ -90,7 +90,7 @@ export function SkeletonCard({
   return (
     <div
       className={clsx(
-        'bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700',
+        'bg-background-card rounded-lg border border-border',
         'p-6 space-y-4',
         className
       )}

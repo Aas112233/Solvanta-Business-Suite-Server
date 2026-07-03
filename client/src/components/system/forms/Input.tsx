@@ -11,15 +11,15 @@ export interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElem
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ 
-    className, 
-    size = 'md', 
-    error = false, 
-    icon, 
+  ({
+    className,
+    size = 'md',
+    error = false,
+    icon,
     iconPosition = 'left',
     fullWidth = false,
     disabled,
-    ...props 
+    ...props
   }, ref) => {
     const sizeClasses = {
       sm: 'h-8 px-2.5 text-xs',
@@ -62,9 +62,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           ref={ref}
           disabled={disabled}
           className={clsx(
-            'block rounded-lg border bg-background-card dark:bg-gray-800',
-            'text-text-primary dark:text-white',
-            'placeholder:text-text-tertiary dark:placeholder:text-gray-500',
+            'block rounded-lg border bg-background-card',
+            'text-text-primary',
+            'placeholder:text-text-tertiary',
             'focus:outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand',
             'disabled:bg-background-subtle disabled:text-text-tertiary disabled:cursor-not-allowed',
             'transition-colors duration-200',
@@ -72,7 +72,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             icon && iconSizeClasses[size],
             error
               ? 'border-danger focus:border-danger focus:ring-danger/20'
-              : 'border-border hover:border-slate-400 dark:border-gray-600 dark:hover:border-gray-500',
+              : 'border-border hover:border-border-active',
             fullWidth && 'w-full',
             className
           )}

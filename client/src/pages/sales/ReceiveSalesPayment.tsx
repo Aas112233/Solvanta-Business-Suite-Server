@@ -12,12 +12,13 @@ import {
     GLOBAL_STRING_GROUPS,
     SALE_RECEIPT_PAYMENT_METHOD_KEYS,
 } from '../../lib/globalStrings';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 export default function ReceiveSalesPayment() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     const queryClient = useQueryClient();
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const regionalSettings = useCompanyRegionalSettings();
 
     const initialInvoiceId = searchParams.get('invoiceId') || '';

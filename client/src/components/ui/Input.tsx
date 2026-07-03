@@ -2,12 +2,22 @@ import { InputHTMLAttributes, forwardRef, ReactNode } from 'react';
 import { clsx } from 'clsx';
 
 // ── Input ────────────────────────────────────────────────────────────
+export type InputSize = 'sm' | 'md' | 'lg';
+
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
     error?: boolean;
     icon?: ReactNode;
     iconPosition?: 'left' | 'right';
     fullWidth?: boolean;
+    /** Matches Button size: sm=32px, md=40px, lg=48px */
+    fieldSize?: InputSize;
 }
+
+const sizeClasses: Record<InputSize, { height: string; px: string; iconPl: string; iconPr: string }> = {
+    sm: { height: 'h-8', px: 'px-2.5', iconPl: 'pl-8', iconPr: 'pr-8' },
+    md: { height: 'h-10', px: 'px-3', iconPl: 'pl-10', iconPr: 'pr-10' },
+    lg: { height: 'h-12', px: 'px-4', iconPl: 'pl-12', iconPr: 'pr-12' },
+};
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
     (
@@ -19,17 +29,12 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             iconPosition = 'left',
             fullWidth = false,
             disabled,
+            fieldSize = 'md',
             ...props
         },
         ref
     ) => {
-        // Ensure critical autofill attributes are passed through
-        const inputProps = {
-            ...props,
-            type,
-            ref,
-            disabled,
-        };
+        const s = sizeClasses[fieldSize];
 
         return (
             <div className={clsx('relative', fullWidth && 'w-full')}>
@@ -39,9 +44,11 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
                     </div>
                 )}
                 <input
-                    {...inputProps}
+                    type={type}
+                    ref={ref}
+                    disabled={disabled}
+                    {...props}
                     className={clsx(
-                        // Base styles
                         'rounded-lg',
                         'border border-border',
                         'bg-background-card',
@@ -50,14 +57,10 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
                         'transition-all duration-200',
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:border-brand',
                         'disabled:cursor-not-allowed disabled:bg-background-subtle disabled:text-text-tertiary',
-                        // Sizing
-                        'h-10',
-                        icon ? 'pl-10 pr-3' : 'px-3',
-                        // Error state
+                        s.height,
+                        icon ? (iconPosition === 'left' ? s.iconPl : s.iconPr) : s.px,
                         error && 'border-danger focus-visible:ring-red-200 focus-visible:border-danger',
-                        // Full width
                         fullWidth && 'w-full',
-                        // Custom className
                         className
                     )}
                 />

@@ -41,6 +41,7 @@ import {
 } from 'recharts';
 import api from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
+import { DEFAULT_CURRENCY } from '../lib/constants';
 import AppLoader from '../components/ui/AppLoader';
 import { Button, PageHeader, PageLayout, StatsGrid } from '../components/ui';
 
@@ -387,7 +388,7 @@ const formatInvoiceTime = (timestamp: string): string => {
 export default function Dashboard() {
     const user = useAuthStore((state) => state.user);
     const [inventoryMode, setInventoryMode] = useState<InventoryMode>('value');
-    const currency = user?.company?.currency || 'SAR';
+    const currency = user?.company?.currency || DEFAULT_CURRENCY;
 
     const numberFormatter = useMemo(
         () =>

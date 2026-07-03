@@ -1,6 +1,7 @@
 import React from 'react';
 import { format } from 'date-fns';
 import { Building2, User, Printer, Download, X, FileText } from 'lucide-react';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 import Modal from '../ui/Modal';
 
 export interface DocumentPreviewColumn {
@@ -41,7 +42,7 @@ export default function DocumentPreviewModal({
     title,
     documentNo,
     document,
-    currency = 'SAR',
+    currency = DEFAULT_CURRENCY,
     customerDisplay,
     metaDetails,
     columns,

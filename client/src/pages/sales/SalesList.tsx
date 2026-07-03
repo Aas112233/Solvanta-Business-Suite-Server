@@ -33,6 +33,7 @@ import {
 import { InvoicePdfTemplate } from '../../components/sales/InvoicePdfTemplate';
 import { getSalesCustomerDisplay, getSalesCustomerExportText, getSalesInvoiceDiscountBreakdown } from '../../lib/salesCustomerDisplay';
 import InvoicePreviewModal from '../../components/sales/InvoicePreviewModal';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 const salesStatusOptions = [
     { value: '', label: 'All Statuses' },
@@ -86,7 +87,7 @@ export default function SalesList() {
         status: ''
     });
 
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const companyName = useAuthStore((s) => s.user?.company?.name) || 'SOLVANTA ERP';
     const activeBranchId = useAuthStore(s => s.activeBranchId);
 

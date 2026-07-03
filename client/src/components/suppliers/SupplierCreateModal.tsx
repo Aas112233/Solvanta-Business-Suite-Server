@@ -6,6 +6,7 @@ import { z } from 'zod';
 import api from '@/lib/api';
 import Modal from '../ui/Modal';
 import { useAuthStore } from '@/stores/authStore';
+import { DEFAULT_CURRENCY } from '@/lib/constants';
 
 interface SupplierCreateModalProps {
     isOpen: boolean;
@@ -44,7 +45,7 @@ export default function SupplierCreateModal({
     initialData
 }: SupplierCreateModalProps) {
     const queryClient = useQueryClient();
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const [errors, setErrors] = useState<SupplierModalErrors>({});
 
     const [formData, setFormData] = useState({

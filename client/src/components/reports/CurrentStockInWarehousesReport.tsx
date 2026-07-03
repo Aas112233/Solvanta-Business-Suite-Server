@@ -3,20 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { exportExcel } from '../../lib/fileExport';
 import type { ExcelColumn } from '../../lib/excelReport';
-import {
-    Building2,
-    CheckSquare,
-    Download,
-    Filter,
-    Loader2,
-    Square,
-    Warehouse,
-    X,
-} from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
-import AppDropdown from '../ui/AppDropdown';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
+import { PageTemplate, Section, KpiCard, Button, FilterBar, Select } from '../ui';
 
-type FilterPanel = 'branch' | 'item' | 'columns' | null;
 type ColumnKey =
     | 'itemCode'
     | 'itemName'
@@ -132,19 +123,12 @@ function baseUnitLabel(stock: StockRow) {
 }
 
 export default function CurrentStockInWarehousesReport() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
-    const [panel, setPanel] = useState<FilterPanel>(null);
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const [branchId, setBranchId] = useState('');
     const [productId, setProductId] = useState('');
     const [groupId, setGroupId] = useState('');
     const [categoryId, setCategoryId] = useState('');
     const [brandId, setBrandId] = useState('');
-    const [appliedItemFilters, setAppliedItemFilters] = useState({
-        productId: '',
-        groupId: '',
-        categoryId: '',
-        brandId: '',
-    });
     const [isExporting, setIsExporting] = useState(false);
     const [selectedColumns, setSelectedColumns] = useState<Record<ColumnKey, boolean>>({
         itemCode: true,
@@ -248,20 +232,20 @@ export default function CurrentStockInWarehousesReport() {
         queryKey: [
             'report-stock-in-warehouses',
             branchId,
-            appliedItemFilters.productId,
-            appliedItemFilters.groupId,
-            appliedItemFilters.categoryId,
-            appliedItemFilters.brandId,
+            productId,
+            groupId,
+            categoryId,
+            brandId,
         ],
         queryFn: () =>
             api
                 .get('/reports/stock', {
                     params: {
                         branchId: branchId || undefined,
-                        productId: appliedItemFilters.productId || undefined,
-                        itemGroupId: appliedItemFilters.groupId || undefined,
-                        categoryId: appliedItemFilters.categoryId || undefined,
-                        brandId: appliedItemFilters.brandId || undefined,
+                        productId: productId || undefined,
+                        itemGroupId: groupId || undefined,
+                        categoryId: categoryId || undefined,
+                        brandId: brandId || undefined,
                     },
                 })
                 .then((r) => r.data.data as StockReportData),
@@ -335,47 +319,8 @@ export default function CurrentStockInWarehousesReport() {
 
     const previewRows = aggregatedRows.slice(0, 12);
     const selectedColCount = columns.filter((c) => selectedColumns[c.key]).length;
-    const itemFiltersCount = [
-        appliedItemFilters.productId,
-        appliedItemFilters.groupId,
-        appliedItemFilters.categoryId,
-        appliedItemFilters.brandId,
-    ].filter(Boolean).length;
-    const activeFilterCount = [
-        branchId,
-        appliedItemFilters.productId,
-        appliedItemFilters.groupId,
-        appliedItemFilters.categoryId,
-        appliedItemFilters.brandId,
-    ].filter(Boolean).length;
+    const activeFilterCount = [branchId, productId, groupId, categoryId, brandId].filter(Boolean).length;
     const branchName = branches.find((b) => b.id === branchId)?.name || 'All Warehouses';
-    const isItemFiltersDirty =
-        productId !== appliedItemFilters.productId
-        || groupId !== appliedItemFilters.groupId
-        || categoryId !== appliedItemFilters.categoryId
-        || brandId !== appliedItemFilters.brandId;
-
-    const openItemPanel = () => {
-        if (panel === 'item') {
-            setPanel(null);
-            return;
-        }
-        setProductId(appliedItemFilters.productId);
-        setGroupId(appliedItemFilters.groupId);
-        setCategoryId(appliedItemFilters.categoryId);
-        setBrandId(appliedItemFilters.brandId);
-        setPanel('item');
-    };
-
-    const applyItemFilters = () => {
-        setAppliedItemFilters({
-            productId,
-            groupId,
-            categoryId,
-            brandId,
-        });
-        setPanel(null);
-    };
     const stockLines = Number(stockData?.summary?.totalItems || 0);
     const totalQty = aggregatedRows.reduce((sum, row) => sum + Number(row.totalQty || 0), 0);
     const totalValuation = aggregatedRows.reduce((sum, row) => sum + Number(row.totalValuation || 0), 0);
@@ -446,163 +391,140 @@ export default function CurrentStockInWarehousesReport() {
     };
 
     return (
-        <div className="space-y-6">
-            <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 via-indigo-50 to-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-xl bg-blue-600 p-2.5 text-white"><Warehouse size={18} /></div>
-                        <div>
-                            <h2 className="text-lg font-black text-slate-900">Stock in Warehouses Report</h2>
-                            <p className="text-sm text-slate-600">View item stock distribution across warehouses with dependent item filters.</p>
-                        </div>
+        <PageTemplate
+            title="Stock in Warehouses Report"
+            subtitle="View item stock distribution across warehouses with dependent item filters."
+            breadcrumb={[
+                { label: 'Home', href: '/' },
+                { label: 'Reports', href: '/reports' },
+                { label: 'Stock in Warehouses Report' },
+            ]}
+            action={
+                <Button
+                    variant="primary"
+                    size="sm"
+                    icon={isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    onClick={handleExport}
+                    disabled={isExporting || !stockData}
+                    loading={isExporting}
+                >
+                    {isExporting ? 'Generating...' : 'Export Excel'}
+                </Button>
+            }
+            loading={isLoading}
+            maxWidth="full"
+        >
+            <div className="space-y-6">
+                {/* Filters */}
+                <FilterBar>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Select
+                            options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
+                            value={branchId}
+                            onChange={(e) => setBranchId(e.target.value)}
+                            placeholder="Warehouse"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Items' }, ...productOptions]}
+                            value={productId}
+                            onChange={(e) => setProductId(e.target.value)}
+                            placeholder="Item"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Item Groups' }, ...groupOptions]}
+                            value={groupId}
+                            onChange={(e) => setGroupId(e.target.value)}
+                            placeholder="Item Group"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Categories' }, ...categoryOptions]}
+                            value={categoryId}
+                            onChange={(e) => setCategoryId(e.target.value)}
+                            placeholder="Category"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Brands' }, ...brandOptions]}
+                            value={brandId}
+                            onChange={(e) => setBrandId(e.target.value)}
+                            placeholder="Brand"
+                            className="min-w-[180px]"
+                        />
                     </div>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">{activeFilterCount} active</span>
-                </div>
+                    <span className="text-xs text-text-tertiary ml-auto">{activeFilterCount} active filters</span>
+                </FilterBar>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setPanel(panel === 'branch' ? null : 'branch')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Building2 size={15} /> {branchName}</button>
-                        <button type="button" onClick={openItemPanel} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Items Filter {itemFiltersCount > 0 ? `(${itemFiltersCount})` : ''}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'columns' ? null : 'columns')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Columns {selectedColCount}</button>
+                {/* Export Columns */}
+                <Section variant="card" title="Export Columns" headerBorder>
+                    <div className="flex items-center gap-2 mb-3">
+                        <Button size="sm" variant="ghost" onClick={() => setAllColumns(true)}>Select All</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setAllColumns(false)}>Clear All</Button>
+                        <span className="text-xs text-text-tertiary ml-auto">{selectedColCount} selected</span>
                     </div>
-
-                    {panel && (
-                        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                            <div className="mb-2 flex items-center justify-between">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-600">{panel} filter</p>
-                                <button type="button" onClick={() => setPanel(null)} className="rounded-md border border-slate-300 bg-white p-1 text-slate-500 hover:bg-slate-100"><X size={13} /></button>
-                            </div>
-
-                            {panel === 'branch' && (
-                                <AppDropdown
-                                    value={branchId}
-                                    onChange={setBranchId}
-                                    options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
-                                    placeholder="Select warehouse"
-                                    searchable
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {columns.map((col) => (
+                            <label
+                                key={col.key}
+                                className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer hover:text-text-primary transition-colors"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedColumns[col.key]}
+                                    onChange={() => toggleColumn(col.key)}
+                                    className="rounded border-border text-brand focus:ring-brand-200"
                                 />
-                            )}
+                                {col.label}
+                            </label>
+                        ))}
+                    </div>
+                </Section>
 
-                            {panel === 'item' && (
-                                <div className="space-y-3">
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item</p>
-                                            <AppDropdown value={productId} onChange={setProductId} options={[{ value: '', label: 'All Items' }, ...productOptions]} placeholder="Select item" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item Group</p>
-                                            <AppDropdown value={groupId} onChange={setGroupId} options={[{ value: '', label: 'All Item Groups' }, ...groupOptions]} placeholder="Select item group" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item Category</p>
-                                            <AppDropdown value={categoryId} onChange={setCategoryId} options={[{ value: '', label: 'All Categories' }, ...categoryOptions]} placeholder="Select category" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Brand</p>
-                                            <AppDropdown value={brandId} onChange={setBrandId} options={[{ value: '', label: 'All Brands' }, ...brandOptions]} placeholder="Select brand" searchable />
-                                        </div>
-                                    </div>
-                                    <div className="flex flex-wrap justify-end gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setProductId('');
-                                                setGroupId('');
-                                                setCategoryId('');
-                                                setBrandId('');
-                                            }}
-                                            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                                        >
-                                            Clear Item Filters
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={applyItemFilters}
-                                            disabled={!isItemFiltersDirty}
-                                            className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                        >
-                                            Apply Item Filters
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-
-                            {panel === 'columns' && (
-                                <div className="space-y-3">
-                                    <div className="flex gap-2">
-                                        <button type="button" onClick={() => setAllColumns(true)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">Select all</button>
-                                        <button type="button" onClick={() => setAllColumns(false)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">Clear all</button>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-                                        {columns.map((col) => {
-                                            const active = selectedColumns[col.key];
-                                            return (
-                                                <button key={col.key} type="button" onClick={() => toggleColumn(col.key)} className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-xs font-semibold ${active ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>
-                                                    {active ? <CheckSquare size={13} /> : <Square size={13} />}
-                                                    {col.label}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                {/* KPI Summary */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <KpiCard label="Stock Lines" value={stockLines.toLocaleString()} />
+                    <KpiCard label="Products" value={aggregatedRows.length.toLocaleString()} />
+                    <KpiCard label="Warehouses in Result" value={uniqueWarehouses.toLocaleString()} />
+                    <KpiCard label="Total Valuation" value={money(totalValuation, currency)} />
                 </div>
-            </div>
 
-            {isLoading ? (
-                <div className="flex justify-center rounded-xl border border-slate-200 bg-white p-10"><Loader2 size={24} className="animate-spin text-blue-600" /></div>
-            ) : (
-                <>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Stock Lines</p><p className="mt-2 text-3xl font-black text-slate-900">{stockLines.toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Products</p><p className="mt-2 text-3xl font-black text-slate-900">{aggregatedRows.length.toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Warehouses in Result</p><p className="mt-2 text-3xl font-black text-blue-700">{uniqueWarehouses.toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Valuation</p><p className="mt-2 text-3xl font-black text-emerald-600">{money(totalValuation, currency)}</p></div>
-                    </div>
-
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                            <div className="text-sm font-semibold text-slate-700">Live Preview ({previewRows.length})</div>
-                            <button type="button" onClick={handleExport} disabled={isExporting || !stockData} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
-                                {isExporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                                {isExporting ? 'Generating...' : 'Export Excel'}
-                            </button>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                                    <tr>
-                                        <th className="px-4 py-3 text-left">Item Code</th>
-                                        <th className="px-4 py-3 text-left">Item Name</th>
-                                        <th className="px-4 py-3 text-left">Base Unit</th>
-                                        <th className="px-4 py-3 text-right">Warehouses</th>
-                                        <th className="px-4 py-3 text-right">Total Qty</th>
-                                        <th className="px-4 py-3 text-left">Warehouse Breakdown</th>
-                                        <th className="px-4 py-3 text-right">Valuation</th>
+                {/* Table Preview */}
+                <Section title={`Live Preview (${previewRows.length})`} variant="card" headerBorder>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-background-subtle text-xs uppercase tracking-wider text-text-tertiary">
+                                <tr>
+                                    <th className="px-4 py-3 text-left">Item Code</th>
+                                    <th className="px-4 py-3 text-left">Item Name</th>
+                                    <th className="px-4 py-3 text-left">Base Unit</th>
+                                    <th className="px-4 py-3 text-right">Warehouses</th>
+                                    <th className="px-4 py-3 text-right">Total Qty</th>
+                                    <th className="px-4 py-3 text-left">Warehouse Breakdown</th>
+                                    <th className="px-4 py-3 text-right">Valuation</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {previewRows.length === 0 && (
+                                    <tr><td colSpan={7} className="px-4 py-8 text-center text-text-tertiary">No stock found for selected filters.</td></tr>
+                                )}
+                                {previewRows.map((row) => (
+                                    <tr key={row.id} className="hover:bg-background-subtle transition-colors">
+                                        <td className="px-4 py-3 font-semibold text-text-primary">{row.itemCode}</td>
+                                        <td className="px-4 py-3 text-text-primary">{row.itemName}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{row.baseUnit}</td>
+                                        <td className="px-4 py-3 text-right text-text-primary">{row.warehousesCount.toLocaleString()}</td>
+                                        <td className="px-4 py-3 text-right text-text-primary">{qtyLabel(row.totalQty)}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{row.warehouseBreakdown || '-'}</td>
+                                        <td className="px-4 py-3 text-right font-semibold text-text-primary">{money(row.totalValuation, currency)}</td>
                                     </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {previewRows.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500">No stock found for selected filters.</td></tr>}
-                                    {previewRows.map((row) => (
-                                        <tr key={row.id} className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 font-semibold text-slate-800">{row.itemCode}</td>
-                                            <td className="px-4 py-3 text-slate-700">{row.itemName}</td>
-                                            <td className="px-4 py-3 text-slate-700">{row.baseUnit}</td>
-                                            <td className="px-4 py-3 text-right text-slate-800">{row.warehousesCount.toLocaleString()}</td>
-                                            <td className="px-4 py-3 text-right text-slate-800">{qtyLabel(row.totalQty)}</td>
-                                            <td className="px-4 py-3 text-slate-700">{row.warehouseBreakdown || '-'}</td>
-                                            <td className="px-4 py-3 text-right font-semibold text-slate-800">{money(row.totalValuation, currency)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
-                </>
-            )}
-        </div>
+                </Section>
+            </div>
+        </PageTemplate>
     );
 }

@@ -10,6 +10,7 @@ import ModuleRefreshButton from '@/components/ModuleRefreshButton';
 import Pagination from '@/components/ui/Pagination';
 import { getSalesCustomerDisplay } from '@/lib/salesCustomerDisplay';
 import { toDateInputValue } from '@/lib/companySettings';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 type CreditRow = {
     id: string;
@@ -27,7 +28,7 @@ type CreditRow = {
 
 export default function SalesCreditControl() {
     const navigate = useNavigate();
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
     const today = toDateInputValue();
 

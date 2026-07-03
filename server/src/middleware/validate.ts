@@ -21,7 +21,7 @@ export function validate(schemas: ValidationSchemas) {
             }
             next();
         } catch (error) {
-            require('fs').appendFileSync('error.log', JSON.stringify({ body: req.body, err: error.errors }) + '\\n'); next(error); // Caught by errorHandler → ZodError branch
+            next(error); // Caught by errorHandler → ZodError branch
         }
     };
 }

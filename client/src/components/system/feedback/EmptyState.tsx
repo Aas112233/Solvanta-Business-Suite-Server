@@ -51,10 +51,10 @@ const variantConfig: Record<EmptyStateVariant, { icon: React.ElementType; defaul
 
 /**
  * EmptyState - Displayed when there's no data to show.
- * 
+ *
  * Provides consistent messaging and styling for empty states across the application.
  * Supports multiple variants for different scenarios (search, error, etc.).
- * 
+ *
  * @example
  * ```tsx
  * <EmptyState
@@ -87,21 +87,21 @@ export function EmptyState({
       <div
         className={clsx(
           'flex items-center gap-3 p-4',
-          'bg-gray-50 dark:bg-gray-800/50 rounded-lg',
+          'bg-background-subtle rounded-lg',
           className
         )}
         id={id}
         data-testid={dataTestId}
       >
-        <div className="text-gray-400 dark:text-gray-500">
+        <div className="text-text-tertiary">
           {customIcon || <Icon className="w-5 h-5" />}
         </div>
         <div className="flex-1">
-          <p className="text-sm font-medium text-gray-900 dark:text-white">
+          <p className="text-sm font-medium text-text-primary">
             {title}
           </p>
           {description && (
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            <p className="text-xs text-text-tertiary mt-0.5">
               {description}
             </p>
           )}
@@ -126,18 +126,18 @@ export function EmptyState({
       id={id}
       data-testid={dataTestId}
     >
-      <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mb-4">
-        <div className="text-gray-400 dark:text-gray-500">
+      <div className="w-16 h-16 bg-background-subtle rounded-full flex items-center justify-center mb-4">
+        <div className="text-text-tertiary">
           {customIcon || <Icon className="w-8 h-8" />}
         </div>
       </div>
 
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+      <h3 className="text-lg font-semibold text-text-primary mb-2">
         {title}
       </h3>
 
       {description && (
-        <p className="text-sm text-gray-500 dark:text-gray-400 max-w-sm mb-6">
+        <p className="text-sm text-text-tertiary max-w-sm mb-6">
           {description}
         </p>
       )}

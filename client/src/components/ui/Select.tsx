@@ -9,12 +9,22 @@ export interface SelectOption {
     disabled?: boolean;
 }
 
+export type SelectSize = 'sm' | 'md' | 'lg';
+
 export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
     options: SelectOption[];
     placeholder?: string;
     error?: boolean;
     fullWidth?: boolean;
+    /** Matches Button size: sm=32px, md=40px, lg=48px */
+    fieldSize?: SelectSize;
 }
+
+const selectSizeClasses: Record<SelectSize, string> = {
+    sm: 'h-8 pl-2.5 pr-8 text-xs',
+    md: 'h-10 pl-3 pr-10 text-sm',
+    lg: 'h-12 pl-4 pr-12 text-base',
+};
 
 const Select = forwardRef<HTMLSelectElement, SelectProps>(
     (
@@ -26,6 +36,7 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
             fullWidth = false,
             disabled,
             children,
+            fieldSize = 'md',
             ...props
         },
         ref
@@ -35,8 +46,7 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
                 <select
                     ref={ref}
                     className={clsx(
-                        // Base styles
-                        'h-10',
+                        selectSizeClasses[fieldSize],
                         'rounded-lg',
                         'appearance-none',
                         'border border-border',
@@ -45,13 +55,8 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
                         'transition-all duration-200',
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:border-brand',
                         'disabled:cursor-not-allowed disabled:bg-background-subtle disabled:text-text-tertiary',
-                        // Padding for custom arrow
-                        'pr-10 pl-3',
-                        // Error state
                         error && 'border-danger focus-visible:ring-red-200 focus-visible:border-danger',
-                        // Full width
                         fullWidth && 'w-full',
-                        // Custom className
                         className
                     )}
                     disabled={disabled}
@@ -73,7 +78,6 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
                     ))}
                     {children}
                 </select>
-                {/* Custom dropdown arrow */}
                 <ChevronDown
                     size={16}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none"

@@ -13,14 +13,12 @@ import {
     Loader2,
     RotateCcw,
     ShoppingCart,
-    X,
 } from 'lucide-react';
 import api from '../../lib/api';
 import type { ExcelColumn } from '../../lib/excelReport';
 import { exportExcel } from '../../lib/fileExport';
-import AppDropdown from '../ui/AppDropdown';
+import { PageTemplate, Section, KpiCard, Button, FilterBar, Select } from '../ui';
 
-type FilterPanel = 'date' | 'branch' | 'item' | 'type' | null;
 type DatePreset = 'today' | 'last7' | 'thisMonth' | 'lastMonth' | 'custom';
 
 type ReportFilterMasterData = {
@@ -83,12 +81,12 @@ const movementTypeLabelMap = new Map<string, string>(movementTypeOptions.map((x)
 
 function getMovementIcon(type: string) {
     switch (type) {
-        case 'PURCHASE_RECEIPT': return <ShoppingCart size={14} className="text-emerald-600" />;
-        case 'POS_SALE': return <ArrowUpRight size={14} className="text-rose-600" />;
-        case 'TRANSFER_IN': return <ArrowDownLeft size={14} className="text-blue-600" />;
-        case 'TRANSFER_OUT': return <ArrowUpRight size={14} className="text-amber-600" />;
-        case 'ADJUSTMENT': return <RotateCcw size={14} className="text-violet-600" />;
-        default: return <ArrowLeftRight size={14} className="text-slate-500" />;
+        case 'PURCHASE_RECEIPT': return <ShoppingCart size={14} className="text-success" />;
+        case 'POS_SALE': return <ArrowUpRight size={14} className="text-danger" />;
+        case 'TRANSFER_IN': return <ArrowDownLeft size={14} className="text-brand" />;
+        case 'TRANSFER_OUT': return <ArrowUpRight size={14} className="text-warning" />;
+        case 'ADJUSTMENT': return <RotateCcw size={14} className="text-text-brand" />;
+        default: return <ArrowLeftRight size={14} className="text-text-tertiary" />;
     }
 }
 
@@ -104,7 +102,6 @@ export default function RunningStockLedgerReport() {
     const initialCategoryId = searchParams.get('categoryId') || '';
     const initialBrandId = searchParams.get('brandId') || '';
 
-    const [panel, setPanel] = useState<FilterPanel>(null);
     const [branchId, setBranchId] = useState(initialBranchId);
     const [dateFrom, setDateFrom] = useState(initialDateFrom);
     const [dateTo, setDateTo] = useState(initialDateTo);
@@ -113,12 +110,6 @@ export default function RunningStockLedgerReport() {
     const [groupId, setGroupId] = useState(initialGroupId);
     const [categoryId, setCategoryId] = useState(initialCategoryId);
     const [brandId, setBrandId] = useState(initialBrandId);
-    const [appliedItemFilters, setAppliedItemFilters] = useState({
-        productId: initialProductId,
-        groupId: initialGroupId,
-        categoryId: initialCategoryId,
-        brandId: initialBrandId,
-    });
     const [movementType, setMovementType] = useState(initialType);
     const [isExporting, setIsExporting] = useState(false);
 
@@ -205,33 +196,23 @@ export default function RunningStockLedgerReport() {
     const activeFilterCount = [
         branchId,
         movementType,
-        appliedItemFilters.productId,
-        appliedItemFilters.groupId,
-        appliedItemFilters.categoryId,
-        appliedItemFilters.brandId,
+        productId,
+        groupId,
+        categoryId,
+        brandId,
         dateFrom || dateTo,
     ].filter(Boolean).length;
-    const itemFiltersCount = [
-        appliedItemFilters.productId,
-        appliedItemFilters.groupId,
-        appliedItemFilters.categoryId,
-        appliedItemFilters.brandId,
-    ].filter(Boolean).length;
-    const isItemFiltersDirty =
-        productId !== appliedItemFilters.productId
-        || groupId !== appliedItemFilters.groupId
-        || categoryId !== appliedItemFilters.categoryId
-        || brandId !== appliedItemFilters.brandId;
+    const itemFiltersCount = [productId, groupId, categoryId, brandId].filter(Boolean).length;
 
     const { data: rows = [], isLoading } = useQuery({
         queryKey: [
             'report-running-stock-ledger',
             branchId,
             movementType,
-            appliedItemFilters.productId,
-            appliedItemFilters.groupId,
-            appliedItemFilters.categoryId,
-            appliedItemFilters.brandId,
+            productId,
+            groupId,
+            categoryId,
+            brandId,
             dateFrom,
             dateTo,
         ],
@@ -248,10 +229,10 @@ export default function RunningStockLedgerReport() {
                         limit: pageSize,
                         branchId: branchId || undefined,
                         type: movementType || undefined,
-                        productId: appliedItemFilters.productId || undefined,
-                        itemGroupId: appliedItemFilters.groupId || undefined,
-                        categoryId: appliedItemFilters.categoryId || undefined,
-                        brandId: appliedItemFilters.brandId || undefined,
+                        productId: productId || undefined,
+                        itemGroupId: groupId || undefined,
+                        categoryId: categoryId || undefined,
+                        brandId: brandId || undefined,
                         dateFrom: dateFrom || undefined,
                         dateTo: dateTo || undefined,
                     },
@@ -266,28 +247,6 @@ export default function RunningStockLedgerReport() {
         },
         enabled: isDateRangeValid,
     });
-
-    const openItemPanel = () => {
-        if (panel === 'item') {
-            setPanel(null);
-            return;
-        }
-        setProductId(appliedItemFilters.productId);
-        setGroupId(appliedItemFilters.groupId);
-        setCategoryId(appliedItemFilters.categoryId);
-        setBrandId(appliedItemFilters.brandId);
-        setPanel('item');
-    };
-
-    const applyItemFilters = () => {
-        setAppliedItemFilters({
-            productId,
-            groupId,
-            categoryId,
-            brandId,
-        });
-        setPanel(null);
-    };
 
     const previewRows = rows.slice(0, 20);
     const summary = useMemo(() => {
@@ -325,6 +284,13 @@ export default function RunningStockLedgerReport() {
             setDateFrom(toISODate(new Date(now.getFullYear(), now.getMonth() - 1, 1)));
             setDateTo(toISODate(new Date(now.getFullYear(), now.getMonth(), 0)));
         }
+    };
+
+    const clearItemFilters = () => {
+        setProductId('');
+        setGroupId('');
+        setCategoryId('');
+        setBrandId('');
     };
 
     const handleExport = async () => {
@@ -376,160 +342,188 @@ export default function RunningStockLedgerReport() {
     };
 
     return (
-        <div className="space-y-6">
-            <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 via-indigo-50 to-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-xl bg-blue-600 p-2.5 text-white"><History size={18} /></div>
-                        <div>
-                            <h2 className="text-lg font-black text-slate-900">Running Stock Ledger</h2>
-                            <p className="text-sm text-slate-600">Chronological stock movement log with running balances and references.</p>
+        <PageTemplate
+            title="Running Stock Ledger"
+            subtitle="Chronological stock movement log with running balances and references."
+            breadcrumb={[
+                { label: 'Home', href: '/' },
+                { label: 'Reports', href: '/reports' },
+                { label: 'Running Stock Ledger' },
+            ]}
+            action={
+                <Button
+                    variant="primary"
+                    size="sm"
+                    icon={isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    onClick={handleExport}
+                    disabled={isExporting || rows.length === 0}
+                    loading={isExporting}
+                >
+                    {isExporting ? 'Generating...' : 'Export Excel'}
+                </Button>
+            }
+            loading={isLoading}
+            maxWidth="full"
+        >
+            <div className="space-y-6">
+                {/* Filters */}
+                <FilterBar>
+                    <div className="flex flex-wrap items-center gap-3 w-full">
+                        <div className="flex items-center gap-1">
+                            {(['today', 'last7', 'thisMonth', 'lastMonth'] as DatePreset[]).map((preset) => (
+                                <button
+                                    key={preset}
+                                    type="button"
+                                    onClick={() => applyPreset(preset)}
+                                    className={`rounded-lg border px-3 py-1.5 text-xs font-bold uppercase transition-colors ${
+                                        datePreset === preset
+                                            ? 'border-brand bg-brand text-white'
+                                            : 'border-border bg-background-card text-text-secondary hover:bg-background-subtle'
+                                    }`}
+                                >
+                                    {preset}
+                                </button>
+                            ))}
                         </div>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => { setDatePreset('custom'); setDateFrom(e.target.value); }}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
+                            <span className="text-text-tertiary text-sm">to</span>
+                            <input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => { setDatePreset('custom'); setDateTo(e.target.value); }}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
+                        </div>
+                        {!isDateRangeValid && (
+                            <span className="text-xs font-semibold text-danger">DateFrom cannot be greater than DateTo.</span>
+                        )}
+                        <Select
+                            options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
+                            value={branchId}
+                            onChange={(e) => setBranchId(e.target.value)}
+                            placeholder="Warehouse"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={movementTypeOptions}
+                            value={movementType}
+                            onChange={(e) => setMovementType(e.target.value)}
+                            placeholder="Movement Type"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Items' }, ...productOptions]}
+                            value={productId}
+                            onChange={(e) => setProductId(e.target.value)}
+                            placeholder="Item"
+                            className="min-w-[200px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Item Groups' }, ...groupOptions]}
+                            value={groupId}
+                            onChange={(e) => setGroupId(e.target.value)}
+                            placeholder="Item Group"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Categories' }, ...categoryOptions]}
+                            value={categoryId}
+                            onChange={(e) => setCategoryId(e.target.value)}
+                            placeholder="Category"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Brands' }, ...brandOptions]}
+                            value={brandId}
+                            onChange={(e) => setBrandId(e.target.value)}
+                            placeholder="Brand"
+                            className="min-w-[180px]"
+                        />
+                        {itemFiltersCount > 0 && (
+                            <Button size="sm" variant="ghost" onClick={clearItemFilters}>
+                                Clear Items
+                            </Button>
+                        )}
+                        <span className="text-xs text-text-tertiary ml-auto">{activeFilterCount} active filter{activeFilterCount !== 1 ? 's' : ''}</span>
                     </div>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">{activeFilterCount} active</span>
+                </FilterBar>
+
+                {/* KPI Summary */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+                    <KpiCard label="Movements" value={Number(summary.totalMovements || 0).toLocaleString()} />
+                    <KpiCard label="Stock In" value={Number(summary.totalIn || 0).toLocaleString()} />
+                    <KpiCard label="Stock Out" value={Number(summary.totalOut || 0).toLocaleString()} />
+                    <KpiCard label="Net Change" value={`${summary.netChange >= 0 ? '+' : ''}${Number(summary.netChange || 0).toLocaleString()}`} />
+                    <KpiCard label="Unique Items" value={Number(summary.uniqueProducts || 0).toLocaleString()} />
+                    <KpiCard label="References" value={Number(summary.uniqueReferences || 0).toLocaleString()} />
                 </div>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setPanel(panel === 'date' ? null : 'date')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><CalendarRange size={15} /> {dateLabel}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'branch' ? null : 'branch')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Building2 size={15} /> {branchName}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'type' ? null : 'type')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> {selectedTypeLabel}</button>
-                        <button type="button" onClick={openItemPanel} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Items Filter {itemFiltersCount > 0 ? `(${itemFiltersCount})` : ''}</button>
+                {/* Table */}
+                <Section variant="card" headerBorder>
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                        <div className="text-sm font-semibold text-text-primary">Live Preview ({previewRows.length})</div>
                     </div>
-
-                    {panel && (
-                        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                            <div className="mb-2 flex items-center justify-between">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-600">{panel} filter</p>
-                                <button type="button" onClick={() => setPanel(null)} className="rounded-md border border-slate-300 bg-white p-1 text-slate-500 hover:bg-slate-100"><X size={13} /></button>
-                            </div>
-
-                            {panel === 'date' && (
-                                <div className="space-y-3">
-                                    <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-                                        {(['today', 'last7', 'thisMonth', 'lastMonth'] as DatePreset[]).map((preset) => (
-                                            <button key={preset} type="button" onClick={() => applyPreset(preset)} className={`rounded-lg border px-2 py-1.5 text-xs font-bold uppercase ${datePreset === preset ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>{preset}</button>
-                                        ))}
-                                    </div>
-                                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                                        <input type="date" value={dateFrom} onChange={(e) => { setDatePreset('custom'); setDateFrom(e.target.value); }} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
-                                        <input type="date" value={dateTo} onChange={(e) => { setDatePreset('custom'); setDateTo(e.target.value); }} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
-                                    </div>
-                                    {!isDateRangeValid && <p className="text-xs font-semibold text-rose-600">`dateFrom` cannot be greater than `dateTo`.</p>}
-                                </div>
-                            )}
-
-                            {panel === 'branch' && (
-                                <AppDropdown
-                                    value={branchId}
-                                    onChange={setBranchId}
-                                    options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
-                                    placeholder="Select warehouse"
-                                    searchable
-                                />
-                            )}
-
-                            {panel === 'type' && (
-                                <AppDropdown
-                                    value={movementType}
-                                    onChange={setMovementType}
-                                    options={movementTypeOptions}
-                                    placeholder="Select movement type"
-                                />
-                            )}
-
-                            {panel === 'item' && (
-                                <div className="space-y-3">
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                        <div className="space-y-1"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item</p><AppDropdown value={productId} onChange={setProductId} options={[{ value: '', label: 'All Items' }, ...productOptions]} placeholder="Select item" searchable /></div>
-                                        <div className="space-y-1"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item Group</p><AppDropdown value={groupId} onChange={setGroupId} options={[{ value: '', label: 'All Item Groups' }, ...groupOptions]} placeholder="Select item group" searchable /></div>
-                                        <div className="space-y-1"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item Category</p><AppDropdown value={categoryId} onChange={setCategoryId} options={[{ value: '', label: 'All Categories' }, ...categoryOptions]} placeholder="Select category" searchable /></div>
-                                        <div className="space-y-1"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Brand</p><AppDropdown value={brandId} onChange={setBrandId} options={[{ value: '', label: 'All Brands' }, ...brandOptions]} placeholder="Select brand" searchable /></div>
-                                    </div>
-                                    <div className="flex flex-wrap justify-end gap-2">
-                                        <button type="button" onClick={() => { setProductId(''); setGroupId(''); setCategoryId(''); setBrandId(''); }} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">Clear Item Filters</button>
-                                        <button type="button" onClick={applyItemFilters} disabled={!isItemFiltersDirty} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">Apply Item Filters</button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {isLoading ? (
-                <div className="flex justify-center rounded-xl border border-slate-200 bg-white p-10"><Loader2 size={24} className="animate-spin text-blue-600" /></div>
-            ) : (
-                <>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Movements</p><p className="mt-2 text-3xl font-black text-slate-900">{Number(summary.totalMovements || 0).toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Stock In</p><p className="mt-2 text-3xl font-black text-emerald-600">{Number(summary.totalIn || 0).toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Stock Out</p><p className="mt-2 text-3xl font-black text-rose-600">{Number(summary.totalOut || 0).toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Net Change</p><p className={`mt-2 text-3xl font-black ${summary.netChange >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{summary.netChange >= 0 ? '+' : ''}{Number(summary.netChange || 0).toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Unique Items</p><p className="mt-2 text-3xl font-black text-slate-900">{Number(summary.uniqueProducts || 0).toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">References</p><p className="mt-2 text-3xl font-black text-slate-900">{Number(summary.uniqueReferences || 0).toLocaleString()}</p></div>
-                    </div>
-
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                            <div className="text-sm font-semibold text-slate-700">Live Preview ({previewRows.length})</div>
-                            <button type="button" onClick={handleExport} disabled={isExporting || rows.length === 0} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
-                                {isExporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                                {isExporting ? 'Generating...' : 'Export Excel'}
-                            </button>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-background-subtle text-xs uppercase tracking-wider text-text-tertiary">
+                                <tr>
+                                    <th className="px-4 py-3 text-left">Date</th>
+                                    <th className="px-4 py-3 text-left">Type</th>
+                                    <th className="px-4 py-3 text-left">Warehouse</th>
+                                    <th className="px-4 py-3 text-left">Item</th>
+                                    <th className="px-4 py-3 text-right">Qty Change</th>
+                                    <th className="px-4 py-3 text-right">Running Qty</th>
+                                    <th className="px-4 py-3 text-left">Reference</th>
+                                    <th className="px-4 py-3 text-left">Operator</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {previewRows.length === 0 && (
                                     <tr>
-                                        <th className="px-4 py-3 text-left">Date</th>
-                                        <th className="px-4 py-3 text-left">Type</th>
-                                        <th className="px-4 py-3 text-left">Warehouse</th>
-                                        <th className="px-4 py-3 text-left">Item</th>
-                                        <th className="px-4 py-3 text-right">Qty Change</th>
-                                        <th className="px-4 py-3 text-right">Running Qty</th>
-                                        <th className="px-4 py-3 text-left">Reference</th>
-                                        <th className="px-4 py-3 text-left">Operator</th>
+                                        <td colSpan={8} className="px-4 py-8 text-center text-text-tertiary">No movement rows found for selected filters.</td>
                                     </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {previewRows.length === 0 && (
-                                        <tr>
-                                            <td colSpan={8} className="px-4 py-8 text-center text-slate-500">No movement rows found for selected filters.</td>
-                                        </tr>
-                                    )}
-                                    {previewRows.map((row) => (
-                                        <tr key={row.id} className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 text-slate-700">
-                                                <div className="font-semibold">{new Date(row.createdAt).toLocaleDateString()}</div>
-                                                <div className="text-xs text-slate-500">{new Date(row.createdAt).toLocaleTimeString()}</div>
-                                            </td>
-                                            <td className="px-4 py-3 text-slate-700">
-                                                <div className="flex items-center gap-2">
-                                                    {getMovementIcon(row.type)}
-                                                    <span>{movementTypeLabelMap.get(row.type) || row.type}</span>
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3 text-slate-700">{row.branch?.name || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-700">
-                                                <div className="font-semibold">{row.product?.name || '-'}</div>
-                                                <div className="text-xs text-slate-500">{row.product?.itemCode || '-'}</div>
-                                            </td>
-                                            <td className={`px-4 py-3 text-right font-semibold ${Number(row.qty || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{Number(row.qty || 0) >= 0 ? '+' : ''}{Number(row.qty || 0).toLocaleString()}</td>
-                                            <td className="px-4 py-3 text-right font-semibold text-slate-900">{Number(row.runningQty || 0).toLocaleString()}</td>
-                                            <td className="px-4 py-3 text-slate-700">
-                                                <div>{row.referenceType || '-'}</div>
-                                                <div className="text-xs text-slate-500">{row.referenceId || '-'}</div>
-                                            </td>
-                                            <td className="px-4 py-3 text-slate-700">{row.createdBy?.name || '-'}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                )}
+                                {previewRows.map((row) => (
+                                    <tr key={row.id} className="hover:bg-background-subtle transition-colors">
+                                        <td className="px-4 py-3 text-text-secondary">
+                                            <div className="font-semibold text-text-primary">{new Date(row.createdAt).toLocaleDateString()}</div>
+                                            <div className="text-xs text-text-tertiary">{new Date(row.createdAt).toLocaleTimeString()}</div>
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <div className="flex items-center gap-2 text-text-secondary">
+                                                {getMovementIcon(row.type)}
+                                                <span>{movementTypeLabelMap.get(row.type) || row.type}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 text-text-secondary">{row.branch?.name || '-'}</td>
+                                        <td className="px-4 py-3">
+                                            <div className="font-semibold text-text-primary">{row.product?.name || '-'}</div>
+                                            <div className="text-xs text-text-tertiary">{row.product?.itemCode || '-'}</div>
+                                        </td>
+                                        <td className={`px-4 py-3 text-right font-semibold ${Number(row.qty || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                                            {Number(row.qty || 0) >= 0 ? '+' : ''}{Number(row.qty || 0).toLocaleString()}
+                                        </td>
+                                        <td className="px-4 py-3 text-right font-semibold text-text-primary">
+                                            {Number(row.runningQty || 0).toLocaleString()}
+                                        </td>
+                                        <td className="px-4 py-3 text-text-secondary">
+                                            <div>{row.referenceType || '-'}</div>
+                                            <div className="text-xs text-text-tertiary">{row.referenceId || '-'}</div>
+                                        </td>
+                                        <td className="px-4 py-3 text-text-secondary">{row.createdBy?.name || '-'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
-                </>
-            )}
-        </div>
+                </Section>
+            </div>
+        </PageTemplate>
     );
 }

@@ -5,6 +5,7 @@ import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import api from '../../lib/api';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 import {
     Badge,
     Button,
@@ -66,7 +67,7 @@ export default function PurchaseOrders() {
     const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
 
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     const { data, isLoading, isFetching } = useQuery({
         queryKey: ['purchase-orders', activeBranchId, page, limit, status, search, dateRange],

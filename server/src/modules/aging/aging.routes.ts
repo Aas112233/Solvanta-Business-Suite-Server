@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
 import { prisma } from '../../lib/prisma.js';
 import { sendSuccess } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
@@ -21,12 +23,26 @@ function applyUserBranchScope(req: any, where: Record<string, any>): Record<stri
     return where;
 }
 
+// ── Query Parameter Schemas ──
+
+const agingQuerySchema = z.object({
+    asOfDate: z.string().optional(),
+    customerId: z.string().optional(),
+    supplierId: z.string().optional(),
+    branchId: z.string().optional(),
+});
+
+const statementQuerySchema = z.object({
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+});
+
 // ═══════════════════════════════════════════════════════════════
 // ACCOUNTS RECEIVABLE (AR) AGING
 // ═══════════════════════════════════════════════════════════════
 
 // GET /aging/ar - AR Aging Summary
-agingRoutes.get('/ar', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+agingRoutes.get('/ar', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: agingQuerySchema }), async (req, res, next) => {
     try {
         const { asOfDate, customerId, branchId } = req.query as any;
         const companyId = req.user!.companyId;
@@ -135,7 +151,7 @@ agingRoutes.get('/ar', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), as
 });
 
 // GET /aging/ar/:customerId - Customer AR Detail
-agingRoutes.get('/ar/:customerId', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+agingRoutes.get('/ar/:customerId', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: agingQuerySchema }), async (req, res, next) => {
     try {
         const customerId = req.params.customerId as string;
         const { asOfDate } = req.query as any;
@@ -241,7 +257,7 @@ agingRoutes.get('/ar/:customerId', requirePermission(PERMISSIONS.ACCOUNTING_VIEW
 // ═══════════════════════════════════════════════════════════════
 
 // GET /aging/ap - AP Aging Summary
-agingRoutes.get('/ap', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+agingRoutes.get('/ap', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: agingQuerySchema }), async (req, res, next) => {
     try {
         const { asOfDate, supplierId, branchId } = req.query as any;
         const companyId = req.user!.companyId;
@@ -347,7 +363,7 @@ agingRoutes.get('/ap', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), as
 });
 
 // GET /aging/ap/:supplierId - Supplier AP Detail
-agingRoutes.get('/ap/:supplierId', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+agingRoutes.get('/ap/:supplierId', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: agingQuerySchema }), async (req, res, next) => {
     try {
         const supplierId = req.params.supplierId as string;
         const { asOfDate } = req.query as any;
@@ -443,7 +459,7 @@ agingRoutes.get('/ap/:supplierId', requirePermission(PERMISSIONS.ACCOUNTING_VIEW
 // ═══════════════════════════════════════════════════════════════
 
 // GET /aging/statements/customer/:customerId - Generate customer statement
-agingRoutes.get('/statements/customer/:customerId', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), async (req, res, next) => {
+agingRoutes.get('/statements/customer/:customerId', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), validate({ query: statementQuerySchema }), async (req, res, next) => {
     try {
         const customerId = req.params.customerId as string;
         const { startDate, endDate } = req.query as any;

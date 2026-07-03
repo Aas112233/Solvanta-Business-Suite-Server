@@ -4,6 +4,7 @@ import { Loader2, Save, Smile } from 'lucide-react';
 import toast from '@/lib/toast';
 import api from '../../lib/api';
 import { useAuthStore } from '../../stores/authStore';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 import AppLoader from '../../components/ui/AppLoader';
 
 type LoyaltySettings = {
@@ -23,7 +24,7 @@ const DEFAULT_SETTINGS: LoyaltySettings = {
 export default function POSLoyaltySettings() {
     const queryClient = useQueryClient();
     const hasPermission = useAuthStore((s) => s.hasPermission);
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const canEdit = hasPermission('pos.manageTerminals');
 
     const [form, setForm] = useState<LoyaltySettings>(DEFAULT_SETTINGS);

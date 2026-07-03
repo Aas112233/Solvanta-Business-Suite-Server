@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BriefcaseBusiness, Edit2, Plus, Trash2 } from 'lucide-react';
 import toast from '@/lib/toast';
 import { useAuthStore } from '../../stores/authStore';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 import api from '../../lib/api';
 import {
     Badge,
@@ -70,7 +71,7 @@ const createInitialForm = (): PositionFormState => ({
 
 export function Positions() {
     const queryClient = useQueryClient();
-    const currency = useAuthStore((state) => state.user?.company?.currency || 'SAR');
+    const currency = useAuthStore((state) => state.user?.company?.currency || DEFAULT_CURRENCY);
     const [isAdding, setIsAdding] = useState(false);
     const [editingPosition, setEditingPosition] = useState<PositionRecord | null>(null);
     const [searchTerm, setSearchTerm] = useState('');

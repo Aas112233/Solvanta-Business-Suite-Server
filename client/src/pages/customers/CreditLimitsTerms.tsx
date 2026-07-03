@@ -7,6 +7,7 @@ import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import Pagination from '../../components/ui/Pagination';
 import { useAuthStore } from '../../stores/authStore';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 type CustomerRow = {
     id: string;
@@ -41,7 +42,7 @@ type DraftRow = {
 
 export default function CreditLimitsTerms() {
     const queryClient = useQueryClient();
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const [page, setPage] = useState(1);
     const [limit, setLimit] = useState(20);
     const [searchInput, setSearchInput] = useState('');

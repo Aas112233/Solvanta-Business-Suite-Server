@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
 import { PERMISSIONS } from '../../config/permissions.js';
 import { basePrisma, prisma } from '../../lib/prisma.js';
 import { AppError } from '../../utils/AppError.js';
@@ -202,8 +204,88 @@ async function fetchDashboardPurchasesRaw(args: {
         .filter((row): row is { createdAt: Date; grandTotal: number; supplierId: string | null; supplier: { name: string } | null } => Boolean(row));
 }
 
+// ── Query Parameter Schemas ──
+
+const optionalString = z.string().optional();
+
+const reportQuerySchema = z.object({
+    branchId: optionalString,
+    dateFrom: optionalString,
+    dateTo: optionalString,
+});
+
+const reportFiltersQuerySchema = reportQuerySchema.extend({
+    includeZeroRequired: optionalString,
+    supplierId: optionalString,
+    productId: optionalString,
+    itemGroupId: optionalString,
+    categoryId: optionalString,
+    brandId: optionalString,
+    search: optionalString,
+});
+
+const purchasesOnDateQuerySchema = z.object({
+    date: optionalString,
+    branchId: optionalString,
+    supplierId: optionalString,
+    productId: optionalString,
+    itemGroupId: optionalString,
+    categoryId: optionalString,
+    brandId: optionalString,
+    search: optionalString,
+});
+
+const purchaseReportDetailQuerySchema = z.object({
+    branchId: optionalString,
+    supplierId: optionalString,
+    purchaseInvoiceId: optionalString,
+    status: optionalString,
+    dateFrom: optionalString,
+    dateTo: optionalString,
+    search: optionalString,
+});
+
+const purchasePaymentReportQuerySchema = purchaseReportDetailQuerySchema.extend({
+    paymentMethod: optionalString,
+});
+
+const stockQuerySchema = z.object({
+    branchId: optionalString,
+    productId: optionalString,
+    itemGroupId: optionalString,
+    categoryId: optionalString,
+    brandId: optionalString,
+    search: optionalString,
+});
+
+const stockOnDateQuerySchema = stockQuerySchema.extend({
+    date: optionalString,
+});
+
+const inventoryTransactionQuerySchema = stockQuerySchema.extend({
+    dateFrom: optionalString,
+    dateTo: optionalString,
+});
+
+const vatQuerySchema = z.object({
+    dateFrom: optionalString,
+    dateTo: optionalString,
+    branchId: optionalString,
+    postedOnly: optionalString,
+});
+
+const dashboardConsolidatedQuerySchema = z.object({
+    branchId: optionalString,
+    startDate: optionalString,
+    endDate: optionalString,
+});
+
+const dashboardQuerySchema = z.object({
+    branchId: optionalString,
+});
+
 // GET /reports/sales
-reportRoutes.get('/sales', async (req, res, next) => {
+reportRoutes.get('/sales', validate({ query: reportQuerySchema }), async (req, res, next) => {
     try {
         const { branchId, dateFrom, dateTo } = req.query as any;
         const companyId = req.user!.companyId;
@@ -257,7 +339,7 @@ reportRoutes.get('/sales', async (req, res, next) => {
 });
 
 // GET /reports/purchases
-reportRoutes.get('/purchases', async (req, res, next) => {
+reportRoutes.get('/purchases', validate({ query: reportQuerySchema }), async (req, res, next) => {
     try {
         const { branchId, dateFrom, dateTo } = req.query as any;
         const companyId = req.user!.companyId;
@@ -302,7 +384,7 @@ reportRoutes.get('/purchases', async (req, res, next) => {
 });
 
 // GET /reports/purchase-order-report
-reportRoutes.get('/purchase-order-report', async (req, res, next) => {
+reportRoutes.get('/purchase-order-report', validate({ query: reportFiltersQuerySchema }), async (req, res, next) => {
     try {
         const {
             branchId,
@@ -650,7 +732,7 @@ reportRoutes.get('/purchase-invoices-filter-options', async (req, res, next) => 
 });
 
 // GET /reports/purchase-invoices-report
-reportRoutes.get('/purchase-invoices-report', async (req, res, next) => {
+reportRoutes.get('/purchase-invoices-report', validate({ query: reportFiltersQuerySchema }), async (req, res, next) => {
     try {
         const {
             branchId,
@@ -741,7 +823,7 @@ reportRoutes.get('/purchase-invoices-report', async (req, res, next) => {
 });
 
 // GET /reports/purchases-on-date
-reportRoutes.get('/purchases-on-date', async (req, res, next) => {
+reportRoutes.get('/purchases-on-date', validate({ query: purchasesOnDateQuerySchema }), async (req, res, next) => {
     try {
         const {
             date,
@@ -855,7 +937,7 @@ reportRoutes.get('/purchases-on-date', async (req, res, next) => {
 });
 
 // GET /reports/purchase-payments-filter-options
-reportRoutes.get('/purchase-payments-filter-options', async (req, res, next) => {
+reportRoutes.get('/purchase-payments-filter-options', validate({ query: stockQuerySchema }), async (req, res, next) => {
     try {
         const { branchId, supplierId, search } = req.query as any;
         const companyId = req.user!.companyId;
@@ -917,7 +999,7 @@ reportRoutes.get('/purchase-payments-filter-options', async (req, res, next) => 
 });
 
 // GET /reports/purchase-returns-filter-options
-reportRoutes.get('/purchase-returns-filter-options', async (req, res, next) => {
+reportRoutes.get('/purchase-returns-filter-options', validate({ query: stockQuerySchema }), async (req, res, next) => {
     try {
         const { branchId, supplierId, search } = req.query as any;
         const companyId = req.user!.companyId;
@@ -969,7 +1051,7 @@ reportRoutes.get('/purchase-returns-filter-options', async (req, res, next) => {
 });
 
 // GET /reports/purchase-returns-report
-reportRoutes.get('/purchase-returns-report', async (req, res, next) => {
+reportRoutes.get('/purchase-returns-report', validate({ query: purchaseReportDetailQuerySchema }), async (req, res, next) => {
     try {
         const {
             branchId,
@@ -1072,7 +1154,7 @@ reportRoutes.get('/purchase-returns-report', async (req, res, next) => {
 });
 
 // GET /reports/purchase-payments-report
-reportRoutes.get('/purchase-payments-report', async (req, res, next) => {
+reportRoutes.get('/purchase-payments-report', validate({ query: purchasePaymentReportQuerySchema }), async (req, res, next) => {
     try {
         const {
             branchId,
@@ -1174,7 +1256,7 @@ reportRoutes.get('/purchase-payments-report', async (req, res, next) => {
 });
 
 // GET /reports/stock-on-date
-reportRoutes.get('/stock-on-date', async (req, res, next) => {
+reportRoutes.get('/stock-on-date', validate({ query: stockOnDateQuerySchema }), async (req, res, next) => {
     try {
         const {
             date,
@@ -1307,7 +1389,7 @@ reportRoutes.get('/stock-on-date', async (req, res, next) => {
 });
 
 // GET /reports/stock
-reportRoutes.get('/stock', async (req, res, next) => {
+reportRoutes.get('/stock', validate({ query: stockQuerySchema }), async (req, res, next) => {
     try {
         const {
             branchId,
@@ -1387,7 +1469,7 @@ reportRoutes.get('/stock', async (req, res, next) => {
 });
 
 // GET /reports/inventory-transaction-summary
-reportRoutes.get('/inventory-transaction-summary', async (req, res, next) => {
+reportRoutes.get('/inventory-transaction-summary', validate({ query: inventoryTransactionQuerySchema }), async (req, res, next) => {
     try {
         const {
             branchId,
@@ -1721,7 +1803,7 @@ reportRoutes.get('/warehouses', async (req, res, next) => {
 });
 
 // GET /reports/vat
-reportRoutes.get('/vat', async (req, res, next) => {
+reportRoutes.get('/vat', validate({ query: vatQuerySchema }), async (req, res, next) => {
     try {
         const { dateFrom, dateTo, branchId, postedOnly } = req.query as any;
         const companyId = req.user!.companyId;
@@ -1928,7 +2010,7 @@ reportRoutes.get('/vat', async (req, res, next) => {
 
 // GET /reports/dashboard-consolidated
 // One stop optimized analytical engine for the landing dashboard.
-reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
+reportRoutes.get('/dashboard-consolidated', validate({ query: dashboardConsolidatedQuerySchema }), async (req, res, next) => {
     try {
         const companyId = req.user!.companyId;
         const branchId = req.query.branchId as string | undefined;
@@ -2296,7 +2378,7 @@ reportRoutes.get('/dashboard-consolidated', async (req, res, next) => {
 });
 
 // GET /reports/dashboard (Legacy support)
-reportRoutes.get('/dashboard', async (req, res, next) => {
+reportRoutes.get('/dashboard', validate({ query: dashboardQuerySchema }), async (req, res, next) => {
     try {
         const companyId = req.user!.companyId;
         const branchId = req.query.branchId as string | undefined;

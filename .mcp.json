@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "mcp-simple-memory": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-simple-memory",
+        "serve"
+      ],
+      "env": {
+        "MEMORY_DB": ".claude/memory.db"
+      }
+    }
+  }
+}

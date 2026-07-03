@@ -21,10 +21,11 @@ import { exportExcel, printPdfFromComponent } from '../../lib/fileExport';
 import { SupplierStatementPdf } from '../../components/suppliers/SupplierStatementPdf';
 import { useAuthStore } from '../../stores/authStore';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 export default function SupplierLedger() {
     const user = useAuthStore((s: any) => s.user);
-    const currency = user?.company?.currency || 'SAR';
+    const currency = user?.company?.currency || DEFAULT_CURRENCY;
     const [selectedSupplierId, setSelectedSupplierId] = useState('');
     const [supplierSearch, setSupplierSearch] = useState('');
     const [startDate, setStartDate] = useState('');

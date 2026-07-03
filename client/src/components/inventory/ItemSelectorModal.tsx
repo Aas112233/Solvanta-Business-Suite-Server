@@ -7,6 +7,7 @@ import AppDropdown from '../ui/AppDropdown';
 import { calculateTotalBaseQty, formatDecomposedQty } from '../../lib/inventoryUtils';
 import { formatTaxLabel, resolveEffectiveTaxRate, useCompanyTaxSettings } from '../../lib/tax';
 import { useAuthStore } from '@/stores/authStore';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 function roundMoney(value: number): number {
     if (!Number.isFinite(value)) return 0;
@@ -84,7 +85,7 @@ function getProductMatchScore(product: any, query: string): number {
 export default function ItemSelectorModal({ isOpen, onClose, onAdd, mode, branchId, priceGroupId, initialItem, confirmLabel, allowAddNext = true }: ItemSelectorModalProps) {
     const companyTax = useCompanyTaxSettings();
     const defaultTaxRate = companyTax.defaultRate;
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     /** Resolve effective sale price for a unit:
      *  1. Check priceGroupPrices for a matching override

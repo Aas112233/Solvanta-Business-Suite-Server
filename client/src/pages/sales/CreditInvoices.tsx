@@ -35,6 +35,7 @@ import {
     getSalesInvoiceDiscountBreakdown,
 } from '../../lib/salesCustomerDisplay';
 import DocumentPreviewModal from '../../components/shared/DocumentPreviewModal';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 const getCreditInvoiceStatusVariant = (
     status: string
@@ -73,7 +74,7 @@ export default function CreditInvoices() {
         endDate: '',
     });
 
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const companyName = useAuthStore((s) => s.user?.company?.name) || 'SOLVANTA ERP';
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
 

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
+import { DEFAULT_CURRENCY } from '../lib/constants';
 import toast from '@/lib/toast';
 import ModuleRefreshButton from '../components/ModuleRefreshButton';
 import Pagination from '../components/ui/Pagination';
@@ -27,7 +28,7 @@ export default function Suppliers() {
     const canCreateSupplier = hasPermission('supplier.create');
     const canEditSupplier = hasPermission('supplier.edit');
     const canDeleteSupplier = hasPermission('supplier.delete');
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const navigate = useNavigate();
     const qc = useQueryClient();
 

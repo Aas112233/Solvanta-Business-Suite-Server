@@ -1,27 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
+import { FETCH_ALL_LIMIT } from '../../lib/constants';
 import { exportExcel } from '../../lib/fileExport';
 import type { ExcelColumn } from '../../lib/excelReport';
-import {
-    AlertTriangle,
-    Building2,
-    CalendarRange,
-    CheckSquare,
-    Download,
-    FileText,
-    Filter,
-    Loader2,
-    Search,
-    Square,
-    Truck,
-    X,
-} from 'lucide-react';
+import { Download, Loader2, Search } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { formatCompanyDate, resolveCompanyCurrency, toDateInputValue } from '../../lib/companySettings';
-import AppDropdown from '../ui/AppDropdown';
+import { PageTemplate, Section, KpiCard, Button, FilterBar, Select } from '../ui';
 
-type FilterPanel = 'branch' | 'supplier' | 'date' | 'invoice' | 'status' | 'search' | 'columns' | null;
 type DatePreset = 'all' | 'today' | 'last7' | 'thisMonth' | 'lastMonth' | 'custom';
 type ColumnKey =
     | 'returnNo'
@@ -106,7 +93,6 @@ export default function PurchaseReturnsReport() {
     const company = useAuthStore((s) => s.user?.company);
     const currency = resolveCompanyCurrency(company);
 
-    const [panel, setPanel] = useState<FilterPanel>(null);
     const [branchId, setBranchId] = useState('');
     const [supplierId, setSupplierId] = useState('');
     const [purchaseInvoiceId, setPurchaseInvoiceId] = useState('');
@@ -137,7 +123,7 @@ export default function PurchaseReturnsReport() {
 
     const { data: suppliers = [] } = useQuery({
         queryKey: ['suppliers-report-purchase-returns'],
-        queryFn: () => api.get('/suppliers', { params: { limit: 1000 } }).then((r) => r.data.data as { id: string; name: string }[]),
+        queryFn: () => api.get('/suppliers', { params: { limit: FETCH_ALL_LIMIT } }).then((r) => r.data.data as { id: string; name: string }[]),
     });
 
     const { data: filterOptions } = useQuery({
@@ -311,202 +297,171 @@ export default function PurchaseReturnsReport() {
     };
 
     return (
-        <div className="space-y-6">
-            <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 via-indigo-50 to-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-xl bg-blue-600 p-2.5 text-white"><AlertTriangle size={18} /></div>
-                        <div>
-                            <h2 className="text-lg font-black text-slate-900">Purchase Returns Report</h2>
-                            <p className="text-sm text-slate-600">Unified report layout with advanced filters and column-based export.</p>
+        <PageTemplate
+            title="Purchase Returns Report"
+            subtitle="Unified report layout with advanced filters and column-based export."
+            breadcrumb={[
+                { label: 'Home', href: '/' },
+                { label: 'Reports', href: '/reports' },
+                { label: 'Purchase Returns Report' },
+            ]}
+            action={
+                <Button
+                    variant="primary"
+                    size="sm"
+                    icon={isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    onClick={handleExport}
+                    disabled={isExporting || !reportData}
+                    loading={isExporting}
+                >
+                    {isExporting ? 'Generating...' : 'Export Excel'}
+                </Button>
+            }
+            loading={isLoading}
+            maxWidth="full"
+        >
+            <div className="space-y-6">
+                {/* Filters */}
+                <FilterBar>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Select
+                            options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
+                            value={branchId}
+                            onChange={(e) => setBranchId(e.target.value)}
+                            placeholder="Warehouse"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Suppliers' }, ...suppliers.map((s) => ({ value: s.id, label: s.name }))]}
+                            value={supplierId}
+                            onChange={(e) => setSupplierId(e.target.value)}
+                            placeholder="Supplier"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Invoices' }, ...invoiceOptions]}
+                            value={purchaseInvoiceId}
+                            onChange={(e) => setPurchaseInvoiceId(e.target.value)}
+                            placeholder="Invoice"
+                            className="min-w-[200px]"
+                        />
+                        <Select
+                            options={statusOptions}
+                            value={status}
+                            onChange={(e) => setStatus(e.target.value)}
+                            placeholder="Status"
+                            className="min-w-[140px]"
+                        />
+                        <div className="flex items-center gap-1">
+                            {(['all', 'today', 'last7', 'thisMonth', 'lastMonth'] as DatePreset[]).map((preset) => (
+                                <button
+                                    key={preset}
+                                    type="button"
+                                    onClick={() => applyPreset(preset)}
+                                    className={`rounded-lg border px-2 py-1.5 text-xs font-bold uppercase ${datePreset === preset ? 'border-brand bg-brand text-white' : 'border-border bg-background-card text-text-secondary hover:bg-background-subtle'}`}
+                                >
+                                    {preset}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => { setDatePreset('custom'); setDateFrom(e.target.value); }}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
+                            <span className="text-text-tertiary text-sm">to</span>
+                            <input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => { setDatePreset('custom'); setDateTo(e.target.value); }}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
                         </div>
                     </div>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">{activeFilterCount} active</span>
+                    <div className="flex flex-wrap items-center gap-3 mt-2">
+                        <div className="relative flex-1 min-w-[200px] max-w-xs">
+                            <Search size={15} className="absolute left-3 top-2.5 text-text-tertiary" />
+                            <input
+                                type="text"
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                placeholder="Search return no, supplier, invoice no, reason..."
+                                className="w-full h-10 rounded-lg border border-border bg-background-card pl-9 pr-3 text-sm text-text-primary"
+                            />
+                        </div>
+                    </div>
+                    <span className="text-xs text-text-tertiary ml-auto">{activeFilterCount} active filters</span>
+                </FilterBar>
+
+                {/* Column Toggles */}
+                <Section variant="card" title="Export Columns" headerBorder>
+                    <div className="flex items-center gap-2 mb-3">
+                        <Button size="sm" variant="ghost" onClick={() => setAllColumns(true)}>Select All</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setAllColumns(false)}>Clear All</Button>
+                        <span className="text-xs text-text-tertiary ml-auto">{selectedColCount} selected</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {columns.map((col) => (
+                            <label
+                                key={col.key}
+                                className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer hover:text-text-primary transition-colors"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedColumns[col.key]}
+                                    onChange={() => toggleColumn(col.key)}
+                                    className="rounded border-border text-brand focus:ring-brand-200"
+                                />
+                                {col.label}
+                            </label>
+                        ))}
+                    </div>
+                </Section>
+
+                {/* KPI Summary */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                    <KpiCard label="Total Returns" value={Number(reportData?.summary?.count || 0)} />
+                    <KpiCard label="Return Amount" value={money(Number(reportData?.summary?.totalAmount || 0), currency)} />
+                    <KpiCard label="Tax Amount" value={money(Number(reportData?.summary?.totalTax || 0), currency)} />
+                    <KpiCard label="Suppliers" value={Number(reportData?.summary?.uniqueSuppliers || 0)} />
+                    <KpiCard label="Invoices" value={Number(reportData?.summary?.uniqueInvoices || 0)} />
                 </div>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setPanel(panel === 'branch' ? null : 'branch')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Building2 size={15} /> {branchName}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'supplier' ? null : 'supplier')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Truck size={15} /> {supplierName}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'date' ? null : 'date')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><CalendarRange size={15} /> {dateLabel}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'invoice' ? null : 'invoice')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><FileText size={15} /> {invoiceName}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'status' ? null : 'status')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> {statusName}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'search' ? null : 'search')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Search size={15} /> {search.trim() ? `Search: ${search.trim()}` : 'No Search'}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'columns' ? null : 'columns')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Columns {selectedColCount}</button>
-                    </div>
-
-                    {panel && (
-                        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                            <div className="mb-2 flex items-center justify-between">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-600">{panel} filter</p>
-                                <button type="button" onClick={() => setPanel(null)} className="rounded-md border border-slate-300 bg-white p-1 text-slate-500 hover:bg-slate-100"><X size={13} /></button>
-                            </div>
-
-                            {panel === 'branch' && (
-                                <AppDropdown
-                                    value={branchId}
-                                    onChange={setBranchId}
-                                    options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
-                                    placeholder="Select warehouse"
-                                    searchable
-                                />
-                            )}
-
-                            {panel === 'supplier' && (
-                                <AppDropdown
-                                    value={supplierId}
-                                    onChange={setSupplierId}
-                                    options={[{ value: '', label: 'All Suppliers' }, ...suppliers.map((s) => ({ value: s.id, label: s.name }))]}
-                                    placeholder="Select supplier"
-                                    searchable
-                                />
-                            )}
-
-                            {panel === 'date' && (
-                                <div className="space-y-3">
-                                    <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-                                        {(['all', 'today', 'last7', 'thisMonth', 'lastMonth'] as DatePreset[]).map((preset) => (
-                                            <button
-                                                key={preset}
-                                                type="button"
-                                                onClick={() => applyPreset(preset)}
-                                                className={`rounded-lg border px-2 py-1.5 text-xs font-bold uppercase ${datePreset === preset ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
-                                            >
-                                                {preset}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                                        <input
-                                            type="date"
-                                            value={dateFrom}
-                                            onChange={(e) => {
-                                                setDatePreset('custom');
-                                                setDateFrom(e.target.value);
-                                            }}
-                                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                                        />
-                                        <input
-                                            type="date"
-                                            value={dateTo}
-                                            onChange={(e) => {
-                                                setDatePreset('custom');
-                                                setDateTo(e.target.value);
-                                            }}
-                                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                                        />
-                                    </div>
-                                </div>
-                            )}
-
-                            {panel === 'invoice' && (
-                                <AppDropdown
-                                    value={purchaseInvoiceId}
-                                    onChange={setPurchaseInvoiceId}
-                                    options={[{ value: '', label: 'All Invoices' }, ...invoiceOptions]}
-                                    placeholder="Select linked invoice"
-                                    searchable
-                                />
-                            )}
-
-                            {panel === 'status' && (
-                                <AppDropdown
-                                    value={status}
-                                    onChange={setStatus}
-                                    options={statusOptions}
-                                    placeholder="Select status"
-                                />
-                            )}
-
-                            {panel === 'search' && (
-                                <div className="relative">
-                                    <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
-                                    <input
-                                        type="text"
-                                        value={search}
-                                        onChange={(e) => setSearch(e.target.value)}
-                                        placeholder="Search return no, supplier, invoice no, reason..."
-                                        className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm"
-                                    />
-                                </div>
-                            )}
-
-                            {panel === 'columns' && (
-                                <div className="space-y-3">
-                                    <div className="flex gap-2">
-                                        <button type="button" onClick={() => setAllColumns(true)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">Select all</button>
-                                        <button type="button" onClick={() => setAllColumns(false)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">Clear all</button>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-                                        {columns.map((col) => {
-                                            const active = selectedColumns[col.key];
-                                            return (
-                                                <button key={col.key} type="button" onClick={() => toggleColumn(col.key)} className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-xs font-semibold ${active ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>
-                                                    {active ? <CheckSquare size={13} /> : <Square size={13} />}
-                                                    {col.label}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {isLoading ? (
-                <div className="flex justify-center rounded-xl border border-slate-200 bg-white p-10"><Loader2 size={24} className="animate-spin text-blue-600" /></div>
-            ) : (
-                <>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Returns</p><p className="mt-2 text-3xl font-black text-slate-900">{Number(reportData?.summary?.count || 0)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Return Amount</p><p className="mt-2 text-3xl font-black text-rose-600">{money(Number(reportData?.summary?.totalAmount || 0), currency)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Tax Amount</p><p className="mt-2 text-3xl font-black text-amber-600">{money(Number(reportData?.summary?.totalTax || 0), currency)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Suppliers</p><p className="mt-2 text-3xl font-black text-slate-900">{Number(reportData?.summary?.uniqueSuppliers || 0)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Invoices</p><p className="mt-2 text-3xl font-black text-slate-900">{Number(reportData?.summary?.uniqueInvoices || 0)}</p></div>
-                    </div>
-
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                            <div className="text-sm font-semibold text-slate-700">Live Preview ({previewRows.length})</div>
-                            <button type="button" onClick={handleExport} disabled={isExporting || !reportData} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
-                                {isExporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                                {isExporting ? 'Generating...' : 'Export Excel'}
-                            </button>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                                    <tr>
-                                        <th className="px-4 py-3 text-left">Return No</th>
-                                        <th className="px-4 py-3 text-left">Date</th>
-                                        <th className="px-4 py-3 text-left">Supplier</th>
-                                        <th className="px-4 py-3 text-left">Invoice</th>
-                                        <th className="px-4 py-3 text-left">Warehouse</th>
-                                        <th className="px-4 py-3 text-left">Status</th>
-                                        <th className="px-4 py-3 text-right">Amount</th>
+                {/* Preview Table */}
+                <Section title={`Live Preview (${previewRows.length})`} variant="card" headerBorder>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-background-subtle text-xs uppercase tracking-wider text-text-tertiary">
+                                <tr>
+                                    <th className="px-4 py-3 text-left">Return No</th>
+                                    <th className="px-4 py-3 text-left">Date</th>
+                                    <th className="px-4 py-3 text-left">Supplier</th>
+                                    <th className="px-4 py-3 text-left">Invoice</th>
+                                    <th className="px-4 py-3 text-left">Warehouse</th>
+                                    <th className="px-4 py-3 text-left">Status</th>
+                                    <th className="px-4 py-3 text-right">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {previewRows.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-text-tertiary">No returns found for selected filters.</td></tr>}
+                                {previewRows.map((r) => (
+                                    <tr key={r.id} className="hover:bg-background-subtle transition-colors">
+                                        <td className="px-4 py-3 font-semibold text-text-primary">{r.returnNo || '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{r.createdAt ? formatCompanyDate(r.createdAt, company) : '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{r.supplier?.name || '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{r.purchaseInvoice?.purchaseNo || '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{r.branch?.name || '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{statusLabel(r.status || '') || '-'}</td>
+                                        <td className="px-4 py-3 text-right font-semibold text-text-primary">{money(Number(r.grandTotal || 0), currency)}</td>
                                     </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {previewRows.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500">No returns found for selected filters.</td></tr>}
-                                    {previewRows.map((r) => (
-                                        <tr key={r.id} className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 font-semibold text-slate-800">{r.returnNo || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-600">{r.createdAt ? formatCompanyDate(r.createdAt, company) : '-'}</td>
-                                            <td className="px-4 py-3 text-slate-700">{r.supplier?.name || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-700">{r.purchaseInvoice?.purchaseNo || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-700">{r.branch?.name || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-700">{statusLabel(r.status || '') || '-'}</td>
-                                            <td className="px-4 py-3 text-right font-semibold text-slate-800">{money(Number(r.grandTotal || 0), currency)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
-                </>
-            )}
-        </div>
+                </Section>
+            </div>
+        </PageTemplate>
     );
 }

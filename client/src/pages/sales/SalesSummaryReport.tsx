@@ -9,9 +9,10 @@ import ModuleRefreshButton from '@/components/ModuleRefreshButton';
 import { getSalesCustomerDisplay } from '@/lib/salesCustomerDisplay';
 import AppDropdown from '../../components/ui/AppDropdown';
 import { toDateInputValue } from '@/lib/companySettings';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 export default function SalesSummaryReport() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const today = toDateInputValue();
 
     const [branchId, setBranchId] = useState('');

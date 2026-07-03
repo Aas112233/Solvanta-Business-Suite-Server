@@ -21,19 +21,19 @@ export function SectionHeader({
   className,
 }: SectionHeaderProps) {
   return (
-    <div 
+    <div
       className={clsx(
         'flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4',
-        border && 'pb-4 border-b border-gray-200 dark:border-gray-700',
+        border && 'pb-4 border-b border-border',
         className
       )}
     >
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+        <h2 className="text-lg font-semibold text-text-primary">
           {title}
         </h2>
         {description && (
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-1 text-sm text-text-tertiary">
             {description}
           </p>
         )}
@@ -103,7 +103,7 @@ export function Section({
           border={headerBorder}
         />
       )}
-      
+
       {(!collapsible || !isCollapsed) && (
         <div className={clsx((title || description || action) && 'pt-2')}>
           {children}
@@ -116,7 +116,7 @@ export function Section({
     return (
       <section
         className={clsx(
-          'bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm',
+          'bg-background-card rounded-lg border border-border shadow-sm',
           'p-6',
           className
         )}
@@ -143,7 +143,7 @@ export function Section({
   return (
     <section
       className={clsx(
-        'bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700',
+        'bg-background-card rounded-lg border border-border',
         className
       )}
       id={id}

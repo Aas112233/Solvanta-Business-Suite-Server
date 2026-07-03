@@ -31,6 +31,8 @@ export {
     StatCard,
     StatsGrid,
 } from './Card';
+export { KpiCard } from './KpiCard';
+export type { KpiCardProps } from './KpiCard';
 
 // Forms
 export { default as Input } from './Input';
@@ -65,13 +67,7 @@ export {
 export { Tabs, TabPanel } from './Tabs';
 export type { TabItem, TabsProps, TabPanelProps } from './Tabs';
 
-// Toast
-export {
-    default as ToastContainer,
-    useToast,
-    toast,
-} from './Toast';
-export type { Toast, ToastType } from './Toast';
+// Toast — see lib/toast.ts (react-hot-toast). Import `toast` from '@/lib/toast' directly.
 
 // Empty State
 export {
@@ -124,3 +120,5 @@ export { default as AppLoader } from './AppLoader';
 export { default as DateRangeFilter } from './DateRangeFilter';
 export { default as ConfirmActionModal } from './ConfirmActionModal';
 export { default as LanguageSwitcher } from './LanguageSwitcher';
+export { ReportPage } from './ReportPage';
+export type { ReportPageProps, ReportKpi, ReportFilter, ReportColumnToggle } from './ReportPage';

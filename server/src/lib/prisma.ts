@@ -64,6 +64,26 @@ function flushAuditBuffer() {
         .catch(err => logger.error(`Audit batch write failed (${batch.length} entries):`, err));
 }
 
+/**
+ * Drains any pending audit logs and returns a Promise that resolves when the
+ * write completes. Call during graceful shutdown to avoid losing audit entries.
+ */
+export async function flushAuditLogsAndWait(): Promise<void> {
+    if (auditFlushTimer) {
+        clearTimeout(auditFlushTimer);
+        auditFlushTimer = null;
+    }
+    if (auditBuffer.length === 0) return;
+
+    const batch = auditBuffer.splice(0);
+    try {
+        await basePrisma.auditLog.createMany({ data: batch as any[] });
+        logger.info(`Flushed ${batch.length} audit log entries on shutdown`);
+    } catch (err) {
+        logger.error(`Audit log flush failed during shutdown (${batch.length} entries):`, err);
+    }
+}
+
 function enqueueAuditLog(entry: typeof auditBuffer[0]) {
     auditBuffer.push(entry);
     if (auditBuffer.length >= AUDIT_MAX_BATCH_SIZE) {
@@ -239,19 +259,25 @@ export const prisma = basePrisma.$extends({
     }
 });
 
-if (env.NODE_ENV === 'development') {
-    (basePrisma as any).$on('query', (e: any) => {
-        if (e.duration > 100) {
-            logger.warn(`Slow query (${e.duration}ms): ${e.query}`);
-        }
-    });
-}
+// Slow query logging — enabled in all environments for visibility.
+// Development: 100ms threshold (verbose). Production: 250ms threshold (signal only).
+const SLOW_QUERY_THRESHOLD_MS = env.NODE_ENV === 'development' ? 100 : 250;
+(basePrisma as any).$on('query', (e: any) => {
+    if (e.duration > SLOW_QUERY_THRESHOLD_MS) {
+        const level = env.NODE_ENV === 'development' ? 'warn' : 'warn';
+        logger.log(level, `Slow query (${e.duration}ms): ${e.query}`);
+    }
+});
 
-// Graceful shutdown for production
+// Graceful shutdown — drain audit logs and disconnect Prisma
+async function gracefulShutdown() {
+    await flushAuditLogsAndWait();
+    await basePrisma.$disconnect();
+}
 if (isProduction) {
-    process.on('beforeExit', async () => {
-        await basePrisma.$disconnect();
-    });
+    process.on('beforeExit', gracefulShutdown);
+    process.on('SIGTERM', () => { gracefulShutdown().then(() => process.exit(0)); });
+    process.on('SIGINT', () => { gracefulShutdown().then(() => process.exit(0)); });
 }
 
 if (env.NODE_ENV !== 'production') {

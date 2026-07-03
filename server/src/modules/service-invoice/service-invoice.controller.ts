@@ -6,6 +6,7 @@ import { sendSuccess } from '../../utils/response.js';
 import { normalizePaymentMethodKey, SERVICE_INVOICE_PAYMENT_METHODS, isCreditType } from '../../utils/paymentMethods.js';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
+import { roundMoney } from '../../utils/money.js';
 
 interface ServiceInvoiceItemInput {
     serviceId?: string | null;
@@ -19,9 +20,6 @@ interface ServiceInvoiceItemInput {
 
 const SUPPORTED_PAYMENT_METHODS = new Set<string>(SERVICE_INVOICE_PAYMENT_METHODS);
 
-function roundMoney(value: number): number {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
-}
 
 function parseInvoiceDate(value: unknown): Date {
     if (typeof value !== 'string' || !value.trim()) {

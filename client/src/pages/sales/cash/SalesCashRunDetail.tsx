@@ -5,10 +5,11 @@ import api from '../../../lib/api';
 import { useAuthStore } from '../../../stores/authStore';
 import { cashStatusColor, formatMoney } from './utils';
 import AppLoader from '../../../components/ui/AppLoader';
+import { DEFAULT_CURRENCY } from '../../../lib/constants';
 
 export default function SalesCashRunDetail() {
     const { id = '' } = useParams();
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     const { data, isLoading } = useQuery({
         queryKey: ['sales-cash-run-detail', id],

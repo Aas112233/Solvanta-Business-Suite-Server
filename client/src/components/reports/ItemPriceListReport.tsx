@@ -1,24 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { DEFAULT_CURRENCY, FETCH_ALL_LIMIT, STALE_TIME_5MIN } from '../../lib/constants';
 import api from '../../lib/api';
 import { exportExcel } from '../../lib/fileExport';
 import type { ExcelColumn } from '../../lib/excelReport';
 import {
     Check,
-    CheckSquare,
     ChevronDown,
     DollarSign,
     Download,
-    Filter,
     Loader2,
     Search,
-    Square,
-    X,
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
-import AppDropdown from '../ui/AppDropdown';
-
-type FilterPanel = 'item' | 'priceGroup' | 'columns' | null;
+import { PageTemplate, Section, KpiCard, Button, FilterBar, Select } from '../ui';
 
 type ReportFilterMasterData = {
     products: {
@@ -113,7 +108,7 @@ function fractionLabel(factor: number, baseLabel: string, unitLabel: string) {
 }
 
 async function fetchAllProducts(params: Record<string, string | undefined>) {
-    const limit = 1000;
+    const limit = FETCH_ALL_LIMIT;
     let page = 1;
     let keepFetching = true;
     const allRows: ProductRow[] = [];
@@ -191,32 +186,32 @@ function MultiSelectDropdown({
             <button
                 type="button"
                 onClick={() => setOpen((prev) => !prev)}
-                className={`w-full flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors ${open ? 'ring-2 ring-orange-200 border-orange-400' : 'border-gray-300 hover:border-gray-400'} bg-white text-gray-800`}
+                className={`w-full flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors ${open ? 'ring-2 ring-brand-200 border-brand' : 'border-border hover:border-brand-300'} bg-background-card text-text-primary`}
             >
-                <span className={selectedValues.length > 0 ? 'text-gray-800' : 'text-gray-500'}>{selectedValues.length > 0 ? selectedLabel : placeholder}</span>
-                <ChevronDown size={16} className={`text-gray-600 transition-transform ${open ? 'rotate-180' : ''}`} />
+                <span className={selectedValues.length > 0 ? 'text-text-primary' : 'text-text-tertiary'}>{selectedValues.length > 0 ? selectedLabel : placeholder}</span>
+                <ChevronDown size={16} className={`text-text-tertiary transition-transform ${open ? 'rotate-180' : ''}`} />
             </button>
 
             {open && (
-                <div className="absolute z-50 mt-1 w-full rounded-md border border-gray-300 bg-white shadow-lg">
-                    <div className="border-b border-gray-100 p-2">
+                <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-background-card shadow-lg">
+                    <div className="border-b border-border p-2">
                         <div className="relative">
-                            <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
+                            <Search size={14} className="absolute left-2.5 top-2.5 text-text-tertiary" />
                             <input
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Search price groups..."
-                                className="w-full rounded-md border border-gray-200 py-1.5 pl-8 pr-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-400"
+                                className="w-full rounded-md border border-border bg-background-card py-1.5 pl-8 pr-2 text-sm text-text-primary outline-none focus:border-brand"
                             />
                         </div>
                         <div className="mt-2 flex gap-2">
-                            <button type="button" onClick={() => onChange(options.map((o) => o.value))} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">Select all</button>
-                            <button type="button" onClick={() => onChange([])} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">Clear</button>
+                            <button type="button" onClick={() => onChange(options.map((o) => o.value))} className="rounded-md border border-border bg-background-card px-2 py-1 text-[11px] font-semibold text-text-secondary hover:bg-background-subtle">Select all</button>
+                            <button type="button" onClick={() => onChange([])} className="rounded-md border border-border bg-background-card px-2 py-1 text-[11px] font-semibold text-text-secondary hover:bg-background-subtle">Clear</button>
                         </div>
                     </div>
 
                     <div className="max-h-60 overflow-auto py-1">
-                        {filteredOptions.length === 0 && <div className="px-3 py-2 text-sm text-gray-500">No price groups found</div>}
+                        {filteredOptions.length === 0 && <div className="px-3 py-2 text-sm text-text-tertiary">No price groups found</div>}
                         {filteredOptions.map((option) => {
                             const checked = selectedSet.has(option.value);
                             return (
@@ -224,10 +219,10 @@ function MultiSelectDropdown({
                                     key={option.value}
                                     type="button"
                                     onClick={() => toggleValue(option.value)}
-                                    className={`w-full flex items-center justify-between px-3 py-2 text-sm text-left ${checked ? 'bg-orange-50 text-orange-700' : 'text-gray-800 hover:bg-orange-50'}`}
+                                    className={`w-full flex items-center justify-between px-3 py-2 text-sm text-left ${checked ? 'bg-background-subtle text-text-brand' : 'text-text-primary hover:bg-background-subtle'}`}
                                 >
                                     <span>{option.label}</span>
-                                    {checked && <Check size={14} className="text-orange-500" />}
+                                    {checked && <Check size={14} className="text-brand" />}
                                 </button>
                             );
                         })}
@@ -239,9 +234,8 @@ function MultiSelectDropdown({
 }
 
 export default function ItemPriceListReport() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
-    const [panel, setPanel] = useState<FilterPanel>(null);
     const [productId, setProductId] = useState('');
     const [groupId, setGroupId] = useState('');
     const [categoryId, setCategoryId] = useState('');
@@ -420,7 +414,7 @@ export default function ItemPriceListReport() {
             filteredProducts.length,
         ],
         enabled: selectedPriceGroups.length > 0 && filteredProducts.length > 0,
-        staleTime: 5 * 60 * 1000,
+        staleTime: STALE_TIME_5MIN,
         queryFn: async () => {
             const tasks: { productId: string; unitCode: string; priceGroupId: string; key: string }[] = [];
             filteredProducts.forEach((product) => {
@@ -617,167 +611,157 @@ export default function ItemPriceListReport() {
     const loading = priceGroupsLoading || productsLoading || endpointPriceLoading;
 
     return (
-        <div className="space-y-6">
-            <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 via-indigo-50 to-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-xl bg-blue-600 p-2.5 text-white"><DollarSign size={18} /></div>
-                        <div>
-                            <h2 className="text-lg font-black text-slate-900">Item Price List Report</h2>
-                            <p className="text-sm text-slate-600">Unit-wise item price list with selectable price groups, filters, and configurable columns.</p>
+        <PageTemplate
+            title="Item Price List Report"
+            subtitle="Unit-wise item price list with selectable price groups, filters, and configurable columns."
+            breadcrumb={[
+                { label: 'Home', href: '/' },
+                { label: 'Reports', href: '/reports' },
+                { label: 'Item Price List' },
+            ]}
+            action={
+                <Button
+                    variant="primary"
+                    size="sm"
+                    icon={isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    onClick={handleExport}
+                    disabled={isExporting || rows.length === 0}
+                    loading={isExporting}
+                >
+                    {isExporting ? 'Generating...' : 'Export Excel'}
+                </Button>
+            }
+            loading={loading}
+            maxWidth="full"
+        >
+            <div className="space-y-6">
+                {/* Filters */}
+                <FilterBar>
+                    <div className="flex flex-wrap items-center gap-3 w-full">
+                        <Select
+                            options={[{ value: '', label: 'All Items' }, ...productOptions]}
+                            value={productId}
+                            onChange={(e) => setProductId(e.target.value)}
+                            placeholder="Item"
+                            className="min-w-[200px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Item Groups' }, ...groupOptions]}
+                            value={groupId}
+                            onChange={(e) => setGroupId(e.target.value)}
+                            placeholder="Item Group"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Categories' }, ...categoryOptions]}
+                            value={categoryId}
+                            onChange={(e) => setCategoryId(e.target.value)}
+                            placeholder="Category"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Brands' }, ...brandOptions]}
+                            value={brandId}
+                            onChange={(e) => setBrandId(e.target.value)}
+                            placeholder="Brand"
+                            className="min-w-[180px]"
+                        />
+                        {itemFiltersCount > 0 && (
+                            <Button size="sm" variant="ghost" onClick={() => {
+                                setProductId('');
+                                setGroupId('');
+                                setCategoryId('');
+                                setBrandId('');
+                            }}>
+                                Clear Items
+                            </Button>
+                        )}
+                        <div className="min-w-[240px]">
+                            <MultiSelectDropdown
+                                options={priceGroupOptions}
+                                selectedValues={selectedPriceGroupIds}
+                                onChange={setSelectedPriceGroupIds}
+                                placeholder="Select price groups"
+                            />
                         </div>
+                        <span className="text-xs text-text-tertiary ml-auto">{activeFilterCount} active filter{activeFilterCount !== 1 ? 's' : ''}</span>
                     </div>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">{activeFilterCount} active</span>
+                </FilterBar>
+
+                {/* KPI Summary */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <KpiCard label="Products" value={filteredProducts.length.toLocaleString()} />
+                    <KpiCard label="Unit Price Rows" value={rows.length.toLocaleString()} />
+                    <KpiCard label="Average Cost" value={money(avgCost, currency)} />
+                    <KpiCard label="Average Base Sale" value={money(avgSale, currency)} />
                 </div>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setPanel(panel === 'item' ? null : 'item')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Items Filter {itemFiltersCount > 0 ? `(${itemFiltersCount})` : ''}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'priceGroup' ? null : 'priceGroup')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Price Groups {selectedPriceGroupIds.length}/{priceGroups.length}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'columns' ? null : 'columns')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Columns {selectedColCount}</button>
+                {/* Column Toggles */}
+                <Section variant="card" title="Export Columns" headerBorder>
+                    <div className="flex items-center gap-2 mb-3">
+                        <Button size="sm" variant="ghost" onClick={() => setAllColumns(true)}>Select All</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setAllColumns(false)}>Clear All</Button>
+                        <span className="text-xs text-text-tertiary ml-auto">{selectedColCount} selected</span>
                     </div>
-
-                    {panel && (
-                        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                            <div className="mb-2 flex items-center justify-between">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-600">{panel} filter</p>
-                                <button type="button" onClick={() => setPanel(null)} className="rounded-md border border-slate-300 bg-white p-1 text-slate-500 hover:bg-slate-100"><X size={13} /></button>
-                            </div>
-
-                            {panel === 'item' && (
-                                <div className="space-y-3">
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item</p>
-                                            <AppDropdown value={productId} onChange={setProductId} options={[{ value: '', label: 'All Items' }, ...productOptions]} placeholder="Select item" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item Group</p>
-                                            <AppDropdown value={groupId} onChange={setGroupId} options={[{ value: '', label: 'All Item Groups' }, ...groupOptions]} placeholder="Select item group" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item Category</p>
-                                            <AppDropdown value={categoryId} onChange={setCategoryId} options={[{ value: '', label: 'All Categories' }, ...categoryOptions]} placeholder="Select category" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Brand</p>
-                                            <AppDropdown value={brandId} onChange={setBrandId} options={[{ value: '', label: 'All Brands' }, ...brandOptions]} placeholder="Select brand" searchable />
-                                        </div>
-                                    </div>
-                                    <div className="flex justify-end">
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setProductId('');
-                                                setGroupId('');
-                                                setCategoryId('');
-                                                setBrandId('');
-                                            }}
-                                            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                                        >
-                                            Clear Item Filters
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-
-                            {panel === 'priceGroup' && (
-                                <div className="space-y-3">
-                                    <div className="space-y-1">
-                                        <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Price Groups</p>
-                                        <MultiSelectDropdown
-                                            options={priceGroupOptions}
-                                            selectedValues={selectedPriceGroupIds}
-                                            onChange={setSelectedPriceGroupIds}
-                                            placeholder="Select price groups"
-                                        />
-                                    </div>
-                                    <p className="text-xs text-slate-500">
-                                        Prices are resolved using <span className="font-semibold">GET /sales/pricing/price-lists/price</span> for selected groups.
-                                    </p>
-                                </div>
-                            )}
-
-                            {panel === 'columns' && (
-                                <div className="space-y-3">
-                                    <div className="flex gap-2">
-                                        <button type="button" onClick={() => setAllColumns(true)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">Select all</button>
-                                        <button type="button" onClick={() => setAllColumns(false)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">Clear all</button>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-                                        {allColumns.map((col) => {
-                                            const active = selectedColumns[col.key] !== false;
-                                            return (
-                                                <button key={col.key} type="button" onClick={() => toggleColumn(col.key)} className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-xs font-semibold ${active ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>
-                                                    {active ? <CheckSquare size={13} /> : <Square size={13} />}
-                                                    {col.label}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {loading ? (
-                <div className="flex justify-center rounded-xl border border-slate-200 bg-white p-10"><Loader2 size={24} className="animate-spin text-blue-600" /></div>
-            ) : (
-                <>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Products</p><p className="mt-2 text-3xl font-black text-slate-900">{filteredProducts.length.toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Unit Price Rows</p><p className="mt-2 text-3xl font-black text-slate-900">{rows.length.toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Average Cost</p><p className="mt-2 text-3xl font-black text-blue-700">{money(avgCost, currency)}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Average Base Sale</p><p className="mt-2 text-3xl font-black text-emerald-600">{money(avgSale, currency)}</p></div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {allColumns.map((col) => (
+                            <label
+                                key={col.key}
+                                className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer hover:text-text-primary transition-colors"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedColumns[col.key] !== false}
+                                    onChange={() => toggleColumn(col.key)}
+                                    className="rounded border-border text-brand focus:ring-brand-200"
+                                />
+                                {col.label}
+                            </label>
+                        ))}
                     </div>
+                </Section>
 
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                            <div className="text-sm font-semibold text-slate-700">Live Preview ({previewRows.length})</div>
-                            <button type="button" onClick={handleExport} disabled={isExporting || rows.length === 0} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
-                                {isExporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                                {isExporting ? 'Generating...' : 'Export Excel'}
-                            </button>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                                    <tr>
-                                        <th className="px-4 py-3 text-left">Item Code</th>
-                                        <th className="px-4 py-3 text-left">Item Name</th>
-                                        <th className="px-4 py-3 text-left">Unit</th>
-                                        <th className="px-4 py-3 text-left">Unit Fraction</th>
-                                        <th className="px-4 py-3 text-right">Cost Price</th>
-                                        <th className="px-4 py-3 text-right">Base Sale Price</th>
-                                        {selectedPriceGroups.map((pg) => (
-                                            <th key={pg.id} className="px-4 py-3 text-right">{pg.name}</th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {previewRows.length === 0 && <tr><td colSpan={6 + selectedPriceGroups.length} className="px-4 py-8 text-center text-slate-500">No items found for selected filters.</td></tr>}
-                                    {previewRows.map((row) => (
-                                        <tr key={row.id} className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 font-semibold text-slate-800">{row.itemCode}</td>
-                                            <td className="px-4 py-3 text-slate-700">{row.itemName}</td>
-                                            <td className="px-4 py-3 text-slate-700">{row.unitName}</td>
-                                            <td className="px-4 py-3 text-slate-700">{row.unitFraction}</td>
-                                            <td className="px-4 py-3 text-right text-slate-800">{money(Number(row.costPrice || 0), currency)}</td>
-                                            <td className="px-4 py-3 text-right font-semibold text-slate-800">{money(Number(row.baseSalePrice || 0), currency)}</td>
-                                            {selectedPriceGroups.map((pg) => {
-                                                const key = `pg_${pg.id}`;
-                                                return <td key={key} className="px-4 py-3 text-right text-slate-800">{money(Number(row[key] || 0), currency)}</td>;
-                                            })}
-                                        </tr>
+                {/* Table */}
+                <Section variant="card" headerBorder>
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                        <div className="text-sm font-semibold text-text-primary">Live Preview ({previewRows.length})</div>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-background-subtle text-xs uppercase tracking-wider text-text-tertiary">
+                                <tr>
+                                    <th className="px-4 py-3 text-left">Item Code</th>
+                                    <th className="px-4 py-3 text-left">Item Name</th>
+                                    <th className="px-4 py-3 text-left">Unit</th>
+                                    <th className="px-4 py-3 text-left">Unit Fraction</th>
+                                    <th className="px-4 py-3 text-right">Cost Price</th>
+                                    <th className="px-4 py-3 text-right">Base Sale Price</th>
+                                    {selectedPriceGroups.map((pg) => (
+                                        <th key={pg.id} className="px-4 py-3 text-right">{pg.name}</th>
                                     ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {previewRows.length === 0 && <tr><td colSpan={6 + selectedPriceGroups.length} className="px-4 py-8 text-center text-text-tertiary">No items found for selected filters.</td></tr>}
+                                {previewRows.map((row) => (
+                                    <tr key={row.id} className="hover:bg-background-subtle transition-colors">
+                                        <td className="px-4 py-3 font-semibold text-text-primary">{row.itemCode}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{row.itemName}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{row.unitName}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{row.unitFraction}</td>
+                                        <td className="px-4 py-3 text-right text-text-primary">{money(Number(row.costPrice || 0), currency)}</td>
+                                        <td className="px-4 py-3 text-right font-semibold text-text-primary">{money(Number(row.baseSalePrice || 0), currency)}</td>
+                                        {selectedPriceGroups.map((pg) => {
+                                            const key = `pg_${pg.id}`;
+                                            return <td key={key} className="px-4 py-3 text-right text-text-primary">{money(Number(row[key] || 0), currency)}</td>;
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
-                </>
-            )}
-        </div>
+                </Section>
+            </div>
+        </PageTemplate>
     );
 }

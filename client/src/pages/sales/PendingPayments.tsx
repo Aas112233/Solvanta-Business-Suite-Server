@@ -9,10 +9,11 @@ import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import Pagination from '../../components/ui/Pagination';
 import { getSalesCustomerDisplay } from '../../lib/salesCustomerDisplay';
 import { toDateInputValue } from '../../lib/companySettings';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 export default function PendingPayments() {
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const today = toDateInputValue();
 
     const [page, setPage] = useState(1);

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../stores/authStore';
 import api from '../lib/api';
+import { DEFAULT_CURRENCY } from '../lib/constants';
 import toast from '@/lib/toast';
 import ModuleRefreshButton from '../components/ModuleRefreshButton';
 import ShiftCloseDialog from '../components/pos/ShiftCloseDialog';
@@ -88,7 +89,7 @@ export default function POS() {
     const localScanIndexRef = useRef<Map<string, { product: PosCachedProduct; unitCode: string | null }>>(new Map());
     const activeBucketRef = useRef<string>('default');
     const qc = useQueryClient();
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const companyName = useAuthStore((s) => s.user?.company?.name) || 'SOLVANTA ERP';
     const companyTax = useCompanyTaxSettings();
 

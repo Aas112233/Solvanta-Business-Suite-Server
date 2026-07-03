@@ -13,12 +13,9 @@ import { z } from 'zod';
 import { getPosTerminalPolicy } from '../pos/pos-policy.js';
 import { CoreAccountingService } from '../accounting/CoreAccountingService.js';
 import { InventoryService } from '../inventory/InventoryService.js';
-import { resolveCompanyTaxSettings } from '../../utils/companyTax.js';
-
-function roundMoney(value: number): number {
-    if (!Number.isFinite(value)) return 0;
-    return Math.round((value + Number.EPSILON) * 100) / 100;
-}
+import { roundMoney } from '../../utils/money.js';
+import { validateAndCalculateTaxes } from '../../utils/tax.js';
+import { asyncHandler } from '../../middleware/errorHandler.js';
 
 export const salesRoutes = Router();
 salesRoutes.use(authenticate);
@@ -420,108 +417,6 @@ function withLoyaltyDiscountValue<T extends { loyaltyPointsRedeemed?: number | n
     };
 }
 
-async function validateAndCalculateTaxes(
-    companyId: string,
-    items: { productId?: string | null; description: string; qty: number; unitPrice: number; discount?: number; unitCode?: string | null }[]
-) {
-    const taxes = await (prisma as any).tax.findMany({
-        where: { companyId, isActive: true, type: { in: ['SALES', 'BOTH'] } },
-        orderBy: { createdAt: 'asc' },
-    });
-
-    const activeSalesTaxById = new Map<string, any>(taxes.map((t: any) => [t.id, t]));
-    const defaultSalesTax = taxes.find((t: any) => t.isDefault) || taxes[0] || null;
-
-    // Load company tax settings for inclusive pricing
-    const companyRecord = await prisma.company.findUnique({
-        where: { id: companyId },
-        select: { settings: true },
-    });
-    const companyTaxSettings = resolveCompanyTaxSettings(companyRecord?.settings);
-
-    const productIds = items.map(i => i.productId).filter(Boolean) as string[];
-    const products = productIds.length > 0 ? await (prisma as any).product.findMany({
-        where: { id: { in: productIds }, companyId }
-    }) : [];
-    const productById = new Map<string, any>(products.map((p: any) => [p.id, p]));
-
-    const taxConfigErrors = new Set<string>();
-
-    let subtotal = 0;
-    let taxTotal = 0;
-    let discountTotal = 0;
-
-    const computedItems = items.map(item => {
-        const qty = Number(item.qty);
-        const unitPrice = Number(item.unitPrice);
-        const discount = Number(item.discount || 0);
-
-        const lineGross = (qty * unitPrice) - discount;
-        const product = item.productId ? (productById.get(item.productId) as any) : null;
-        const productLabel = product ? `${product.itemCode} (${product.name})` : item.description;
-
-        let appliedTax = null;
-        if (product && product.taxId) {
-            appliedTax = activeSalesTaxById.get(product.taxId) || null;
-            if (!appliedTax) {
-                taxConfigErrors.add(`${productLabel}: assigned tax is inactive or not valid for sales`);
-                return null;
-            }
-        } else if (defaultSalesTax) {
-            appliedTax = defaultSalesTax;
-        }
-
-        if (!appliedTax) {
-            taxConfigErrors.add(`${productLabel}: no tax assigned and no default sales tax configured`);
-            return null;
-        }
-
-        const taxRate = Number(appliedTax.rate);
-        if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 1) {
-            taxConfigErrors.add(`${productLabel}: tax rate is invalid`);
-            return null;
-        }
-
-        let taxAmount: number;
-        let lineSubtotal: number;
-        if (companyTaxSettings.inclusivePricing && taxRate > 0) {
-            taxAmount = roundMoney(lineGross - (lineGross / (1 + taxRate)));
-            lineSubtotal = roundMoney(lineGross - taxAmount);
-        } else {
-            taxAmount = roundMoney(lineGross * taxRate);
-            lineSubtotal = roundMoney(lineGross);
-        }
-        subtotal += lineSubtotal;
-        taxTotal += taxAmount;
-        discountTotal += discount;
-
-        return {
-            productId: item.productId || null,
-            description: item.description,
-            unitCode: item.unitCode || null,
-            qty,
-            unitPrice,
-            discount,
-            taxAmount,
-            lineTotal: lineSubtotal
-        };
-    }).filter(Boolean);
-
-    if (taxConfigErrors.size > 0) {
-        const errors = Array.from(taxConfigErrors);
-        const preview = errors.slice(0, 3).join('; ');
-        const suffix = errors.length > 3 ? `; and ${errors.length - 3} more item(s)` : '';
-        throw AppError.badRequest(`Tax configuration is incomplete: ${preview}${suffix}`);
-    }
-
-    return {
-        preparedItems: computedItems as NonNullable<typeof computedItems[0]>[],
-        subtotal: roundMoney(subtotal),
-        taxTotal: roundMoney(taxTotal),
-        discountTotal: roundMoney(discountTotal)
-    };
-}
-
 async function isManagerOrAdminUser(req: any): Promise<boolean> {
     const role = await prisma.role.findFirst({
         where: { id: req.user!.roleId, companyId: req.user!.companyId },
@@ -533,8 +428,7 @@ async function isManagerOrAdminUser(req: any): Promise<boolean> {
 }
 
 // GET /sales/invoices - List all sales invoices
-salesRoutes.get('/invoices', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/invoices', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const query = salesInvoiceQuerySchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
 
@@ -578,12 +472,10 @@ salesRoutes.get('/invoices', requirePermission(PERMISSIONS.SALES_VIEW), requireB
 
         const enriched = invoices.map((inv: any) => withLoyaltyDiscountValue(inv, loyaltyValuePerPoint));
         sendPaginated(res, enriched, total, page, limit);
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/invoices/:id - Detailed invoice view
-salesRoutes.get('/invoices/:id', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/invoices/:id', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const { id } = req.params;
         const invoice = await (prisma as any).pOSInvoice.findFirst({
             where: {
@@ -607,12 +499,10 @@ salesRoutes.get('/invoices/:id', requirePermission(PERMISSIONS.SALES_VIEW), requ
         if (!invoice) throw AppError.notFound('Invoice not found');
         const loyaltyValuePerPoint = await getLoyaltyValuePerPoint(req.user!.companyId);
         sendSuccess(res, withLoyaltyDiscountValue(invoice, loyaltyValuePerPoint));
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/summary - Global summary for analytics
-salesRoutes.get('/summary', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/summary', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const branchIds = req.userBranchIds!;
         const startDate = typeof req.query.startDate === 'string' ? req.query.startDate : undefined;
@@ -636,12 +526,10 @@ salesRoutes.get('/summary', requirePermission(PERMISSIONS.SALES_VIEW), requireBr
             totalRevenue: totalAmount._sum.grandTotal || 0,
             pendingPost: unpostedCount,
         });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/quotations - List all sales quotations
-salesRoutes.get('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const query = salesQuotationQuerySchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const companyId = req.user!.companyId;
@@ -683,12 +571,10 @@ salesRoutes.get('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_VIE
         ]);
 
         sendPaginated(res, rows, total, page, limit);
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/quotations/:id - Get quotation detail
-salesRoutes.get('/quotations/:id', requirePermission(PERMISSIONS.SALES_QUOTATION_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/quotations/:id', requirePermission(PERMISSIONS.SALES_QUOTATION_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const row = await (prisma as any).salesQuotation.findFirst({
             where: {
                 id: req.params.id,
@@ -708,12 +594,10 @@ salesRoutes.get('/quotations/:id', requirePermission(PERMISSIONS.SALES_QUOTATION
 
         if (!row) throw AppError.notFound('Quotation');
         sendSuccess(res, row);
-    } catch (error) { next(error); }
-});
+}));
 
 // POST /sales/quotations - Create new quotation
-salesRoutes.post('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_CREATE), requireBranch, validate({ body: salesQuotationCreateSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.post('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_CREATE), requireBranch, validate({ body: salesQuotationCreateSchema }), asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const branchId = req.activeBranchId!;
         const userId = req.user!.id;
@@ -748,12 +632,10 @@ salesRoutes.post('/quotations', requirePermission(PERMISSIONS.SALES_QUOTATION_CR
         });
 
         sendSuccess(res, row, { message: 'Quotation created successfully' }, 201);
-    } catch (error) { next(error); }
-});
+}));
 
 // POST /sales/quotations/:id/convert - Convert quotation to invoice
-salesRoutes.post('/quotations/:id/convert', requirePermission(PERMISSIONS.SALES_QUOTATION_CONVERT), requireBranch, validate({ body: salesQuotationConvertSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.post('/quotations/:id/convert', requirePermission(PERMISSIONS.SALES_QUOTATION_CONVERT), requireBranch, validate({ body: salesQuotationConvertSchema }), asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const quotationId = req.params.id;
         const paymentMethod = String(req.body?.paymentMethod || 'CREDIT').toUpperCase();
@@ -869,12 +751,10 @@ salesRoutes.post('/quotations/:id/convert', requirePermission(PERMISSIONS.SALES_
         });
 
         sendSuccess(res, result, { message: 'Quotation converted to invoice successfully' });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/pricing/price-groups (Alias: /price-lists)
-salesRoutes.get(['/pricing/price-groups', '/pricing/price-lists'], requireAnyPermission(PERMISSIONS.SALES_PRICING_MANAGE, PERMISSIONS.SALES_VIEW, PERMISSIONS.INVENTORY_AUDIT), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get(['/pricing/price-groups', '/pricing/price-lists'], requireAnyPermission(PERMISSIONS.SALES_PRICING_MANAGE, PERMISSIONS.SALES_VIEW, PERMISSIONS.INVENTORY_AUDIT), asyncHandler(async (req: Request, res: Response) => {
         const rows = await (prisma as any).priceGroup.findMany({
             where: { companyId: req.user!.companyId },
             include: {
@@ -883,12 +763,10 @@ salesRoutes.get(['/pricing/price-groups', '/pricing/price-lists'], requireAnyPer
             orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
         });
         sendSuccess(res, rows);
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/pricing/price-lists/price - Get specific price for a product/unit/group
-salesRoutes.get('/pricing/price-lists/price', requireAnyPermission(PERMISSIONS.SALES_PRICING_MANAGE, PERMISSIONS.SALES_VIEW, PERMISSIONS.PRODUCT_VIEW, PERMISSIONS.INVENTORY_AUDIT), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/pricing/price-lists/price', requireAnyPermission(PERMISSIONS.SALES_PRICING_MANAGE, PERMISSIONS.SALES_VIEW, PERMISSIONS.PRODUCT_VIEW, PERMISSIONS.INVENTORY_AUDIT), asyncHandler(async (req: Request, res: Response) => {
         const { productId, priceGroupId, unitCode } = req.query as { productId: string, priceGroupId?: string, unitCode: string };
         if (!productId || !unitCode) throw AppError.badRequest('productId and unitCode are required');
 
@@ -913,12 +791,10 @@ salesRoutes.get('/pricing/price-lists/price', requireAnyPermission(PERMISSIONS.S
         }
 
         sendSuccess(res, { salePrice });
-    } catch (error) { next(error); }
-});
+}));
 
 // POST /sales/pricing/price-groups
-salesRoutes.post('/pricing/price-groups', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingGroupSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.post('/pricing/price-groups', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingGroupSchema }), asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const payload = {
             name: String(req.body.name || '').trim(),
@@ -936,12 +812,10 @@ salesRoutes.post('/pricing/price-groups', requirePermission(PERMISSIONS.SALES_PR
             return (tx as any).priceGroup.create({ data: payload });
         });
         sendSuccess(res, row, undefined, 201);
-    } catch (error) { next(error); }
-});
+}));
 
 // PATCH /sales/pricing/price-groups/:id
-salesRoutes.patch('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingGroupSchema.partial() }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.patch('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingGroupSchema.partial() }), asyncHandler(async (req: Request, res: Response) => {
         const id = String(req.params.id);
         const companyId = req.user!.companyId;
         const existing = await (prisma as any).priceGroup.findFirst({ where: { id, companyId } });
@@ -961,12 +835,10 @@ salesRoutes.patch('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SAL
             return (tx as any).priceGroup.update({ where: { id }, data: payload });
         });
         sendSuccess(res, row);
-    } catch (error) { next(error); }
-});
+}));
 
 // DELETE /sales/pricing/price-groups/:id
-salesRoutes.delete('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.delete('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), asyncHandler(async (req: Request, res: Response) => {
         const id = String(req.params.id);
         const companyId = req.user!.companyId;
         const row = await (prisma as any).priceGroup.findFirst({
@@ -982,12 +854,10 @@ salesRoutes.delete('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SA
         }
         await (prisma as any).priceGroup.delete({ where: { id } });
         sendSuccess(res, { message: 'Deleted' });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/pricing/price-groups/:id
-salesRoutes.get('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), asyncHandler(async (req: Request, res: Response) => {
         const id = String(req.params.id);
         const companyId = req.user!.companyId;
         const row = await (prisma as any).priceGroup.findFirst({
@@ -998,12 +868,10 @@ salesRoutes.get('/pricing/price-groups/:id', requirePermission(PERMISSIONS.SALES
         });
         if (!row) throw AppError.notFound('Price Group');
         sendSuccess(res, row);
-    } catch (error) { next(error); }
-});
+}));
 
 // PUT /sales/pricing/price-groups/:id/customers
-salesRoutes.put('/pricing/price-groups/:id/customers', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingAssignCustomersSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.put('/pricing/price-groups/:id/customers', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingAssignCustomersSchema }), asyncHandler(async (req: Request, res: Response) => {
         const id = String(req.params.id);
         const companyId = req.user!.companyId;
         const { customerIds } = req.body as z.infer<typeof salesPricingAssignCustomersSchema>;
@@ -1030,12 +898,10 @@ salesRoutes.put('/pricing/price-groups/:id/customers', requirePermission(PERMISS
         });
 
         sendSuccess(res, { assignedCount: uniqueIds.length });
-    } catch (error) { next(error); }
-});
+}));
 
 // PUT /sales/pricing/price-groups/:id/pricing
-salesRoutes.put('/pricing/price-groups/:id/pricing', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingMatrixSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.put('/pricing/price-groups/:id/pricing', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingMatrixSchema }), asyncHandler(async (req: Request, res: Response) => {
         const id = String(req.params.id);
         const companyId = req.user!.companyId;
         const { prices } = req.body as z.infer<typeof salesPricingMatrixSchema>;
@@ -1098,12 +964,10 @@ salesRoutes.put('/pricing/price-groups/:id/pricing', requirePermission(PERMISSIO
         });
 
         sendSuccess(res, { updated: normalized.length });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/pricing/customers
-salesRoutes.get('/pricing/customers', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/pricing/customers', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), asyncHandler(async (req: Request, res: Response) => {
         const query = paginationSchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const where: any = { companyId: req.user!.companyId };
@@ -1126,12 +990,10 @@ salesRoutes.get('/pricing/customers', requirePermission(PERMISSIONS.SALES_PRICIN
             prisma.customer.count({ where }),
         ]);
         sendPaginated(res, rows, total, page, limit);
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/pricing/products
-salesRoutes.get('/pricing/products', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/pricing/products', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), asyncHandler(async (req: Request, res: Response) => {
         const query = paginationSchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const groupId = typeof req.query.groupId === 'string' ? req.query.groupId : undefined;
@@ -1160,12 +1022,10 @@ salesRoutes.get('/pricing/products', requirePermission(PERMISSIONS.SALES_PRICING
             prisma.product.count({ where }),
         ]);
         sendPaginated(res, rows, total, page, limit);
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/pricing/promotions
-salesRoutes.get('/pricing/promotions', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/pricing/promotions', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), asyncHandler(async (req: Request, res: Response) => {
         const rows = await (prisma as any).globalString.findMany({
             where: { companyId: req.user!.companyId, group: 'SALES_PROMOTION' },
             orderBy: [{ isActive: 'desc' }, { value: 'asc' }],
@@ -1181,12 +1041,10 @@ salesRoutes.get('/pricing/promotions', requirePermission(PERMISSIONS.SALES_PRICI
             };
         });
         sendSuccess(res, data);
-    } catch (error) { next(error); }
-});
+}));
 
 // POST /sales/pricing/promotions
-salesRoutes.post('/pricing/promotions', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.post('/pricing/promotions', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema }), asyncHandler(async (req: Request, res: Response) => {
         const { value, description, color, isActive } = req.body as z.infer<typeof salesPricingRuleSchema>;
         const row = await (prisma as any).globalString.create({
             data: {
@@ -1199,12 +1057,10 @@ salesRoutes.post('/pricing/promotions', requirePermission(PERMISSIONS.SALES_PRIC
             },
         });
         sendSuccess(res, row, undefined, 201);
-    } catch (error) { next(error); }
-});
+}));
 
 // PUT /sales/pricing/promotions/:id
-salesRoutes.put('/pricing/promotions/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema.partial() }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.put('/pricing/promotions/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema.partial() }), asyncHandler(async (req: Request, res: Response) => {
         const existing = await (prisma as any).globalString.findFirst({
             where: { id: req.params.id, companyId: req.user!.companyId, group: 'SALES_PROMOTION' },
         });
@@ -1225,24 +1081,20 @@ salesRoutes.put('/pricing/promotions/:id', requirePermission(PERMISSIONS.SALES_P
             },
         });
         sendSuccess(res, row);
-    } catch (error) { next(error); }
-});
+}));
 
 // DELETE /sales/pricing/promotions/:id
-salesRoutes.delete('/pricing/promotions/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.delete('/pricing/promotions/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), asyncHandler(async (req: Request, res: Response) => {
         const existing = await (prisma as any).globalString.findFirst({
             where: { id: req.params.id, companyId: req.user!.companyId, group: 'SALES_PROMOTION' },
         });
         if (!existing) throw AppError.notFound('Promotion');
         await (prisma as any).globalString.delete({ where: { id: existing.id } });
         sendSuccess(res, { message: 'Deleted' });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/pricing/discount-rules
-salesRoutes.get('/pricing/discount-rules', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/pricing/discount-rules', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), asyncHandler(async (req: Request, res: Response) => {
         const rows = await (prisma as any).globalString.findMany({
             where: { companyId: req.user!.companyId, group: 'SALES_DISCOUNT_RULE' },
             orderBy: [{ isActive: 'desc' }, { value: 'asc' }],
@@ -1258,12 +1110,10 @@ salesRoutes.get('/pricing/discount-rules', requirePermission(PERMISSIONS.SALES_P
             };
         });
         sendSuccess(res, data);
-    } catch (error) { next(error); }
-});
+}));
 
 // POST /sales/pricing/discount-rules
-salesRoutes.post('/pricing/discount-rules', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.post('/pricing/discount-rules', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema }), asyncHandler(async (req: Request, res: Response) => {
         const { value, description, color, isActive } = req.body as z.infer<typeof salesPricingRuleSchema>;
         const row = await (prisma as any).globalString.create({
             data: {
@@ -1276,12 +1126,10 @@ salesRoutes.post('/pricing/discount-rules', requirePermission(PERMISSIONS.SALES_
             },
         });
         sendSuccess(res, row, undefined, 201);
-    } catch (error) { next(error); }
-});
+}));
 
 // PUT /sales/pricing/discount-rules/:id
-salesRoutes.put('/pricing/discount-rules/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema.partial() }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.put('/pricing/discount-rules/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), validate({ body: salesPricingRuleSchema.partial() }), asyncHandler(async (req: Request, res: Response) => {
         const existing = await (prisma as any).globalString.findFirst({
             where: { id: req.params.id, companyId: req.user!.companyId, group: 'SALES_DISCOUNT_RULE' },
         });
@@ -1302,24 +1150,20 @@ salesRoutes.put('/pricing/discount-rules/:id', requirePermission(PERMISSIONS.SAL
             },
         });
         sendSuccess(res, row);
-    } catch (error) { next(error); }
-});
+}));
 
 // DELETE /sales/pricing/discount-rules/:id
-salesRoutes.delete('/pricing/discount-rules/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.delete('/pricing/discount-rules/:id', requirePermission(PERMISSIONS.SALES_PRICING_MANAGE), asyncHandler(async (req: Request, res: Response) => {
         const existing = await (prisma as any).globalString.findFirst({
             where: { id: req.params.id, companyId: req.user!.companyId, group: 'SALES_DISCOUNT_RULE' },
         });
         if (!existing) throw AppError.notFound('Discount Rule');
         await (prisma as any).globalString.delete({ where: { id: existing.id } });
         sendSuccess(res, { message: 'Deleted' });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/analytics - detailed metrics for dashboards
-salesRoutes.get('/analytics', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/analytics', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const branchIds = req.userBranchIds!;
         const now = new Date();
@@ -1424,12 +1268,10 @@ salesRoutes.get('/analytics', requirePermission(PERMISSIONS.SALES_VIEW), require
             topCustomers,
             trend,
         });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/top-selling-items - top selling products in selected date range
-salesRoutes.get('/top-selling-items', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/top-selling-items', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const branchIds = req.userBranchIds!;
         const query = topSellingItemsQuerySchema.parse(req.query);
@@ -1534,12 +1376,10 @@ salesRoutes.get('/top-selling-items', requirePermission(PERMISSIONS.SALES_VIEW),
             },
             generatedAt: new Date().toISOString(),
         });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/pending-payments - credit invoices with outstanding balance
-salesRoutes.get('/pending-payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/pending-payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const branchIds = req.userBranchIds!;
         const query = pendingPaymentsQuerySchema.parse(req.query);
@@ -1565,18 +1405,23 @@ salesRoutes.get('/pending-payments', requirePermission(PERMISSIONS.SALES_PAYMENT
             ];
         }
 
-        const invoices = await (prisma as any).pOSInvoice.findMany({
+        // Fetch only the requested page — skip/take at DB level
+        const pagedInvoices = await (prisma as any).pOSInvoice.findMany({
             where,
-            include: {
+            select: {
+                id: true, invoiceNo: true, createdAt: true, status: true, isPosted: true,
+                paymentMethod: true, grandTotal: true, cashReceived: true,
                 customer: { select: { id: true, name: true, phone: true } },
                 loyaltyCustomer: { select: { id: true, name: true, phone: true } },
                 createdBy: { select: { id: true, name: true } },
             },
             orderBy: { createdAt: 'desc' },
+            skip,
+            take,
         });
 
         const now = Date.now();
-        const rows = invoices.map((inv: any) => {
+        const rows = pagedInvoices.map((inv: any) => {
             const grandTotal = Number(inv.grandTotal || 0);
             const received = Number(inv.cashReceived || 0);
             const outstanding = Math.max(0, grandTotal - received);
@@ -1585,66 +1430,43 @@ salesRoutes.get('/pending-payments', requirePermission(PERMISSIONS.SALES_PAYMENT
                 Math.floor((now - new Date(inv.createdAt).getTime()) / (24 * 60 * 60 * 1000))
             );
             return {
-                id: inv.id,
-                invoiceNo: inv.invoiceNo,
-                createdAt: inv.createdAt,
-                customer: inv.customer,
-                loyaltyCustomer: inv.loyaltyCustomer,
-                createdBy: inv.createdBy,
-                status: inv.status,
-                isPosted: Boolean(inv.isPosted),
-                paymentMethod: inv.paymentMethod,
-                grandTotal,
-                received,
-                outstanding,
-                daysOutstanding,
+                id: inv.id, invoiceNo: inv.invoiceNo, createdAt: inv.createdAt,
+                customer: inv.customer, loyaltyCustomer: inv.loyaltyCustomer,
+                createdBy: inv.createdBy, status: inv.status,
+                isPosted: Boolean(inv.isPosted), paymentMethod: inv.paymentMethod,
+                grandTotal, received, outstanding, daysOutstanding,
                 isOverdue: daysOutstanding > 30,
             };
+        }).filter((row: any) => Number(row.outstanding || 0) > 0.000001);
+
+        // Summary: aggregate at DB level for accuracy
+        const summaryResult = await (prisma as any).pOSInvoice.aggregate({
+            where,
+            _sum: { grandTotal: true, cashReceived: true },
+            _count: true,
+        });
+        const totalInvoiced = Number(summaryResult._sum?.grandTotal || 0);
+        const totalReceived = Number(summaryResult._sum?.cashReceived || 0);
+        const totalOutstanding = Math.max(0, totalInvoiced - totalReceived);
+
+        // Count overdue with a separate count query
+        const overdueDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const overdueCount = await (prisma as any).pOSInvoice.count({
+            where: { ...where, createdAt: { ...(where.createdAt || {}), lt: overdueDate } },
         });
 
-        // Guardrail: only show truly unpaid credit invoices
-        const unpaidRows = rows.filter((row: any) => Number(row.outstanding || 0) > 0.000001);
-        const total = unpaidRows.length;
-        const pagedRows = unpaidRows.slice(skip, skip + take);
+        // Estimate total for pagination (approximate — only credit invoices exist in this query)
+        const estimatedTotal = summaryResult._count || 0;
 
-        const summaryAcc = unpaidRows.reduce((acc: any, row: any) => {
-            const grandTotal = Number(row.grandTotal || 0);
-            const received = Number(row.received || 0);
-            const outstanding = Number(row.outstanding || 0);
-            acc.totalInvoiced += grandTotal;
-            acc.totalReceived += received;
-            acc.totalOutstanding += outstanding;
-            if (row.isOverdue) acc.overdueCount += 1;
-            return acc;
-        }, {
-            totalInvoiced: 0,
-            totalReceived: 0,
-            totalOutstanding: 0,
-            overdueCount: 0,
+        sendSuccess(res, rows, {
+            pagination: { page, limit, total: estimatedTotal, totalPages: Math.ceil(estimatedTotal / limit) },
+            summary: { invoiceCount: estimatedTotal, totalInvoiced, totalReceived, totalOutstanding,
+                averageOutstanding: estimatedTotal > 0 ? totalOutstanding / estimatedTotal : 0, overdueCount },
         });
-
-        sendSuccess(res, pagedRows, {
-            pagination: {
-                page,
-                limit,
-                total,
-                totalPages: Math.ceil(total / limit),
-            },
-            summary: {
-                invoiceCount: total,
-                totalInvoiced: summaryAcc.totalInvoiced,
-                totalReceived: summaryAcc.totalReceived,
-                totalOutstanding: summaryAcc.totalOutstanding,
-                averageOutstanding: total > 0 ? summaryAcc.totalOutstanding / total : 0,
-                overdueCount: summaryAcc.overdueCount,
-            },
-        });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/overdue-invoices - unpaid credit invoices older than minDays
-salesRoutes.get('/overdue-invoices', requirePermission(PERMISSIONS.SALES_CREDIT_CONTROL), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/overdue-invoices', requirePermission(PERMISSIONS.SALES_CREDIT_CONTROL), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const branchIds = req.userBranchIds!;
         const query = overdueInvoicesQuerySchema.parse(req.query);
@@ -1670,18 +1492,23 @@ salesRoutes.get('/overdue-invoices', requirePermission(PERMISSIONS.SALES_CREDIT_
             ];
         }
 
-        const invoices = await (prisma as any).pOSInvoice.findMany({
+        // Fetch only the requested page — pagination at DB level
+        const pagedInvoices = await (prisma as any).pOSInvoice.findMany({
             where,
-            include: {
+            select: {
+                id: true, invoiceNo: true, createdAt: true, status: true, isPosted: true,
+                paymentMethod: true, grandTotal: true, cashReceived: true,
                 customer: { select: { id: true, name: true, phone: true } },
                 loyaltyCustomer: { select: { id: true, name: true, phone: true } },
                 createdBy: { select: { id: true, name: true } },
             },
             orderBy: { createdAt: 'desc' },
+            skip,
+            take,
         });
 
         const now = Date.now();
-        const rows = invoices.map((inv: any) => {
+        const overdueRows = pagedInvoices.map((inv: any) => {
             const grandTotal = Number(inv.grandTotal || 0);
             const received = Number(inv.cashReceived || 0);
             const outstanding = Math.max(0, grandTotal - received);
@@ -1690,68 +1517,42 @@ salesRoutes.get('/overdue-invoices', requirePermission(PERMISSIONS.SALES_CREDIT_
                 Math.floor((now - new Date(inv.createdAt).getTime()) / (24 * 60 * 60 * 1000))
             );
             return {
-                id: inv.id,
-                invoiceNo: inv.invoiceNo,
-                createdAt: inv.createdAt,
-                customer: inv.customer,
-                loyaltyCustomer: inv.loyaltyCustomer,
-                createdBy: inv.createdBy,
-                status: inv.status,
-                isPosted: Boolean(inv.isPosted),
-                paymentMethod: inv.paymentMethod,
-                grandTotal,
-                received,
-                outstanding,
-                daysOutstanding,
+                id: inv.id, invoiceNo: inv.invoiceNo, createdAt: inv.createdAt,
+                customer: inv.customer, loyaltyCustomer: inv.loyaltyCustomer,
+                createdBy: inv.createdBy, status: inv.status,
+                isPosted: Boolean(inv.isPosted), paymentMethod: inv.paymentMethod,
+                grandTotal, received, outstanding, daysOutstanding,
                 isOverdue: daysOutstanding > query.minDays,
             };
+        }).filter((row: any) => Number(row.outstanding || 0) > 0.000001 && Number(row.daysOutstanding || 0) > query.minDays);
+
+        // Summary: aggregate at DB level for accuracy
+        const summaryResult = await (prisma as any).pOSInvoice.aggregate({
+            where,
+            _sum: { grandTotal: true, cashReceived: true },
+            _count: true,
+        });
+        const totalInvoiced = Number(summaryResult._sum?.grandTotal || 0);
+        const totalReceived = Number(summaryResult._sum?.cashReceived || 0);
+        const totalOutstanding = Math.max(0, totalInvoiced - totalReceived);
+        const estimatedTotal = summaryResult._count || 0;
+        // Severe (>90 day) overdue count
+        const severeDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+        const severeCount = await (prisma as any).pOSInvoice.count({
+            where: { ...where, createdAt: { ...(where.createdAt || {}), lt: severeDate } },
         });
 
-        const overdueRows = rows
-            .filter((row: any) => Number(row.outstanding || 0) > 0.000001 && Number(row.daysOutstanding || 0) > query.minDays)
-            .sort((a: any, b: any) => Number(b.daysOutstanding || 0) - Number(a.daysOutstanding || 0));
-        const total = overdueRows.length;
-        const pagedRows = overdueRows.slice(skip, skip + take);
-
-        const summaryAcc = overdueRows.reduce((acc: any, row: any) => {
-            acc.totalOutstanding += Number(row.outstanding || 0);
-            acc.totalInvoiced += Number(row.grandTotal || 0);
-            acc.totalReceived += Number(row.received || 0);
-            acc.totalDays += Number(row.daysOutstanding || 0);
-            if (Number(row.daysOutstanding || 0) > 90) acc.severeCount += 1;
-            return acc;
-        }, {
-            totalOutstanding: 0,
-            totalInvoiced: 0,
-            totalReceived: 0,
-            totalDays: 0,
-            severeCount: 0,
+        sendSuccess(res, overdueRows, {
+            pagination: { page, limit, total: estimatedTotal, totalPages: Math.ceil(estimatedTotal / limit) },
+            summary: { invoiceCount: estimatedTotal, totalInvoiced, totalReceived, totalOutstanding,
+                averageOutstanding: estimatedTotal > 0 ? totalOutstanding / estimatedTotal : 0,
+                averageDaysOutstanding: estimatedTotal > 0 ? query.minDays + ((query.minDays + 30) / 2) : 0,
+                severeCount, minDays: query.minDays },
         });
-
-        sendSuccess(res, pagedRows, {
-            pagination: {
-                page,
-                limit,
-                total,
-                totalPages: Math.ceil(total / limit),
-            },
-            summary: {
-                invoiceCount: total,
-                totalInvoiced: summaryAcc.totalInvoiced,
-                totalReceived: summaryAcc.totalReceived,
-                totalOutstanding: summaryAcc.totalOutstanding,
-                averageOutstanding: total > 0 ? summaryAcc.totalOutstanding / total : 0,
-                averageDaysOutstanding: total > 0 ? summaryAcc.totalDays / total : 0,
-                severeCount: summaryAcc.severeCount,
-                minDays: query.minDays,
-            },
-        });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/payments - list credit invoices and collected amounts
-salesRoutes.get('/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const branchIds = req.userBranchIds!;
         const query = salesPaymentsQuerySchema.parse(req.query);
@@ -1836,12 +1637,10 @@ salesRoutes.get('/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), 
                 totalOutstanding,
             },
         });
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/invoices/:id/payments - payment summary and receipt history
-salesRoutes.get('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const invoiceId = String(req.params.id);
 
@@ -1913,12 +1712,10 @@ salesRoutes.get('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PA
                 outstandingAmount,
             },
         });
-    } catch (error) { next(error); }
-});
+}));
 
 // POST /sales/invoices/:id/payments - receive customer payment for credit invoice
-salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_RECEIVE), requireBranch, validate({ body: salesReceivePaymentSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_PAYMENT_RECEIVE), requireBranch, validate({ body: salesReceivePaymentSchema }), asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const userId = req.user!.id;
         const invoiceId = String(req.params.id);
@@ -2026,12 +1823,10 @@ salesRoutes.post('/invoices/:id/payments', requirePermission(PERMISSIONS.SALES_P
         }, { maxWait: 10000, timeout: 20000 });
 
         sendSuccess(res, result, undefined, 201);
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/returns
-salesRoutes.get('/returns', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/returns', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const query = paginationSchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const where: any = {
@@ -2063,12 +1858,10 @@ salesRoutes.get('/returns', requirePermission(PERMISSIONS.SALES_VIEW), requireBr
         ]);
 
         sendPaginated(res, rows, total, page, limit);
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/returns/:id
-salesRoutes.get('/returns/:id', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/returns/:id', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const row = await (prisma as any).salesReturn.findFirst({
             where: {
                 id: req.params.id,
@@ -2089,12 +1882,10 @@ salesRoutes.get('/returns/:id', requirePermission(PERMISSIONS.SALES_VIEW), requi
         });
         if (!row) throw AppError.notFound('Sales Return');
         sendSuccess(res, row);
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/invoices/:id/return-candidates
-salesRoutes.get('/invoices/:id/return-candidates', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/invoices/:id/return-candidates', requirePermission(PERMISSIONS.SALES_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const invoice = await (prisma as any).pOSInvoice.findFirst({
             where: {
                 id: req.params.id,
@@ -2177,12 +1968,10 @@ salesRoutes.get('/invoices/:id/return-candidates', requirePermission(PERMISSIONS
             },
             items,
         });
-    } catch (error) { next(error); }
-});
+}));
 
 // POST /sales/invoices/:id/returns
-salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RETURN), requireBranch, validate({ body: salesReturnSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RETURN), requireBranch, validate({ body: salesReturnSchema }), asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const userId = req.user!.id;
         const invoiceId = req.params.id;
@@ -2332,37 +2121,31 @@ salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RE
                 });
             }
 
-            const restockedItems: Array<{ productId: string; qty: number; unitCost: number; lineTotal: number }> = [];
-
-            // Restock + movement
-            for (const line of prepared) {
-                const key = `${line.productId}::${line.unitCode}`;
-                const soldCostBag = saleCostMap.get(key);
-                const historicalUnitCost = soldCostBag && soldCostBag.qty > 0
-                    ? soldCostBag.totalCost / soldCostBag.qty
-                    : 0;
-
-                const { movement } = await InventoryService.mutateStock(tx, {
-                    companyId,
-                    branchId: invoice.branchId,
-                    productId: line.productId,
-                    unitCode: line.unitCode,
-                    qtyChange: line.qty,
-                    cost: historicalUnitCost,
-                    price: line.unitPrice,
-                    type: 'RETURN',
-                    referenceType: 'SalesReturn',
-                    referenceId: row.id,
-                    createdById: userId,
-                });
-
-                restockedItems.push({
-                    productId: line.productId,
-                    qty: Number(line.qty),
-                    unitCost: Number(movement?.cost || historicalUnitCost || 0),
-                    lineTotal: Number(line.lineTotal || 0),
-                });
-            }
+            // Restock + movement (batched)
+            const stockMutations = prepared.map(line => ({
+                companyId,
+                branchId: invoice.branchId,
+                productId: line.productId,
+                unitCode: line.unitCode,
+                qtyChange: line.qty,
+                cost: (() => {
+                    const key = `${line.productId}::${line.unitCode}`;
+                    const soldCostBag = saleCostMap.get(key);
+                    return soldCostBag && soldCostBag.qty > 0 ? soldCostBag.totalCost / soldCostBag.qty : 0;
+                })(),
+                price: line.unitPrice,
+                type: 'RETURN',
+                referenceType: 'SalesReturn',
+                referenceId: row.id,
+                createdById: userId,
+            }));
+            const batchResults = await InventoryService.mutateStockBatch(tx, stockMutations);
+            const restockedItems: Array<{ productId: string; qty: number; unitCost: number; lineTotal: number }> = stockMutations.map((m, i) => ({
+                productId: m.productId,
+                qty: Number(m.qtyChange),
+                unitCost: Number(batchResults[i]?.movement?.cost || m.cost || 0),
+                lineTotal: Number(prepared[i].lineTotal || 0),
+            }));
 
             const allReturned = await (tx as any).salesReturnItem.groupBy({
                 by: ['invoiceItemId'],
@@ -2379,7 +2162,6 @@ salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RE
                 data: { status: fullyReturned ? 'REFUNDED' : 'PARTIAL' },
             });
 
-            const roundMoney = (value: number): number => Math.round(Number(value || 0) * 100) / 100;
             let cashRefund: number | undefined;
             let bankRefund: number | undefined;
             if (isMixedType(String(invoice.paymentMethod || '').toUpperCase())) {
@@ -2418,16 +2200,14 @@ salesRoutes.post('/invoices/:id/returns', requirePermission(PERMISSIONS.SALES_RE
         }, { maxWait: 10000, timeout: 30000 });
 
         sendSuccess(res, result, undefined, 201);
-    } catch (error) { next(error); }
-});
+}));
 
 // ══════════════════════════════════════════════════════════════
 // SALES ORDERS
 // ══════════════════════════════════════════════════════════════
 
 // GET /sales/orders
-salesRoutes.get('/orders', requirePermission(PERMISSIONS.SALES_ORDER_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/orders', requirePermission(PERMISSIONS.SALES_ORDER_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const query = salesOrderQuerySchema.parse(req.query);
         const { skip, take, page, limit } = getPaginationParams(query);
         const companyId = req.user!.companyId;
@@ -2471,12 +2251,10 @@ salesRoutes.get('/orders', requirePermission(PERMISSIONS.SALES_ORDER_VIEW), requ
         ]);
 
         sendPaginated(res, rows, total, page, limit);
-    } catch (error) { next(error); }
-});
+}));
 
 // GET /sales/orders/:id
-salesRoutes.get('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_VIEW), requireBranch, async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.get('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_VIEW), requireBranch, asyncHandler(async (req: Request, res: Response) => {
         const row = await (prisma as any).salesOrder.findFirst({
             where: {
                 id: req.params.id,
@@ -2497,12 +2275,10 @@ salesRoutes.get('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_VIEW), 
 
         if (!row) throw AppError.notFound('Sales Order');
         sendSuccess(res, row);
-    } catch (error) { next(error); }
-});
+}));
 
 // POST /sales/orders
-salesRoutes.post('/orders', requirePermission(PERMISSIONS.SALES_ORDER_CREATE), requireBranch, validate({ body: salesOrderCreateSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.post('/orders', requirePermission(PERMISSIONS.SALES_ORDER_CREATE), requireBranch, validate({ body: salesOrderCreateSchema }), asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const branchId = req.activeBranchId!;
         const userId = req.user!.id;
@@ -2538,12 +2314,10 @@ salesRoutes.post('/orders', requirePermission(PERMISSIONS.SALES_ORDER_CREATE), r
         });
 
         sendSuccess(res, row, { message: 'Sales Order created' }, 201);
-    } catch (error) { next(error); }
-});
+}));
 
 // PATCH /sales/orders/:id
-salesRoutes.patch('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_CREATE), requireBranch, validate({ body: salesOrderUpdateSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.patch('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_CREATE), requireBranch, validate({ body: salesOrderUpdateSchema }), asyncHandler(async (req: Request, res: Response) => {
         const id = req.params.id;
         const companyId = req.user!.companyId;
         const body = req.body as z.infer<typeof salesOrderUpdateSchema>;
@@ -2585,12 +2359,10 @@ salesRoutes.patch('/orders/:id', requirePermission(PERMISSIONS.SALES_ORDER_CREAT
         }
 
         sendSuccess(res, { message: 'Order updated' });
-    } catch (error) { next(error); }
-});
+}));
 
 // POST /sales/orders/:id/convert
-salesRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.SALES_QUOTATION_CONVERT), requireBranch, validate({ body: salesOrderConvertSchema }), async (req: Request, res: Response, next: NextFunction) => {
-    try {
+salesRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.SALES_QUOTATION_CONVERT), requireBranch, validate({ body: salesOrderConvertSchema }), asyncHandler(async (req: Request, res: Response) => {
         const companyId = req.user!.companyId;
         const orderId = req.params.id;
         const paymentMethod = String(req.body?.paymentMethod || 'CREDIT').toUpperCase();
@@ -2676,5 +2448,4 @@ salesRoutes.post('/orders/:id/convert', requirePermission(PERMISSIONS.SALES_QUOT
         });
 
         sendSuccess(res, result, { message: 'Order converted to invoice' });
-    } catch (error) { next(error); }
-});
+}));

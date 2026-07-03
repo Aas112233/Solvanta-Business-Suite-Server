@@ -9,6 +9,7 @@ import { AppError } from '../../utils/AppError.js';
 import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
 import { nextCounter } from '../../utils/documentCounter.js';
 import { z } from 'zod';
+import { asyncHandler } from '../../middleware/errorHandler.js';
 
 export const customerRoutes = Router();
 customerRoutes.use(authenticate);
@@ -73,115 +74,109 @@ async function generateUniqueCustomerCode(companyId: string): Promise<string> {
 }
 
 // GET /customers
-customerRoutes.get('/', requirePermission(PERMISSIONS.CRM_VIEW), async (req, res, next) => {
-    try {
-        const query = paginationSchema.parse(req.query);
-        const { skip, take, page, limit } = getPaginationParams(query);
-        const where: any = { companyId: req.user!.companyId, ...getActiveCustomerFilter() };
-        if (query.search) {
-            where.AND = [
-                {
-                    OR: [
-                        { name: { contains: query.search, mode: 'insensitive' } },
-                        { phone: { contains: query.search, mode: 'insensitive' } },
-                        { customerCode: { contains: query.search, mode: 'insensitive' } },
-                        { email: { contains: query.search, mode: 'insensitive' } },
-                        { vatNumber: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                },
-            ];
-        }
+customerRoutes.get('/', requirePermission(PERMISSIONS.CRM_VIEW), asyncHandler(async (req, res) => {
+    const query = paginationSchema.parse(req.query);
+    const { skip, take, page, limit } = getPaginationParams(query);
+    const where: any = { companyId: req.user!.companyId, ...getActiveCustomerFilter() };
+    if (query.search) {
+        where.AND = [
+            {
+                OR: [
+                    { name: { contains: query.search, mode: 'insensitive' } },
+                    { phone: { contains: query.search, mode: 'insensitive' } },
+                    { customerCode: { contains: query.search, mode: 'insensitive' } },
+                    { email: { contains: query.search, mode: 'insensitive' } },
+                    { vatNumber: { contains: query.search, mode: 'insensitive' } },
+                ],
+            },
+        ];
+    }
 
-        const [customers, total] = await Promise.all([
-            prisma.customer.findMany({
-                where,
-                skip,
-                take,
-                include: { priceGroup: { select: { id: true, name: true } } },
-                orderBy: { createdAt: 'desc' },
-            }),
-            prisma.customer.count({ where }),
-        ]);
+    const [customers, total] = await Promise.all([
+        prisma.customer.findMany({
+            where,
+            skip,
+            take,
+            include: { priceGroup: { select: { id: true, name: true } } },
+            orderBy: { createdAt: 'desc' },
+        }),
+        prisma.customer.count({ where }),
+    ]);
 
-        sendPaginated(res, customers, total, page, limit);
-    } catch (error) { next(error); }
-});
+    sendPaginated(res, customers, total, page, limit);
+}));
 
 // GET /customers/summary/stats
-customerRoutes.get('/summary/stats', requirePermission(PERMISSIONS.CRM_VIEW), async (req, res, next) => {
-    try {
-        const companyId = req.user!.companyId;
+customerRoutes.get('/summary/stats', requirePermission(PERMISSIONS.CRM_VIEW), asyncHandler(async (req, res) => {
+    const companyId = req.user!.companyId;
 
-        const [totalCustomers, activeCustomers, creditInvoiceStats] = await Promise.all([
-            prisma.customer.count({ where: { companyId } }),
-            prisma.customer.count({ where: { companyId, ...getActiveCustomerFilter() } }),
-            prisma.pOSInvoice.aggregate({
-                where: {
-                    companyId,
-                    status: { in: ['CREDIT', 'PARTIAL'] },
-                },
-                _sum: { grandTotal: true, cashReceived: true },
-                _count: { id: true },
-            }),
-        ]);
-
-        const totalCreditSales = Number(creditInvoiceStats._sum.grandTotal || 0);
-        const totalReceivedAgainstCredit = Number(creditInvoiceStats._sum.cashReceived || 0);
-        const totalReceivable = Math.max(0, totalCreditSales - totalReceivedAgainstCredit);
-
-        sendSuccess(res, {
-            totalCustomers,
-            activeCustomers,
-            totalReceivable,
-            totalCreditInvoices: creditInvoiceStats._count.id,
-        });
-    } catch (error) { next(error); }
-});
-
-// GET /customers/:id
-customerRoutes.get('/:id', requirePermission(PERMISSIONS.CRM_VIEW), async (req, res, next) => {
-    try {
-        const customerId = req.params.id as string;
-        const customer = await prisma.customer.findFirst({
-            where: { id: customerId, companyId: req.user!.companyId, ...getActiveCustomerFilter() },
-            include: { priceGroup: true },
-        });
-        if (!customer) throw AppError.notFound('Customer');
-
-        const recentInvoices = await prisma.pOSInvoice.findMany({
-            where: { companyId: req.user!.companyId, customerId },
-            orderBy: { createdAt: 'desc' },
-            take: 5,
-            select: {
-                id: true,
-                invoiceNo: true,
-                status: true,
-                grandTotal: true,
-                cashReceived: true,
-                createdAt: true,
-            },
-        });
-
-        const creditStats = await prisma.pOSInvoice.aggregate({
+    const [totalCustomers, activeCustomers, creditInvoiceStats] = await Promise.all([
+        prisma.customer.count({ where: { companyId } }),
+        prisma.customer.count({ where: { companyId, ...getActiveCustomerFilter() } }),
+        prisma.pOSInvoice.aggregate({
             where: {
-                companyId: req.user!.companyId,
-                customerId,
+                companyId,
                 status: { in: ['CREDIT', 'PARTIAL'] },
             },
             _sum: { grandTotal: true, cashReceived: true },
-        });
+            _count: { id: true },
+        }),
+    ]);
 
-        const totalCreditSales = Number(creditStats._sum.grandTotal || 0);
-        const totalReceivedAgainstCredit = Number(creditStats._sum.cashReceived || 0);
-        const receivableBalance = Math.max(0, totalCreditSales - totalReceivedAgainstCredit);
+    const totalCreditSales = Number(creditInvoiceStats._sum.grandTotal || 0);
+    const totalReceivedAgainstCredit = Number(creditInvoiceStats._sum.cashReceived || 0);
+    const totalReceivable = Math.max(0, totalCreditSales - totalReceivedAgainstCredit);
 
-        sendSuccess(res, {
-            ...customer,
-            receivableBalance,
-            recentInvoices,
-        });
-    } catch (error) { next(error); }
-});
+    sendSuccess(res, {
+        totalCustomers,
+        activeCustomers,
+        totalReceivable,
+        totalCreditInvoices: creditInvoiceStats._count.id,
+    });
+}));
+
+// GET /customers/:id
+customerRoutes.get('/:id', requirePermission(PERMISSIONS.CRM_VIEW), asyncHandler(async (req, res) => {
+    const customerId = req.params.id as string;
+    const customer = await prisma.customer.findFirst({
+        where: { id: customerId, companyId: req.user!.companyId, ...getActiveCustomerFilter() },
+        include: { priceGroup: true },
+    });
+    if (!customer) throw AppError.notFound('Customer');
+
+    const recentInvoices = await prisma.pOSInvoice.findMany({
+        where: { companyId: req.user!.companyId, customerId },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+            id: true,
+            invoiceNo: true,
+            status: true,
+            grandTotal: true,
+            cashReceived: true,
+            createdAt: true,
+        },
+    });
+
+    const creditStats = await prisma.pOSInvoice.aggregate({
+        where: {
+            companyId: req.user!.companyId,
+            customerId,
+            status: { in: ['CREDIT', 'PARTIAL'] },
+        },
+        _sum: { grandTotal: true, cashReceived: true },
+    });
+
+    const totalCreditSales = Number(creditStats._sum.grandTotal || 0);
+    const totalReceivedAgainstCredit = Number(creditStats._sum.cashReceived || 0);
+    const receivableBalance = Math.max(0, totalCreditSales - totalReceivedAgainstCredit);
+
+    sendSuccess(res, {
+        ...customer,
+        receivableBalance,
+        recentInvoices,
+    });
+}));
 
 function parseOptionalDate(value: unknown): Date | undefined {
     if (typeof value !== 'string' || !value.trim()) return undefined;
@@ -201,125 +196,123 @@ function parseOptionalDate(value: unknown): Date | undefined {
 }
 
 // GET /customers/:id/ledger — customer transaction history
-customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async (req, res, next) => {
-    try {
-        const customerId = req.params.id as string;
-        const companyId = req.user!.companyId;
-        const dateFrom = parseOptionalDate(req.query.dateFrom);
-        const dateTo = parseOptionalDate(req.query.dateTo);
+customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), asyncHandler(async (req, res) => {
+    const customerId = req.params.id as string;
+    const companyId = req.user!.companyId;
+    const dateFrom = parseOptionalDate(req.query.dateFrom);
+    const dateTo = parseOptionalDate(req.query.dateTo);
 
-        const customer = await prisma.customer.findFirst({
-            where: { id: customerId, companyId, ...getActiveCustomerFilter() },
+    const customer = await prisma.customer.findFirst({
+        where: { id: customerId, companyId, ...getActiveCustomerFilter() },
+    });
+    if (!customer) throw AppError.notFound('Customer');
+
+    // Fetch all transactions: Invoices, Returns, and Payment Receipts
+    const [invoices, returns] = await Promise.all([
+        prisma.pOSInvoice.findMany({
+            where: {
+                customerId,
+                companyId,
+            },
+            orderBy: { createdAt: 'asc' },
+        }),
+        prisma.salesReturn.findMany({
+            where: {
+                customerId,
+                companyId,
+            },
+            orderBy: { createdAt: 'asc' },
+        }),
+    ]);
+
+    console.log(`[Ledger] Customer ${customerId}: Found ${invoices.length} invoices, ${returns.length} returns`);
+
+    // Get all invoice IDs for this customer to fetch payment journal entries
+    const invoiceIds = invoices.map(i => i.id);
+
+    // Fetch journal entries for payments
+    let journalEntries: any[] = [];
+    if (invoiceIds.length > 0) {
+        journalEntries = await (prisma as any).journalEntry.findMany({
+            where: {
+                companyId,
+                sourceType: 'SALES_PAYMENT',
+                sourceId: { in: invoiceIds },
+            },
+            include: {
+                lines: { include: { account: true } },
+            },
+            orderBy: { date: 'asc' },
         });
-        if (!customer) throw AppError.notFound('Customer');
+        console.log(`[Ledger] Found ${journalEntries.length} payment journal entries`);
+    }
 
-        // Fetch all transactions: Invoices, Returns, and Payment Receipts
-        const [invoices, returns] = await Promise.all([
-            prisma.pOSInvoice.findMany({
-                where: {
-                    customerId,
-                    companyId,
-                },
-                orderBy: { createdAt: 'asc' },
-            }),
-            prisma.salesReturn.findMany({
-                where: {
-                    customerId,
-                    companyId,
-                },
-                orderBy: { createdAt: 'asc' },
-            }),
-        ]);
+    // Merge and sort all transactions
+    const transactions: any[] = [
+        ...invoices.map(i => ({
+            id: i.id,
+            date: i.createdAt,
+            type: 'INVOICE',
+            reference: i.invoiceNo,
+            description: `Sales Invoice: ${i.invoiceNo}`,
+            debit: Number(i.grandTotal), // Invoice increases what customer owes
+            credit: 0,
+        })),
+        ...returns.map(r => ({
+            id: r.id,
+            date: r.createdAt,
+            type: 'RETURN',
+            reference: r.returnNo,
+            description: `Sales Return: ${r.returnNo}`,
+            debit: 0,
+            credit: Number(r.grandTotal), // Return decreases what customer owes
+        })),
+    ];
 
-        console.log(`[Ledger] Customer ${customerId}: Found ${invoices.length} invoices, ${returns.length} returns`);
+    // Add payment journal entries
+    journalEntries.forEach((je: any) => {
+        // Find the credit line (Accounts Receivable - customer account)
+        const creditLine = je.lines?.find((line: any) => line.credit > 0);
+        const debitLine = je.lines?.find((line: any) => line.debit > 0);
 
-        // Get all invoice IDs for this customer to fetch payment journal entries
-        const invoiceIds = invoices.map(i => i.id);
-        
-        // Fetch journal entries for payments
-        let journalEntries: any[] = [];
-        if (invoiceIds.length > 0) {
-            journalEntries = await (prisma as any).journalEntry.findMany({
-                where: {
-                    companyId,
-                    sourceType: 'SALES_PAYMENT',
-                    sourceId: { in: invoiceIds },
-                },
-                include: {
-                    lines: { include: { account: true } },
-                },
-                orderBy: { date: 'asc' },
-            });
-            console.log(`[Ledger] Found ${journalEntries.length} payment journal entries`);
-        }
-
-        // Merge and sort all transactions
-        const transactions: any[] = [
-            ...invoices.map(i => ({
-                id: i.id,
-                date: i.createdAt,
-                type: 'INVOICE',
-                reference: i.invoiceNo,
-                description: `Sales Invoice: ${i.invoiceNo}`,
-                debit: Number(i.grandTotal), // Invoice increases what customer owes
-                credit: 0,
-            })),
-            ...returns.map(r => ({
-                id: r.id,
-                date: r.createdAt,
-                type: 'RETURN',
-                reference: r.returnNo,
-                description: `Sales Return: ${r.returnNo}`,
-                debit: 0,
-                credit: Number(r.grandTotal), // Return decreases what customer owes
-            })),
-        ];
-
-        // Add payment journal entries
-        journalEntries.forEach((je: any) => {
-            // Find the credit line (Accounts Receivable - customer account)
-            const creditLine = je.lines?.find((line: any) => line.credit > 0);
-            const debitLine = je.lines?.find((line: any) => line.debit > 0);
-            
-            transactions.push({
-                id: je.id,
-                date: je.date,
-                type: 'PAYMENT',
-                reference: je.entryNo,
-                description: `Payment Receipt: ${je.entryNo}${je.memo ? ` - ${je.memo}` : ''}`,
-                debit: 0,
-                credit: creditLine ? Number(creditLine.credit) : debitLine ? Number(debitLine.debit) : 0,
-            });
+        transactions.push({
+            id: je.id,
+            date: je.date,
+            type: 'PAYMENT',
+            reference: je.entryNo,
+            description: `Payment Receipt: ${je.entryNo}${je.memo ? ` - ${je.memo}` : ''}`,
+            debit: 0,
+            credit: creditLine ? Number(creditLine.credit) : debitLine ? Number(debitLine.debit) : 0,
         });
+    });
 
-        transactions.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    transactions.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        // Calculate running balance starting from opening balance
-        let balance = Number(customer.openingBalance || 0);
-        const ledger = transactions.map(t => {
-            balance += (t.debit - t.credit);
-            return { ...t, balance };
+    // Calculate running balance starting from opening balance
+    let balance = Number(customer.openingBalance || 0);
+    const ledger = transactions.map(t => {
+        balance += (t.debit - t.credit);
+        return { ...t, balance };
+    });
+
+    // Filter by date if provided (filter AFTER calculating running balance)
+    let filteredLedger = ledger;
+    if (dateFrom || dateTo) {
+        filteredLedger = ledger.filter(t => {
+            const tDate = new Date(t.date);
+            if (dateFrom && tDate < dateFrom) return false;
+            if (dateTo && tDate > dateTo) return false;
+            return true;
         });
+    }
 
-        // Filter by date if provided (filter AFTER calculating running balance)
-        let filteredLedger = ledger;
-        if (dateFrom || dateTo) {
-            filteredLedger = ledger.filter(t => {
-                const tDate = new Date(t.date);
-                if (dateFrom && tDate < dateFrom) return false;
-                if (dateTo && tDate > dateTo) return false;
-                return true;
-            });
-        }
-
-        sendSuccess(res, {
-            customer: { id: customer.id, name: customer.name, customerCode: customer.customerCode, openingBalance: customer.openingBalance },
-            openingBalance: customer.openingBalance,
-            ledger: filteredLedger,
-            finalBalance: balance
-        });
-    } catch (error) { next(error); }
-});
+    sendSuccess(res, {
+        customer: { id: customer.id, name: customer.name, customerCode: customer.customerCode, openingBalance: customer.openingBalance },
+        openingBalance: customer.openingBalance,
+        ledger: filteredLedger,
+        finalBalance: balance
+    });
+}));
 
 // POST /customers
 customerRoutes.post('/', requirePermission(PERMISSIONS.CRM_EDIT), validate({ body: customerSchema }), async (req, res, next) => {
@@ -415,444 +408,418 @@ customerRoutes.patch('/:id', requirePermission(PERMISSIONS.CRM_EDIT), validate({
 });
 
 // DELETE /customers/:id (soft-delete)
-customerRoutes.delete('/:id', requirePermission(PERMISSIONS.CRM_EDIT), async (req, res, next) => {
-    try {
-        const customerId = req.params.id as string;
-        await prisma.customer.updateMany({
-            where: { id: customerId, companyId: req.user!.companyId },
-            data: { deletedAt: new Date() },
-        });
-        sendSuccess(res, { message: 'Customer archived' });
-    } catch (error) { next(error); }
-});
+customerRoutes.delete('/:id', requirePermission(PERMISSIONS.CRM_EDIT), asyncHandler(async (req, res) => {
+    const customerId = req.params.id as string;
+    await prisma.customer.updateMany({
+        where: { id: customerId, companyId: req.user!.companyId },
+        data: { deletedAt: new Date() },
+    });
+    sendSuccess(res, { message: 'Customer archived' });
+}));
 
 // POST /customers/:id/restore
-customerRoutes.post('/:id/restore', requirePermission(PERMISSIONS.CRM_EDIT), async (req, res, next) => {
-    try {
-        const customerId = req.params.id as string;
-        await prisma.customer.updateMany({
-            where: { id: customerId, companyId: req.user!.companyId },
-            data: { deletedAt: null },
-        });
-        sendSuccess(res, { message: 'Customer restored' });
-    } catch (error) { next(error); }
-});
+customerRoutes.post('/:id/restore', requirePermission(PERMISSIONS.CRM_EDIT), asyncHandler(async (req, res) => {
+    const customerId = req.params.id as string;
+    await prisma.customer.updateMany({
+        where: { id: customerId, companyId: req.user!.companyId },
+        data: { deletedAt: null },
+    });
+    sendSuccess(res, { message: 'Customer restored' });
+}));
 
 // POST /customers/bulk-archive
-customerRoutes.post('/bulk-archive', requirePermission(PERMISSIONS.CRM_EDIT), async (req, res, next) => {
-    try {
-        const { customerIds } = req.body as { customerIds: string[] };
-        if (!Array.isArray(customerIds) || customerIds.length === 0) {
-            throw AppError.badRequest('Invalid or empty customer IDs');
-        }
+customerRoutes.post('/bulk-archive', requirePermission(PERMISSIONS.CRM_EDIT), asyncHandler(async (req, res) => {
+    const { customerIds } = req.body as { customerIds: string[] };
+    if (!Array.isArray(customerIds) || customerIds.length === 0) {
+        throw AppError.badRequest('Invalid or empty customer IDs');
+    }
 
-        const companyId = req.user!.companyId;
-        const result = await prisma.customer.updateMany({
-            where: {
-                id: { in: customerIds },
-                companyId,
-            },
-            data: { deletedAt: new Date() },
-        });
+    const companyId = req.user!.companyId;
+    const result = await prisma.customer.updateMany({
+        where: {
+            id: { in: customerIds },
+            companyId,
+        },
+        data: { deletedAt: new Date() },
+    });
 
-        sendSuccess(res, { message: `${result.count} customer(s) archived successfully`, count: result.count });
-    } catch (error) { next(error); }
-});
+    sendSuccess(res, { message: `${result.count} customer(s) archived successfully`, count: result.count });
+}));
 
 // POST /customers/bulk-restore
-customerRoutes.post('/bulk-restore', requirePermission(PERMISSIONS.CRM_EDIT), async (req, res, next) => {
-    try {
-        const { customerIds } = req.body as { customerIds: string[] };
-        if (!Array.isArray(customerIds) || customerIds.length === 0) {
-            throw AppError.badRequest('Invalid or empty customer IDs');
-        }
+customerRoutes.post('/bulk-restore', requirePermission(PERMISSIONS.CRM_EDIT), asyncHandler(async (req, res) => {
+    const { customerIds } = req.body as { customerIds: string[] };
+    if (!Array.isArray(customerIds) || customerIds.length === 0) {
+        throw AppError.badRequest('Invalid or empty customer IDs');
+    }
 
-        const companyId = req.user!.companyId;
-        const result = await prisma.customer.updateMany({
-            where: {
-                id: { in: customerIds },
-                companyId,
-                deletedAt: { not: null },
-            },
-            data: { deletedAt: null },
-        });
+    const companyId = req.user!.companyId;
+    const result = await prisma.customer.updateMany({
+        where: {
+            id: { in: customerIds },
+            companyId,
+            deletedAt: { not: null },
+        },
+        data: { deletedAt: null },
+    });
 
-        sendSuccess(res, { message: `${result.count} customer(s) restored successfully`, count: result.count });
-    } catch (error) { next(error); }
-});
+    sendSuccess(res, { message: `${result.count} customer(s) restored successfully`, count: result.count });
+}));
 
 // GET /customers/archived
-customerRoutes.get('/archived', requirePermission(PERMISSIONS.CRM_VIEW), async (req, res, next) => {
-    try {
-        const query = paginationSchema.parse(req.query);
-        const { skip, take, page, limit } = getPaginationParams(query);
-        const where: any = {
-            companyId: req.user!.companyId,
-            deletedAt: { not: null },
-        };
+customerRoutes.get('/archived', requirePermission(PERMISSIONS.CRM_VIEW), asyncHandler(async (req, res) => {
+    const query = paginationSchema.parse(req.query);
+    const { skip, take, page, limit } = getPaginationParams(query);
+    const where: any = {
+        companyId: req.user!.companyId,
+        deletedAt: { not: null },
+    };
 
-        if (query.search) {
-            where.AND = [
-                {
-                    OR: [
-                        { name: { contains: query.search, mode: 'insensitive' } },
-                        { phone: { contains: query.search, mode: 'insensitive' } },
-                        { customerCode: { contains: query.search, mode: 'insensitive' } },
-                        { email: { contains: query.search, mode: 'insensitive' } },
-                    ],
-                },
-            ];
-        }
+    if (query.search) {
+        where.AND = [
+            {
+                OR: [
+                    { name: { contains: query.search, mode: 'insensitive' } },
+                    { phone: { contains: query.search, mode: 'insensitive' } },
+                    { customerCode: { contains: query.search, mode: 'insensitive' } },
+                    { email: { contains: query.search, mode: 'insensitive' } },
+                ],
+            },
+        ];
+    }
 
-        const [customers, total] = await Promise.all([
-            prisma.customer.findMany({
-                where,
-                skip,
-                take,
-                include: { priceGroup: { select: { id: true, name: true } } },
-                orderBy: { deletedAt: 'desc' },
-            }),
-            prisma.customer.count({ where }),
-        ]);
+    const [customers, total] = await Promise.all([
+        prisma.customer.findMany({
+            where,
+            skip,
+            take,
+            include: { priceGroup: { select: { id: true, name: true } } },
+            orderBy: { deletedAt: 'desc' },
+        }),
+        prisma.customer.count({ where }),
+    ]);
 
-        sendPaginated(res, customers, total, page, limit);
-    } catch (error) { next(error); }
-});
+    sendPaginated(res, customers, total, page, limit);
+}));
 
 // POST /customers/export
-customerRoutes.post('/export', requirePermission(PERMISSIONS.CRM_VIEW), async (req, res, next) => {
-    try {
-        const { format = 'csv', customerIds } = req.body as { format?: 'csv' | 'excel'; customerIds?: string[] };
-        const companyId = req.user!.companyId;
+customerRoutes.post('/export', requirePermission(PERMISSIONS.CRM_VIEW), asyncHandler(async (req, res) => {
+    const { format = 'csv', customerIds } = req.body as { format?: 'csv' | 'excel'; customerIds?: string[] };
+    const companyId = req.user!.companyId;
 
-        const where: any = {
-            companyId,
-            ...getActiveCustomerFilter(),
-        };
+    const where: any = {
+        companyId,
+        ...getActiveCustomerFilter(),
+    };
 
-        if (customerIds && Array.isArray(customerIds) && customerIds.length > 0) {
-            where.id = { in: customerIds };
-        }
+    if (customerIds && Array.isArray(customerIds) && customerIds.length > 0) {
+        where.id = { in: customerIds };
+    }
 
-        const customers = await prisma.customer.findMany({
-            where,
-            include: { priceGroup: { select: { id: true, name: true } } },
-            orderBy: { name: 'asc' },
-        });
+    const customers = await prisma.customer.findMany({
+        where,
+        include: { priceGroup: { select: { id: true, name: true } } },
+        orderBy: { name: 'asc' },
+    });
 
-        // Prepare data for export
-        const exportData = customers.map((c) => ({
-            'Customer Code': c.customerCode,
-            'Customer Name': c.name,
-            'Phone': c.phone || '',
-            'Email': c.email || '',
-            'VAT Number': c.vatNumber || '',
-            'Address': c.address ? JSON.parse(c.address as any).street || '' : '',
-            'City': c.address ? JSON.parse(c.address as any).city || '' : '',
-            'Country': c.address ? JSON.parse(c.address as any).country || '' : '',
-            'Credit Limit': c.creditLimit,
-            'Allow Credit Sales': c.allowCreditSales ? 'Yes' : 'No',
-            'Opening Balance': c.openingBalance,
-            'Price Group': c.priceGroup?.name || 'Default',
-            'Tags': (c.tags || []).join(', '),
-            'Notes': c.notes || '',
-        }));
+    // Prepare data for export
+    const exportData = customers.map((c) => ({
+        'Customer Code': c.customerCode,
+        'Customer Name': c.name,
+        'Phone': c.phone || '',
+        'Email': c.email || '',
+        'VAT Number': c.vatNumber || '',
+        'Address': c.address ? JSON.parse(c.address as any).street || '' : '',
+        'City': c.address ? JSON.parse(c.address as any).city || '' : '',
+        'Country': c.address ? JSON.parse(c.address as any).country || '' : '',
+        'Credit Limit': c.creditLimit,
+        'Allow Credit Sales': c.allowCreditSales ? 'Yes' : 'No',
+        'Opening Balance': c.openingBalance,
+        'Price Group': c.priceGroup?.name || 'Default',
+        'Tags': (c.tags || []).join(', '),
+        'Notes': c.notes || '',
+    }));
 
-        if (format === 'excel') {
-            // Create Excel file using xlsx library
-            const XLSX = await import('xlsx');
-            const worksheet = XLSX.utils.json_to_sheet(exportData);
-            const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, worksheet, 'Customers');
+    if (format === 'excel') {
+        // Create Excel file using xlsx library
+        const XLSX = await import('xlsx');
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Customers');
 
-            const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+        const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
-            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            res.setHeader('Content-Disposition', `attachment; filename="customers_${new Date().toISOString().split('T')[0]}.xlsx"`);
-            res.send(buffer);
-        } else {
-            // Create CSV file
-            const headers = Object.keys(exportData[0] || {});
-            const csvRows = [
-                headers.join(','),
-                ...exportData.map((row) =>
-                    headers
-                        .map((header) => {
-                            const value = row[header as keyof typeof row];
-                            // Escape quotes and wrap in quotes if contains comma or quote
-                            const escaped = String(value || '').replace(/"/g, '""');
-                            return escaped.includes(',') || escaped.includes('"') ? `"${escaped}"` : escaped;
-                        })
-                        .join(',')
-                ),
-            ];
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="customers_${new Date().toISOString().split('T')[0]}.xlsx"`);
+        res.send(buffer);
+    } else {
+        // Create CSV file
+        const headers = Object.keys(exportData[0] || {});
+        const csvRows = [
+            headers.join(','),
+            ...exportData.map((row) =>
+                headers
+                    .map((header) => {
+                        const value = row[header as keyof typeof row];
+                        // Escape quotes and wrap in quotes if contains comma or quote
+                        const escaped = String(value || '').replace(/"/g, '""');
+                        return escaped.includes(',') || escaped.includes('"') ? `"${escaped}"` : escaped;
+                    })
+                    .join(',')
+            ),
+        ];
 
-            const csv = csvRows.join('\n');
+        const csv = csvRows.join('\n');
 
-            res.setHeader('Content-Type', 'text/csv');
-            res.setHeader('Content-Disposition', `attachment; filename="customers_${new Date().toISOString().split('T')[0]}.csv"`);
-            res.send(csv);
-        }
-    } catch (error) { next(error); }
-});
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="customers_${new Date().toISOString().split('T')[0]}.csv"`);
+        res.send(csv);
+    }
+}));
 
 // POST /customers/import
-customerRoutes.post('/import', requirePermission(PERMISSIONS.CRM_EDIT), async (req, res, next) => {
-    try {
-        const { customers: customerData } = req.body as { customers: any[] };
-        if (!Array.isArray(customerData) || customerData.length === 0) {
-            throw AppError.badRequest('Invalid or empty customer data');
-        }
+customerRoutes.post('/import', requirePermission(PERMISSIONS.CRM_EDIT), asyncHandler(async (req, res) => {
+    const { customers: customerData } = req.body as { customers: any[] };
+    if (!Array.isArray(customerData) || customerData.length === 0) {
+        throw AppError.badRequest('Invalid or empty customer data');
+    }
 
-        const companyId = req.user!.companyId;
-        const results = { created: 0, updated: 0, failed: 0, errors: [] as string[] };
+    const companyId = req.user!.companyId;
+    const results = { created: 0, updated: 0, failed: 0, errors: [] as string[] };
 
-        for (const [index, data] of customerData.entries()) {
-            try {
-                // Validate required fields
-                if (!data.name || !data.name.trim()) {
-                    results.errors.push(`Row ${index + 1}: Customer name is required`);
-                    results.failed++;
-                    continue;
-                }
+    for (const [index, data] of customerData.entries()) {
+        try {
+            // Validate required fields
+            if (!data.name || !data.name.trim()) {
+                results.errors.push(`Row ${index + 1}: Customer name is required`);
+                results.failed++;
+                continue;
+            }
 
-                const customerPayload: any = {
-                    name: data.name.trim(),
-                    phone: data.phone?.trim() || null,
-                    email: data.email?.trim() || null,
-                    vatNumber: data.vatNumber?.trim() || null,
-                    creditLimit: Number(data.creditLimit) || 0,
-                    allowCreditSales: data.allowCreditSales !== false,
-                    openingBalance: Number(data.openingBalance) || 0,
-                    priceGroupId: data.priceGroupId || null,
-                    tags: data.tags ? (typeof data.tags === 'string' ? data.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : data.tags) : [],
-                    notes: data.notes?.trim() || null,
-                    address: data.address || data.street ? {
-                        street: data.address?.street || data.street || '',
-                        city: data.city || '',
-                        country: data.country || '',
-                    } : null,
-                };
+            const customerPayload: any = {
+                name: data.name.trim(),
+                phone: data.phone?.trim() || null,
+                email: data.email?.trim() || null,
+                vatNumber: data.vatNumber?.trim() || null,
+                creditLimit: Number(data.creditLimit) || 0,
+                allowCreditSales: data.allowCreditSales !== false,
+                openingBalance: Number(data.openingBalance) || 0,
+                priceGroupId: data.priceGroupId || null,
+                tags: data.tags ? (typeof data.tags === 'string' ? data.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : data.tags) : [],
+                notes: data.notes?.trim() || null,
+                address: data.address || data.street ? {
+                    street: data.address?.street || data.street || '',
+                    city: data.city || '',
+                    country: data.country || '',
+                } : null,
+            };
 
-                // Check if customer code exists
-                if (data.customerCode) {
-                    const existing = await prisma.customer.findFirst({
-                        where: {
-                            companyId,
-                            customerCode: data.customerCode,
-                            ...getActiveCustomerFilter(),
-                        },
-                        select: { id: true },
+            // Check if customer code exists
+            if (data.customerCode) {
+                const existing = await prisma.customer.findFirst({
+                    where: {
+                        companyId,
+                        customerCode: data.customerCode,
+                        ...getActiveCustomerFilter(),
+                    },
+                    select: { id: true },
+                });
+
+                if (existing) {
+                    // Update existing customer
+                    await prisma.customer.update({
+                        where: { id: existing.id },
+                        data: customerPayload,
                     });
-
-                    if (existing) {
-                        // Update existing customer
-                        await prisma.customer.update({
-                            where: { id: existing.id },
-                            data: customerPayload,
-                        });
-                        results.updated++;
-                    } else {
-                        // Create with provided code
-                        customerPayload.customerCode = data.customerCode.trim();
-                        await prisma.customer.create({
-                            data: { ...customerPayload, companyId },
-                        });
-                        results.created++;
-                    }
+                    results.updated++;
                 } else {
-                    // Auto-generate customer code
-                    const generatedCode = await generateUniqueCustomerCode(companyId);
+                    // Create with provided code
+                    customerPayload.customerCode = data.customerCode.trim();
                     await prisma.customer.create({
-                        data: { ...customerPayload, customerCode: generatedCode, companyId },
+                        data: { ...customerPayload, companyId },
                     });
                     results.created++;
                 }
-            } catch (error: any) {
-                results.errors.push(`Row ${index + 1}: ${error.message}`);
-                results.failed++;
+            } else {
+                // Auto-generate customer code
+                const generatedCode = await generateUniqueCustomerCode(companyId);
+                await prisma.customer.create({
+                    data: { ...customerPayload, customerCode: generatedCode, companyId },
+                });
+                results.created++;
             }
+        } catch (error: any) {
+            results.errors.push(`Row ${index + 1}: ${error.message}`);
+            results.failed++;
         }
+    }
 
-        sendSuccess(res, results);
-    } catch (error) { next(error); }
-});
+    sendSuccess(res, results);
+}));
 
 // GET /customers/:id/interactions - Get all interactions for a customer
-customerRoutes.get('/:id/interactions', requirePermission(PERMISSIONS.CRM_VIEW), async (req, res, next) => {
-    try {
-        const customerId = req.params.id as string;
-        const companyId = req.user!.companyId;
-        const query = paginationSchema.parse(req.query);
-        const { skip, take, page, limit } = getPaginationParams(query);
+customerRoutes.get('/:id/interactions', requirePermission(PERMISSIONS.CRM_VIEW), asyncHandler(async (req, res) => {
+    const customerId = req.params.id as string;
+    const companyId = req.user!.companyId;
+    const query = paginationSchema.parse(req.query);
+    const { skip, take, page, limit } = getPaginationParams(query);
 
-        const where: any = {
-            customerId,
-            companyId,
-        };
+    const where: any = {
+        customerId,
+        companyId,
+    };
 
-        const [interactions, total] = await Promise.all([
-            prisma.customerInteraction.findMany({
-                where,
-                skip,
-                take,
-                orderBy: { createdAt: 'desc' },
-            }),
-            prisma.customerInteraction.count({ where }),
-        ]);
+    const [interactions, total] = await Promise.all([
+        prisma.customerInteraction.findMany({
+            where,
+            skip,
+            take,
+            orderBy: { createdAt: 'desc' },
+        }),
+        prisma.customerInteraction.count({ where }),
+    ]);
 
-        sendPaginated(res, interactions, total, page, limit);
-    } catch (error) { next(error); }
-});
+    sendPaginated(res, interactions, total, page, limit);
+}));
 
 // POST /customers/:id/interactions - Create a new interaction
-customerRoutes.post('/:id/interactions', requirePermission(PERMISSIONS.CRM_EDIT), validate({ body: interactionSchema }), async (req, res, next) => {
-    try {
-        const customerId = req.params.id as string;
-        const companyId = req.user!.companyId;
-        const interactionData = req.body;
+customerRoutes.post('/:id/interactions', requirePermission(PERMISSIONS.CRM_EDIT), validate({ body: interactionSchema }), asyncHandler(async (req, res) => {
+    const customerId = req.params.id as string;
+    const companyId = req.user!.companyId;
+    const interactionData = req.body;
 
-        // Verify customer exists
-        const customer = await prisma.customer.findFirst({
-            where: { id: customerId, companyId },
-            select: { id: true },
-        });
-        if (!customer) throw AppError.notFound('Customer');
+    // Verify customer exists
+    const customer = await prisma.customer.findFirst({
+        where: { id: customerId, companyId },
+        select: { id: true },
+    });
+    if (!customer) throw AppError.notFound('Customer');
 
-        const interaction = await prisma.customerInteraction.create({
-            data: {
-                ...interactionData,
-                companyId,
-                customerId,
-                scheduledAt: interactionData.scheduledAt ? new Date(interactionData.scheduledAt) : undefined,
-            },
-        });
+    const interaction = await prisma.customerInteraction.create({
+        data: {
+            ...interactionData,
+            companyId,
+            customerId,
+            scheduledAt: interactionData.scheduledAt ? new Date(interactionData.scheduledAt) : undefined,
+        },
+    });
 
-        sendSuccess(res, interaction, { message: 'Interaction created successfully' });
-    } catch (error) { next(error); }
-});
+    sendSuccess(res, interaction, { message: 'Interaction created successfully' });
+}));
 
 // PATCH /customers/:id/interactions/:interactionId - Update an interaction
-customerRoutes.patch('/:id/interactions/:interactionId', requirePermission(PERMISSIONS.CRM_EDIT), validate({ body: interactionUpdateSchema }), async (req, res, next) => {
-    try {
-        const customerId = String(req.params.id);
-        const interactionId = String(req.params.interactionId);
-        const companyId = req.user!.companyId;
-        const updateData = req.body;
+customerRoutes.patch('/:id/interactions/:interactionId', requirePermission(PERMISSIONS.CRM_EDIT), validate({ body: interactionUpdateSchema }), asyncHandler(async (req, res) => {
+    const customerId = String(req.params.id);
+    const interactionId = String(req.params.interactionId);
+    const companyId = req.user!.companyId;
+    const updateData = req.body;
 
-        // Verify interaction exists and belongs to customer
-        const existing = await prisma.customerInteraction.findFirst({
-            where: { id: interactionId, customerId, companyId },
-            select: { id: true },
-        });
-        if (!existing) throw AppError.notFound('Interaction');
+    // Verify interaction exists and belongs to customer
+    const existing = await prisma.customerInteraction.findFirst({
+        where: { id: interactionId, customerId, companyId },
+        select: { id: true },
+    });
+    if (!existing) throw AppError.notFound('Interaction');
 
-        const interaction = await prisma.customerInteraction.update({
-            where: { id: interactionId },
-            data: {
-                ...updateData,
-                scheduledAt: updateData.scheduledAt ? new Date(updateData.scheduledAt as string) : undefined,
-            },
-        });
+    const interaction = await prisma.customerInteraction.update({
+        where: { id: interactionId },
+        data: {
+            ...updateData,
+            scheduledAt: updateData.scheduledAt ? new Date(updateData.scheduledAt as string) : undefined,
+        },
+    });
 
-        sendSuccess(res, interaction, { message: 'Interaction updated successfully' });
-    } catch (error) { next(error); }
-});
+    sendSuccess(res, interaction, { message: 'Interaction updated successfully' });
+}));
 
 // DELETE /customers/:id/interactions/:interactionId - Delete an interaction
-customerRoutes.delete('/:id/interactions/:interactionId', requirePermission(PERMISSIONS.CRM_EDIT), async (req, res, next) => {
-    try {
-        const customerId = String(req.params.id);
-        const interactionId = String(req.params.interactionId);
-        const companyId = req.user!.companyId;
+customerRoutes.delete('/:id/interactions/:interactionId', requirePermission(PERMISSIONS.CRM_EDIT), asyncHandler(async (req, res) => {
+    const customerId = String(req.params.id);
+    const interactionId = String(req.params.interactionId);
+    const companyId = req.user!.companyId;
 
-        // Verify interaction exists and belongs to customer
-        const existing = await prisma.customerInteraction.findFirst({
-            where: { id: interactionId, customerId, companyId },
-            select: { id: true },
-        });
-        if (!existing) throw AppError.notFound('Interaction');
+    // Verify interaction exists and belongs to customer
+    const existing = await prisma.customerInteraction.findFirst({
+        where: { id: interactionId, customerId, companyId },
+        select: { id: true },
+    });
+    if (!existing) throw AppError.notFound('Interaction');
 
-        await prisma.customerInteraction.delete({
-            where: { id: interactionId },
-        });
+    await prisma.customerInteraction.delete({
+        where: { id: interactionId },
+    });
 
-        sendSuccess(res, undefined, { message: 'Interaction deleted successfully' });
-    } catch (error) { next(error); }
-});
+    sendSuccess(res, undefined, { message: 'Interaction deleted successfully' });
+}));
 
 // POST /customers/:id/interactions/:interactionId/complete - Mark interaction as completed
-customerRoutes.post('/:id/interactions/:interactionId/complete', requirePermission(PERMISSIONS.CRM_EDIT), async (req, res, next) => {
-    try {
-        const customerId = String(req.params.id);
-        const interactionId = String(req.params.interactionId);
-        const companyId = req.user!.companyId;
+customerRoutes.post('/:id/interactions/:interactionId/complete', requirePermission(PERMISSIONS.CRM_EDIT), asyncHandler(async (req, res) => {
+    const customerId = String(req.params.id);
+    const interactionId = String(req.params.interactionId);
+    const companyId = req.user!.companyId;
 
-        const interaction = await prisma.customerInteraction.update({
-            where: { id: interactionId, customerId, companyId },
-            data: {
-                status: 'COMPLETED',
-                completedAt: new Date(),
-            },
-        });
+    const interaction = await prisma.customerInteraction.update({
+        where: { id: interactionId, customerId, companyId },
+        data: {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+        },
+    });
 
-        sendSuccess(res, interaction, { message: 'Interaction marked as completed' });
-    } catch (error) { next(error); }
-});
+    sendSuccess(res, interaction, { message: 'Interaction marked as completed' });
+}));
 
 // GET /customers/:id/activity - Get combined activity log (interactions + transactions)
-customerRoutes.get('/:id/activity', requirePermission(PERMISSIONS.CRM_VIEW), async (req, res, next) => {
-    try {
-        const customerId = req.params.id as string;
-        const companyId = req.user!.companyId;
-        const limit = Math.min(Number(req.query.limit) || 50, 200);
+customerRoutes.get('/:id/activity', requirePermission(PERMISSIONS.CRM_VIEW), asyncHandler(async (req, res) => {
+    const customerId = req.params.id as string;
+    const companyId = req.user!.companyId;
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
 
-        const [interactions, invoices] = await Promise.all([
-            prisma.customerInteraction.findMany({
-                where: { customerId, companyId },
-                orderBy: { createdAt: 'desc' },
-                take: limit,
-            }),
-            prisma.pOSInvoice.findMany({
-                where: { customerId, companyId },
-                orderBy: { createdAt: 'desc' },
-                take: limit,
-                select: {
-                    id: true,
-                    invoiceNo: true,
-                    createdAt: true,
-                    grandTotal: true,
-                    status: true,
-                },
-            }),
-        ]);
+    const [interactions, invoices] = await Promise.all([
+        prisma.customerInteraction.findMany({
+            where: { customerId, companyId },
+            orderBy: { createdAt: 'desc' },
+            take: limit,
+        }),
+        prisma.pOSInvoice.findMany({
+            where: { customerId, companyId },
+            orderBy: { createdAt: 'desc' },
+            take: limit,
+            select: {
+                id: true,
+                invoiceNo: true,
+                createdAt: true,
+                grandTotal: true,
+                status: true,
+            },
+        }),
+    ]);
 
-        // Merge and sort activities
-        const activities = [
-            ...interactions.map((i) => ({
-                id: i.id,
-                type: 'INTERACTION',
-                interactionType: i.type,
-                subject: i.subject,
-                description: i.description,
-                status: i.status,
-                priority: i.priority,
-                date: i.createdAt,
-                createdAt: i.createdAt,
-            })),
-            ...invoices.map((inv) => ({
-                id: inv.id,
-                type: 'INVOICE',
-                interactionType: 'INVOICE',
-                subject: `Invoice ${inv.invoiceNo}`,
-                description: `Sales invoice for SAR ${Number(inv.grandTotal).toLocaleString()}`,
-                status: inv.status,
-                priority: 'NORMAL',
-                date: inv.createdAt,
-                createdAt: inv.createdAt,
-            })),
-        ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    // Merge and sort activities
+    const activities = [
+        ...interactions.map((i) => ({
+            id: i.id,
+            type: 'INTERACTION',
+            interactionType: i.type,
+            subject: i.subject,
+            description: i.description,
+            status: i.status,
+            priority: i.priority,
+            date: i.createdAt,
+            createdAt: i.createdAt,
+        })),
+        ...invoices.map((inv) => ({
+            id: inv.id,
+            type: 'INVOICE',
+            interactionType: 'INVOICE',
+            subject: `Invoice ${inv.invoiceNo}`,
+            description: `Sales invoice for SAR ${Number(inv.grandTotal).toLocaleString()}`,
+            status: inv.status,
+            priority: 'NORMAL',
+            date: inv.createdAt,
+            createdAt: inv.createdAt,
+        })),
+    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-        sendSuccess(res, { activities: activities.slice(0, limit) });
-    } catch (error) { next(error); }
-});
+    sendSuccess(res, { activities: activities.slice(0, limit) });
+}));

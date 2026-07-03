@@ -7,6 +7,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { printHtmlDocument } from '../../lib/fileExport';
 import type { PosReceiptSettings } from '../../lib/posReceiptTemplates';
 import { buildShiftCloseReceiptDocument } from '../../lib/posShiftCloseReceipt';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 const DENOMINATIONS = [500, 200, 100, 50, 20, 10, 5, 1, 0.5, 0.25];
 
@@ -22,7 +23,7 @@ type Props = {
 export default function ShiftCloseDialog({ shiftId, terminalCode, openingCash, currentUserEmail = '', onClose, onClosed }: Props) {
     const qc = useQueryClient();
     const companyName = useAuthStore((s) => s.user?.company?.name) || 'SOLVANTA ERP';
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const [counts, setCounts] = useState<Record<string, number>>(() => {
         const init: Record<string, number> = {};
         DENOMINATIONS.forEach((d) => (init[String(d)] = 0));

@@ -26,6 +26,7 @@ import {
     RotateCcw,
     AlertTriangle
 } from 'lucide-react';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 import toast from '@/lib/toast';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import DateRangeFilter from '../../components/ui/DateRangeFilter';
@@ -62,7 +63,7 @@ function ReportTooltip({ active, payload, label }: any) {
 }
 
 export default function PurchaseReports() {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const [branchId, setBranchId] = useState('');
     const [search, setSearch] = useState('');
     const [status, setStatus] = useState('');

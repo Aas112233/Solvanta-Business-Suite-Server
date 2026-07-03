@@ -41,20 +41,20 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
 
     const variantClasses = {
       default: clsx(
-        'bg-white dark:bg-gray-800',
-        'border border-gray-300 dark:border-gray-600',
+        'bg-background-card',
+        'border border-border',
         'rounded-lg',
-        'focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500',
-        error && 'border-red-500 focus:ring-red-500/20 focus:border-red-500',
-        disabled && 'bg-gray-100 dark:bg-gray-900 text-gray-500'
+        'focus:ring-2 focus:ring-brand-200 focus:border-brand',
+        error && 'border-danger focus:ring-danger/20 focus:border-danger',
+        disabled && 'bg-background-subtle text-text-tertiary'
       ),
       filled: clsx(
-        'bg-gray-100 dark:bg-gray-800',
+        'bg-background-subtle',
         'border-2 border-transparent',
         'rounded-lg',
-        'focus:bg-white dark:focus:bg-gray-900 focus:border-blue-500',
-        error && 'border-red-500 focus:border-red-500',
-        disabled && 'bg-gray-200 dark:bg-gray-900 text-gray-500'
+        'focus:bg-background-card focus:border-brand',
+        error && 'border-danger focus:border-danger',
+        disabled && 'bg-background-subtle text-text-tertiary'
       ),
     };
 
@@ -65,8 +65,8 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         disabled={disabled}
         className={clsx(
           'block transition-colors duration-200',
-          'placeholder:text-gray-400 dark:placeholder:text-gray-600',
-          'text-gray-900 dark:text-white',
+          'placeholder:text-text-tertiary',
+          'text-text-primary',
           'disabled:cursor-not-allowed',
           sizeClasses[size],
           resizeClasses[resize],

@@ -18,13 +18,13 @@ function Breadcrumb({ items, className }: BreadcrumbProps) {
   if (items.length === 0) return null;
 
   return (
-    <nav 
+    <nav
       className={clsx('flex items-center gap-2 text-sm', className)}
       aria-label="Breadcrumb"
     >
       <Link
         to="/"
-        className="flex items-center gap-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 transition-colors"
+        className="flex items-center gap-1 text-text-tertiary hover:text-text-secondary transition-colors"
       >
         <Home className="w-4 h-4" />
         <span className="sr-only">Home</span>
@@ -36,14 +36,14 @@ function Breadcrumb({ items, className }: BreadcrumbProps) {
 
         return (
           <React.Fragment key={index}>
-            <ChevronRight className="w-4 h-4 text-gray-400" />
+            <ChevronRight className="w-4 h-4 text-text-tertiary" />
             {isLast || !item.href ? (
-              <span 
+              <span
                 className={clsx(
                   'flex items-center gap-1',
-                  isLast 
-                    ? 'font-medium text-gray-900 dark:text-gray-100' 
-                    : 'text-gray-500 dark:text-gray-400'
+                  isLast
+                    ? 'font-medium text-text-primary'
+                    : 'text-text-tertiary'
                 )}
                 aria-current={isLast ? 'page' : undefined}
               >
@@ -53,7 +53,7 @@ function Breadcrumb({ items, className }: BreadcrumbProps) {
             ) : (
               <Link
                 to={item.href}
-                className="flex items-center gap-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 transition-colors"
+                className="flex items-center gap-1 text-text-tertiary hover:text-text-secondary transition-colors"
               >
                 {Icon && <Icon className="w-4 h-4" />}
                 {item.label}
@@ -79,37 +79,37 @@ interface PageHeaderProps {
   className?: string;
 }
 
-function PageHeader({ 
-  title, 
-  subtitle, 
-  breadcrumb, 
-  action, 
+function PageHeader({
+  title,
+  subtitle,
+  breadcrumb,
+  action,
   meta,
-  className 
+  className
 }: PageHeaderProps) {
   return (
     <div className={clsx('space-y-4', className)}>
       {breadcrumb && breadcrumb.length > 0 && (
         <Breadcrumb items={breadcrumb} />
       )}
-      
+
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white truncate">
+          <h1 className="text-2xl font-bold text-text-primary truncate">
             {title}
           </h1>
           {subtitle && (
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            <p className="mt-1 text-sm text-text-tertiary">
               {subtitle}
             </p>
           )}
           {meta && (
-            <div className="mt-2 flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+            <div className="mt-2 flex items-center gap-4 text-sm text-text-tertiary">
               {meta}
             </div>
           )}
         </div>
-        
+
         {action && (
           <div className="flex items-center gap-2 shrink-0">
             {action}
@@ -130,8 +130,8 @@ interface PageContentProps extends BaseComponentProps {
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
 }
 
-function PageContent({ 
-  children, 
+function PageContent({
+  children,
   className,
   padding = 'md',
   maxWidth = 'full'
@@ -153,7 +153,7 @@ function PageContent({
   };
 
   return (
-    <div 
+    <div
       className={clsx(
         'flex-1',
         paddingClasses[padding],
@@ -202,13 +202,13 @@ export interface PageTemplateProps extends BaseComponentProps {
 
 /**
  * PageTemplate - The main layout wrapper for all pages.
- * 
+ *
  * Provides consistent page structure including:
  * - Breadcrumb navigation
  * - Page header with title, subtitle, and actions
  * - Loading and error states
  * - Responsive content container
- * 
+ *
  * @example
  * ```tsx
  * <PageTemplate
@@ -251,7 +251,7 @@ export function PageTemplate({
   // Loading state
   if (loading) {
     return (
-      <div 
+      <div
         className={clsx('min-h-full animate-pulse', className)}
         id={id}
         data-testid={dataTestId}
@@ -269,7 +269,7 @@ export function PageTemplate({
                 <Skeleton className="h-10 w-32" />
               </div>
             </div>
-            
+
             {/* Content skeleton */}
             <Skeleton className="h-96 w-full" />
           </div>
@@ -281,38 +281,38 @@ export function PageTemplate({
   // Error state
   if (error) {
     return (
-      <div 
+      <div
         className={clsx('min-h-full', className)}
         id={id}
         data-testid={dataTestId}
       >
         <PageContent padding={padding} maxWidth={maxWidth}>
           <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
-            <div className="w-16 h-16 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mb-4">
-              <svg 
-                className="w-8 h-8 text-red-600 dark:text-red-400" 
-                fill="none" 
-                viewBox="0 0 24 24" 
+            <div className="w-16 h-16 bg-danger-soft rounded-full flex items-center justify-center mb-4">
+              <svg
+                className="w-8 h-8 text-danger"
+                fill="none"
+                viewBox="0 0 24 24"
                 stroke="currentColor"
               >
-                <path 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round" 
-                  strokeWidth={2} 
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" 
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
                 />
               </svg>
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+            <h3 className="text-lg font-semibold text-text-primary mb-2">
               Failed to load
             </h3>
-            <p className="text-gray-500 dark:text-gray-400 max-w-md mb-6">
+            <p className="text-text-tertiary max-w-md mb-6">
               {error}
             </p>
             {onRetry && (
               <button
                 onClick={onRetry}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="px-4 py-2 bg-brand text-white rounded-lg hover:opacity-90 transition-colors"
               >
                 Try Again
               </button>
@@ -324,7 +324,7 @@ export function PageTemplate({
   }
 
   return (
-    <div 
+    <div
       className={clsx('min-h-full', className)}
       id={id}
       data-testid={dataTestId}
@@ -340,7 +340,7 @@ export function PageTemplate({
               meta={meta}
             />
           )}
-          
+
           <main role="main">
             {children}
           </main>

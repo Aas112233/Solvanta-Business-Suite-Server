@@ -1,21 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import {
-    Building2,
-    CalendarRange,
-    Download,
-    Filter,
-    Loader2,
-    ScrollText,
-    X,
-} from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
 import api from '../../lib/api';
 import type { ExcelColumn } from '../../lib/excelReport';
 import { exportExcel } from '../../lib/fileExport';
-import AppDropdown from '../ui/AppDropdown';
-
-type FilterPanel = 'branch' | 'date' | 'item' | null;
-type DatePreset = 'today' | 'last7' | 'thisMonth' | 'lastMonth' | 'custom';
+import { PageTemplate, Section, KpiCard, Button, FilterBar, Select } from '../ui';
 
 type ReportFilterMasterData = {
     products: {
@@ -90,11 +79,9 @@ function qty(value: number) {
 
 export default function InventoryTransactionSummaryReport() {
     const defaults = defaultRange();
-    const [panel, setPanel] = useState<FilterPanel>(null);
     const [branchId, setBranchId] = useState('');
     const [dateFrom, setDateFrom] = useState(defaults.from);
     const [dateTo, setDateTo] = useState(defaults.to);
-    const [datePreset, setDatePreset] = useState<DatePreset>('thisMonth');
     const [productId, setProductId] = useState('');
     const [groupId, setGroupId] = useState('');
     const [categoryId, setCategoryId] = useState('');
@@ -223,31 +210,12 @@ export default function InventoryTransactionSummaryReport() {
         appliedItemFilters.categoryId,
         appliedItemFilters.brandId,
     ].filter(Boolean).length;
-    const itemFiltersCount = [
-        appliedItemFilters.productId,
-        appliedItemFilters.groupId,
-        appliedItemFilters.categoryId,
-        appliedItemFilters.brandId,
-    ].filter(Boolean).length;
     const branchName = branches.find((b) => b.id === branchId)?.name || 'All Warehouses';
-    const dateLabel = `${dateFrom || 'Any'} to ${dateTo || 'Any'}`;
     const isItemFiltersDirty =
         productId !== appliedItemFilters.productId
         || groupId !== appliedItemFilters.groupId
         || categoryId !== appliedItemFilters.categoryId
         || brandId !== appliedItemFilters.brandId;
-
-    const openItemPanel = () => {
-        if (panel === 'item') {
-            setPanel(null);
-            return;
-        }
-        setProductId(appliedItemFilters.productId);
-        setGroupId(appliedItemFilters.groupId);
-        setCategoryId(appliedItemFilters.categoryId);
-        setBrandId(appliedItemFilters.brandId);
-        setPanel('item');
-    };
 
     const applyItemFilters = () => {
         setAppliedItemFilters({
@@ -256,34 +224,6 @@ export default function InventoryTransactionSummaryReport() {
             categoryId,
             brandId,
         });
-        setPanel(null);
-    };
-
-    const applyPreset = (preset: DatePreset) => {
-        const now = new Date();
-        const today = toISODate(now);
-        setDatePreset(preset);
-        if (preset === 'today') {
-            setDateFrom(today);
-            setDateTo(today);
-            return;
-        }
-        if (preset === 'last7') {
-            const start = new Date(now);
-            start.setDate(start.getDate() - 6);
-            setDateFrom(toISODate(start));
-            setDateTo(today);
-            return;
-        }
-        if (preset === 'thisMonth') {
-            setDateFrom(toISODate(new Date(now.getFullYear(), now.getMonth(), 1)));
-            setDateTo(today);
-            return;
-        }
-        if (preset === 'lastMonth') {
-            setDateFrom(toISODate(new Date(now.getFullYear(), now.getMonth() - 1, 1)));
-            setDateTo(toISODate(new Date(now.getFullYear(), now.getMonth(), 0)));
-        }
     };
 
     const handleExport = async () => {
@@ -334,7 +274,7 @@ export default function InventoryTransactionSummaryReport() {
                 title: 'Inventory Transaction Summary',
                 filters: {
                     'Branch': branchName,
-                    'Date Range': dateLabel,
+                    'Date Range': `${dateFrom || 'Any'} to ${dateTo || 'Any'}`,
                     'Active Filters': String(activeFilterCount),
                     'Rows': String(Number(reportData.summary?.rowCount || 0)),
                 },
@@ -347,179 +287,161 @@ export default function InventoryTransactionSummaryReport() {
     };
 
     return (
-        <div className="space-y-6">
-            <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 via-indigo-50 to-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                        <div className="rounded-xl bg-blue-600 p-2.5 text-white"><ScrollText size={18} /></div>
-                        <div>
-                            <h2 className="text-lg font-black text-slate-900">Inventory Transaction Summary</h2>
-                            <p className="text-sm text-slate-600">Opening, closing, and all stock transaction quantities by selected filters.</p>
+        <PageTemplate
+            title="Inventory Transaction Summary"
+            subtitle="Opening, closing, and all stock transaction quantities by selected filters."
+            breadcrumb={[
+                { label: 'Home', href: '/' },
+                { label: 'Reports', href: '/reports' },
+                { label: 'Inventory Transaction Summary' },
+            ]}
+            action={
+                <Button
+                    variant="primary"
+                    size="sm"
+                    icon={isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    onClick={handleExport}
+                    disabled={isExporting || !reportData}
+                    loading={isExporting}
+                >
+                    {isExporting ? 'Generating...' : 'Export Excel'}
+                </Button>
+            }
+            loading={isLoading}
+            maxWidth="full"
+        >
+            <div className="space-y-6">
+                {/* Filters */}
+                <FilterBar>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Select
+                            options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
+                            value={branchId}
+                            onChange={(e) => setBranchId(e.target.value)}
+                            placeholder="Warehouse"
+                            className="min-w-[180px]"
+                        />
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
+                            <span className="text-text-tertiary text-sm">to</span>
+                            <input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => setDateTo(e.target.value)}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
                         </div>
+                        <Select
+                            options={[{ value: '', label: 'All Items' }, ...productOptions]}
+                            value={productId}
+                            onChange={(e) => setProductId(e.target.value)}
+                            placeholder="Item"
+                            className="min-w-[180px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Item Groups' }, ...groupOptions]}
+                            value={groupId}
+                            onChange={(e) => setGroupId(e.target.value)}
+                            placeholder="Item Group"
+                            className="min-w-[150px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Categories' }, ...categoryOptions]}
+                            value={categoryId}
+                            onChange={(e) => setCategoryId(e.target.value)}
+                            placeholder="Category"
+                            className="min-w-[150px]"
+                        />
+                        <Select
+                            options={[{ value: '', label: 'All Brands' }, ...brandOptions]}
+                            value={brandId}
+                            onChange={(e) => setBrandId(e.target.value)}
+                            placeholder="Brand"
+                            className="min-w-[150px]"
+                        />
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={applyItemFilters}
+                            disabled={!isItemFiltersDirty}
+                        >
+                            Apply Item Filters
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => { setProductId(''); setGroupId(''); setCategoryId(''); setBrandId(''); }}
+                        >
+                            Clear
+                        </Button>
                     </div>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">{activeFilterCount} active</span>
+                    <span className="text-xs text-text-tertiary ml-auto">{activeFilterCount} active filters</span>
+                </FilterBar>
+
+                {/* KPI Summary */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+                    <KpiCard label="Rows" value={Number(reportData?.summary?.rowCount || 0).toLocaleString()} />
+                    <KpiCard label="Opening Stock" value={qty(Number(reportData?.summary?.totalOpeningStock || 0))} />
+                    <KpiCard label="Purchase" value={qty(Number(reportData?.summary?.totalPurchase || 0))} />
+                    <KpiCard label="Sales" value={qty(Number(reportData?.summary?.totalSales || 0))} />
+                    <KpiCard label="Transfers (In / Out)" value={`${qty(Number(reportData?.summary?.totalTransferIn || 0))} / ${qty(Number(reportData?.summary?.totalTransferOut || 0))}`} />
+                    <KpiCard label="Closing Stock" value={qty(Number(reportData?.summary?.totalClosingStock || 0))} />
                 </div>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => setPanel(panel === 'branch' ? null : 'branch')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Building2 size={15} /> {branchName}</button>
-                        <button type="button" onClick={() => setPanel(panel === 'date' ? null : 'date')} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><CalendarRange size={15} /> {dateLabel}</button>
-                        <button type="button" onClick={openItemPanel} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><Filter size={15} /> Items Filter {itemFiltersCount > 0 ? `(${itemFiltersCount})` : ''}</button>
-                    </div>
-
-                    {panel && (
-                        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                            <div className="mb-2 flex items-center justify-between">
-                                <p className="text-xs font-black uppercase tracking-wider text-slate-600">{panel} filter</p>
-                                <button type="button" onClick={() => setPanel(null)} className="rounded-md border border-slate-300 bg-white p-1 text-slate-500 hover:bg-slate-100"><X size={13} /></button>
-                            </div>
-
-                            {panel === 'branch' && (
-                                <AppDropdown
-                                    value={branchId}
-                                    onChange={setBranchId}
-                                    options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b) => ({ value: b.id, label: b.name }))]}
-                                    placeholder="Select warehouse"
-                                    searchable
-                                />
-                            )}
-
-                            {panel === 'date' && (
-                                <div className="space-y-3">
-                                    <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-                                        {(['today', 'last7', 'thisMonth', 'lastMonth'] as DatePreset[]).map((preset) => (
-                                            <button
-                                                key={preset}
-                                                type="button"
-                                                onClick={() => applyPreset(preset)}
-                                                className={`rounded-lg border px-2 py-1.5 text-xs font-bold uppercase ${datePreset === preset ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
-                                            >
-                                                {preset}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                                        <input type="date" value={dateFrom} onChange={(e) => { setDatePreset('custom'); setDateFrom(e.target.value); }} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
-                                        <input type="date" value={dateTo} onChange={(e) => { setDatePreset('custom'); setDateTo(e.target.value); }} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" />
-                                    </div>
-                                </div>
-                            )}
-
-                            {panel === 'item' && (
-                                <div className="space-y-3">
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item</p>
-                                            <AppDropdown value={productId} onChange={setProductId} options={[{ value: '', label: 'All Items' }, ...productOptions]} placeholder="Select item" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item Group</p>
-                                            <AppDropdown value={groupId} onChange={setGroupId} options={[{ value: '', label: 'All Item Groups' }, ...groupOptions]} placeholder="Select item group" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Item Category</p>
-                                            <AppDropdown value={categoryId} onChange={setCategoryId} options={[{ value: '', label: 'All Categories' }, ...categoryOptions]} placeholder="Select category" searchable />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Brand</p>
-                                            <AppDropdown value={brandId} onChange={setBrandId} options={[{ value: '', label: 'All Brands' }, ...brandOptions]} placeholder="Select brand" searchable />
-                                        </div>
-                                    </div>
-                                    <div className="flex flex-wrap justify-end gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => { setProductId(''); setGroupId(''); setCategoryId(''); setBrandId(''); }}
-                                            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                                        >
-                                            Clear Item Filters
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={applyItemFilters}
-                                            disabled={!isItemFiltersDirty}
-                                            className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                        >
-                                            Apply Item Filters
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {isLoading ? (
-                <div className="flex justify-center rounded-xl border border-slate-200 bg-white p-10">
-                    <Loader2 size={24} className="animate-spin text-blue-600" />
-                </div>
-            ) : (
-                <>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Rows</p><p className="mt-2 text-3xl font-black text-slate-900">{Number(reportData?.summary?.rowCount || 0).toLocaleString()}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Opening Stock</p><p className="mt-2 text-3xl font-black text-slate-900">{qty(Number(reportData?.summary?.totalOpeningStock || 0))}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Purchase</p><p className="mt-2 text-3xl font-black text-emerald-600">{qty(Number(reportData?.summary?.totalPurchase || 0))}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Sales</p><p className="mt-2 text-3xl font-black text-rose-600">{qty(Number(reportData?.summary?.totalSales || 0))}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Transfers (In / Out)</p><p className="mt-2 text-3xl font-black text-blue-700">{qty(Number(reportData?.summary?.totalTransferIn || 0))} / {qty(Number(reportData?.summary?.totalTransferOut || 0))}</p></div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Closing Stock</p><p className="mt-2 text-3xl font-black text-slate-900">{qty(Number(reportData?.summary?.totalClosingStock || 0))}</p></div>
-                    </div>
-
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                            <div className="text-sm font-semibold text-slate-700">Live Preview ({previewRows.length})</div>
-                            <button type="button" onClick={handleExport} disabled={isExporting || !reportData} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
-                                {isExporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-                                {isExporting ? 'Generating...' : 'Export Excel'}
-                            </button>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                {/* Live Preview Table */}
+                <Section title={`Live Preview (${previewRows.length})`} variant="card" headerBorder>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-background-subtle text-xs uppercase tracking-wider text-text-tertiary">
+                                <tr>
+                                    <th className="px-4 py-3 text-left">Warehouse</th>
+                                    <th className="px-4 py-3 text-left">Item Code</th>
+                                    <th className="px-4 py-3 text-left">Item Name</th>
+                                    <th className="px-4 py-3 text-right">Opening</th>
+                                    <th className="px-4 py-3 text-right">Purchase</th>
+                                    <th className="px-4 py-3 text-right">Sales</th>
+                                    <th className="px-4 py-3 text-right">Transfer In</th>
+                                    <th className="px-4 py-3 text-right">Transfer Out</th>
+                                    <th className="px-4 py-3 text-right">Damaged</th>
+                                    <th className="px-4 py-3 text-right">Purchase Return</th>
+                                    <th className="px-4 py-3 text-right">Sales Return</th>
+                                    <th className="px-4 py-3 text-right">Internal Use</th>
+                                    <th className="px-4 py-3 text-right">Closing</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {previewRows.length === 0 && (
                                     <tr>
-                                        <th className="px-4 py-3 text-left">Warehouse</th>
-                                        <th className="px-4 py-3 text-left">Item Code</th>
-                                        <th className="px-4 py-3 text-left">Item Name</th>
-                                        <th className="px-4 py-3 text-right">Opening</th>
-                                        <th className="px-4 py-3 text-right">Purchase</th>
-                                        <th className="px-4 py-3 text-right">Sales</th>
-                                        <th className="px-4 py-3 text-right">Transfer In</th>
-                                        <th className="px-4 py-3 text-right">Transfer Out</th>
-                                        <th className="px-4 py-3 text-right">Damaged</th>
-                                        <th className="px-4 py-3 text-right">Purchase Return</th>
-                                        <th className="px-4 py-3 text-right">Sales Return</th>
-                                        <th className="px-4 py-3 text-right">Internal Use</th>
-                                        <th className="px-4 py-3 text-right">Closing</th>
+                                        <td colSpan={13} className="px-4 py-8 text-center text-text-tertiary">No transactions found for selected filters.</td>
                                     </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {previewRows.length === 0 && (
-                                        <tr>
-                                            <td colSpan={13} className="px-4 py-8 text-center text-slate-500">No transactions found for selected filters.</td>
-                                        </tr>
-                                    )}
-                                    {previewRows.map((row) => (
-                                        <tr key={`${row.branchId}-${row.productId}`} className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 text-slate-700">{row.branchName || '-'}</td>
-                                            <td className="px-4 py-3 font-semibold text-slate-800">{row.itemCode || '-'}</td>
-                                            <td className="px-4 py-3 text-slate-700">{row.itemName || '-'}</td>
-                                            <td className="px-4 py-3 text-right text-slate-700">{qty(row.openingStock)}</td>
-                                            <td className="px-4 py-3 text-right text-emerald-700">{qty(row.purchase)}</td>
-                                            <td className="px-4 py-3 text-right text-rose-700">{qty(row.sales)}</td>
-                                            <td className="px-4 py-3 text-right text-blue-700">{qty(row.transferIn)}</td>
-                                            <td className="px-4 py-3 text-right text-amber-700">{qty(row.transferOut)}</td>
-                                            <td className="px-4 py-3 text-right text-rose-700">{qty(row.stockDamaged)}</td>
-                                            <td className="px-4 py-3 text-right text-amber-700">{qty(row.purchaseReturn)}</td>
-                                            <td className="px-4 py-3 text-right text-emerald-700">{qty(row.salesReturn)}</td>
-                                            <td className="px-4 py-3 text-right text-slate-700">{qty(row.internalUse)}</td>
-                                            <td className="px-4 py-3 text-right font-semibold text-slate-900">{qty(row.closingStock)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                )}
+                                {previewRows.map((row) => (
+                                    <tr key={`${row.branchId}-${row.productId}`} className="hover:bg-background-subtle transition-colors">
+                                        <td className="px-4 py-3 text-text-secondary">{row.branchName || '-'}</td>
+                                        <td className="px-4 py-3 font-semibold text-text-primary">{row.itemCode || '-'}</td>
+                                        <td className="px-4 py-3 text-text-secondary">{row.itemName || '-'}</td>
+                                        <td className="px-4 py-3 text-right text-text-secondary">{qty(row.openingStock)}</td>
+                                        <td className="px-4 py-3 text-right text-success">{qty(row.purchase)}</td>
+                                        <td className="px-4 py-3 text-right text-danger">{qty(row.sales)}</td>
+                                        <td className="px-4 py-3 text-right text-text-brand">{qty(row.transferIn)}</td>
+                                        <td className="px-4 py-3 text-right text-amber-600">{qty(row.transferOut)}</td>
+                                        <td className="px-4 py-3 text-right text-danger">{qty(row.stockDamaged)}</td>
+                                        <td className="px-4 py-3 text-right text-amber-600">{qty(row.purchaseReturn)}</td>
+                                        <td className="px-4 py-3 text-right text-success">{qty(row.salesReturn)}</td>
+                                        <td className="px-4 py-3 text-right text-text-secondary">{qty(row.internalUse)}</td>
+                                        <td className="px-4 py-3 text-right font-semibold text-text-primary">{qty(row.closingStock)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
-                </>
-            )}
-        </div>
+                </Section>
+            </div>
+        </PageTemplate>
     );
 }

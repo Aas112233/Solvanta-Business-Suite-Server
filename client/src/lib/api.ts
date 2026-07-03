@@ -1,17 +1,19 @@
 import axios from 'axios';
 import { useAuthStore } from '../stores/authStore';
+import { API_PATH, STALE_TIME_5MIN } from './constants';
 
 /**
  * API Configuration
  * - Development: Uses proxy to localhost:5001 (configured in vite.config.ts)
- * - Production: Uses environment variable or default production URL
+ * - Production: Uses VITE_API_BASE_URL env var, or falls back to production URL
  */
 
-// Production backend URL
-const PROD_API_BASE_URL = 'https://solvanta-business-suite-server.vercel.app/api/v1';
+// Production backend URL — override via VITE_API_BASE_URL in .env.production
+const PROD_API_FALLBACK = 'https://solvanta-business-suite-server.vercel.app';
+const PROD_API_BASE_URL = `${PROD_API_FALLBACK}${API_PATH}`;
 
-// Development backend URL (localhost)
-const DEV_API_BASE_URL = '/api/v1'; // Uses Vite proxy
+// Development backend URL (localhost via Vite proxy)
+const DEV_API_BASE_URL = API_PATH;
 
 // Get configured API URL from environment
 const configuredApiBaseURL = String(import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim();
@@ -23,8 +25,8 @@ const apiBaseURL = (() => {
     if (configuredApiBaseURL) {
         let url = configuredApiBaseURL;
         // If the configured URL is just the host and doesn't contain /api/v1 or /api/, append it
-        if (!url.includes('/api/v1') && !url.includes('/api/')) {
-            url = url.replace(/\/+$/, '') + '/api/v1';
+        if (!url.includes(API_PATH) && !url.includes('/api/')) {
+            url = url.replace(/\/+$/, '') + API_PATH;
         }
         if (isLoggingEnabled) {
             console.log('Using custom API URL:', url);

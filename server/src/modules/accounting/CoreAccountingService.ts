@@ -2,6 +2,7 @@ import { PrismaClient, AccountEntityType, AccountMappingType } from '@prisma/cli
 import { AppError } from '../../utils/AppError';
 import { formatDocNo, nextCounter } from '../../utils/documentCounter.js';
 import { isCashType, isBankType, isCreditType, isMixedType } from '../../utils/paymentMethods.js';
+import { roundMoney } from '../../utils/money.js';
 
 export interface AccountingResolutionContext {
     companyId: string;
@@ -33,10 +34,6 @@ export interface TransactionCache {
     accounts: Map<string, string | null>;
 }
 
-function roundMoney(value: number): number {
-    if (!Number.isFinite(value)) return 0;
-    return Math.round(value * 100) / 100;
-}
 
 function asUpper(value: string): string {
     return String(value || '').trim().toUpperCase();

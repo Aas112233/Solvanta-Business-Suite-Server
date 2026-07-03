@@ -7,12 +7,13 @@ import { useAuthStore } from '../../stores/authStore';
 import DateRangeFilter from '../../components/ui/DateRangeFilter';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
 import AppDropdown from '../../components/ui/AppDropdown';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 
 type SortBy = 'qty' | 'revenue' | 'invoices';
 
 export default function TopSellingItems() {
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const today = format(new Date(), 'yyyy-MM-dd');
 
     const [dateRangeInput, setDateRangeInput] = useState({ startDate: today, endDate: today });

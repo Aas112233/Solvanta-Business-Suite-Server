@@ -4,6 +4,7 @@ import { Edit2, Plus, Trash2, Users } from 'lucide-react';
 import toast from '@/lib/toast';
 import api from '../../lib/api';
 import { useCompanyCurrency } from '../../lib/companySettings';
+import { DEFAULT_CURRENCY } from '../../lib/constants';
 import {
     Badge,
     Button,
@@ -72,7 +73,7 @@ type EmployeeFormState = {
     currency: string;
 };
 
-const createInitialFormData = (currency = 'SAR'): EmployeeFormState => ({
+const createInitialFormData = (currency = DEFAULT_CURRENCY): EmployeeFormState => ({
     branchId: '',
     employeeNo: '',
     firstName: '',
@@ -230,7 +231,7 @@ export function Employees() {
             employmentType: employee.employmentType || 'FULL_TIME',
             status: employee.status || 'ACTIVE',
             salary: employee.salary || 0,
-            currency: employee.currency || 'SAR',
+            currency: employee.currency || DEFAULT_CURRENCY,
         });
         setIsAdding(true);
     };

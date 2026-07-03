@@ -208,4 +208,63 @@ export class InventoryService {
 
         return { stock, movement };
     }
+
+    /**
+     * Batch version of mutateStock — processes multiple stock mutations efficiently
+     * by pre-fetching all product unit data in a single query, avoiding the N+1
+     * lookup pattern that occurs when callers loop over mutateStock().
+     *
+     * ALL mutations share a single retry loop — if a transient write conflict occurs,
+     * the entire batch is retried (with product data refreshed).
+     */
+    static async mutateStockBatch(
+        tx: any,
+        items: MutateStockParams[]
+    ): Promise<Array<{ stock: any; movement: any }>> {
+        if (items.length === 0) return [];
+
+        const MAX_RETRIES = 3;
+        const BASE_DELAY_MS = 50;
+        let lastError: any;
+
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                // Pre-fetch all products in a single query
+                const productIds = [...new Set(items.map(i => i.productId))];
+                const products = await tx.product.findMany({
+                    where: { id: { in: productIds } },
+                    select: {
+                        id: true,
+                        name: true,
+                        itemCode: true,
+                        units: { select: { unitCode: true, qtyInBaseUnit: true, isBase: true } },
+                    },
+                });
+                const productMap = new Map(products.map((p: any) => [p.id, p as ProductWithUnits]));
+
+                const results: Array<{ stock: any; movement: any }> = [];
+                for (const item of items) {
+                    const prefetched = (productMap.get(item.productId) as ProductWithUnits) ?? null;
+                    const result = await this.mutateStockInternal(tx, item, prefetched);
+                    results.push(result);
+                }
+                return results;
+            } catch (error: any) {
+                lastError = error;
+                const isTransientError =
+                    error?.message?.includes('write conflict') ||
+                    error?.message?.includes('deadlock') ||
+                    error?.code === 112 ||
+                    error?.code === 262;
+
+                if (isTransientError && attempt < MAX_RETRIES) {
+                    const delay = BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 50;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue;
+                }
+                throw error;
+            }
+        }
+        throw lastError;
+    }
 }

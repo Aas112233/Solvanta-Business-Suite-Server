@@ -12,16 +12,16 @@ export interface SelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectE
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  ({ 
-    className, 
-    size = 'md', 
-    error = false, 
+  ({
+    className,
+    size = 'md',
+    error = false,
     options,
     placeholder,
     fullWidth = false,
     disabled,
     children,
-    ...props 
+    ...props
   }, ref) => {
     const sizeClasses = {
       sm: 'h-8 pl-2.5 pr-8 text-xs',
@@ -41,15 +41,15 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
           ref={ref}
           disabled={disabled}
           className={clsx(
-            'block rounded-lg border bg-background-card dark:bg-gray-800 appearance-none',
-            'text-text-primary dark:text-white',
+            'block rounded-lg border bg-background-card appearance-none',
+            'text-text-primary',
             'focus:outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand',
             'disabled:bg-background-subtle disabled:text-text-tertiary disabled:cursor-not-allowed',
             'transition-colors duration-200',
             sizeClasses[size],
             error
               ? 'border-danger focus:border-danger focus:ring-danger/20'
-              : 'border-border hover:border-slate-400 dark:border-gray-600 dark:hover:border-gray-500',
+              : 'border-border hover:border-border-active',
             fullWidth && 'w-full',
             className
           )}
@@ -61,8 +61,8 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
             </option>
           )}
           {options.map((option) => (
-            <option 
-              key={option.value} 
+            <option
+              key={option.value}
               value={option.value}
               disabled={option.disabled}
             >

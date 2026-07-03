@@ -4,6 +4,8 @@ type ToastFunction = {
     (message: Renderable, options?: ToastOptions): string;
     success: (message: Renderable, options?: ToastOptions) => string;
     error: (message: Renderable, options?: ToastOptions) => string;
+    warning: (message: Renderable, options?: ToastOptions) => string;
+    info: (message: Renderable, options?: ToastOptions) => string;
     loading: (message: Renderable, options?: ToastOptions) => string;
     dismiss: (toastId?: string) => void;
     remove: (toastId?: string) => void;
@@ -20,7 +22,6 @@ type ToastFunction = {
 };
 
 // Wrapper around react-hot-toast to prevent duplicate toast messages.
-// It sets the toast ID to the message content by default if it's a string.
 const toastWrapper: ToastFunction = Object.assign(
     (message: Renderable, options?: ToastOptions) => {
         const id = typeof message === 'string' ? message : undefined;
@@ -34,6 +35,14 @@ const toastWrapper: ToastFunction = Object.assign(
         error: (message: Renderable, options?: ToastOptions) => {
             const id = typeof message === 'string' ? message : undefined;
             return hotToast.error(message, { id, ...options });
+        },
+        warning: (message: Renderable, options?: ToastOptions) => {
+            const id = typeof message === 'string' ? message : undefined;
+            return hotToast(message, { id, icon: '⚠️', ...options });
+        },
+        info: (message: Renderable, options?: ToastOptions) => {
+            const id = typeof message === 'string' ? message : undefined;
+            return hotToast(message, { id, icon: 'ℹ️', ...options });
         },
         loading: (message: Renderable, options?: ToastOptions) => {
             const id = typeof message === 'string' ? message : undefined;

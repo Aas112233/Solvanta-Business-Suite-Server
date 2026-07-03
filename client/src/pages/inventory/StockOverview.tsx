@@ -9,10 +9,10 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import StockAdjustmentModal from './StockAdjustmentModal';
 import LabelPrintModal from './LabelPrintModal';
 import ModuleRefreshButton from '../../components/ModuleRefreshButton';
+import { EXPORT_MAX_RECORDS } from '../../lib/constants';
 import { exportExcel } from '../../lib/fileExport';
 import toast from '@/lib/toast';
-import Pagination from '../../components/ui/Pagination';
-import AppDropdown from '../../components/ui/AppDropdown';
+import { KpiCard, Pagination, AppDropdown, Button, FilterBar, SearchInput } from '../../components/ui';
 import { formatDecomposedQty } from '../../lib/inventoryUtils';
 import { formatCurrencyAmount, useCompanyCurrency } from '../../lib/companySettings';
 import { useAuthStore } from '../../stores/authStore';
@@ -93,7 +93,7 @@ export default function StockOverview() {
                     search: queryParams.search || undefined,
                     branchId: queryParams.branchId || undefined,
                     lowStock: queryParams.lowStockOnly || undefined,
-                    limit: 10000 // Fetch up to 10k records
+                    limit: EXPORT_MAX_RECORDS // Fetch up to 10k records
                 }
             });
 
@@ -186,40 +186,23 @@ export default function StockOverview() {
                 }}
             />
 
-            {/* Widgets */}
+            {/* KPI Widgets — using shared KpiCard component */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                {/* Total Items */}
-                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
-                    <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center">
-                        <Package size={20} />
-                    </div>
-                    <div>
-                        <p className="text-sm text-gray-500">Total Items</p>
-                        <p className="text-xl font-bold">{pagination?.total || 0}</p>
-                    </div>
-                </div>
-                {/* Low Stock */}
-                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
-                    <div className="w-10 h-10 bg-yellow-50 text-yellow-600 rounded-lg flex items-center justify-center">
-                        <AlertTriangle size={20} />
-                    </div>
-                    <div>
-                        <p className="text-sm text-gray-500">Low Stock Alerts</p>
-                        <p className="text-xl font-bold">{alerts?.lowStockCount || 0}</p>
-                    </div>
-                </div>
-                {/* Valuation */}
-                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4">
-                    <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center">
-                        <Plus size={20} />
-                    </div>
-                    <div>
-                        <p className="text-sm text-gray-500">Total Valuation</p>
-                        <p className="text-xl font-bold">
-                            {formatCurrencyAmount(analytics?.totalValuation || 0, currency)}
-                        </p>
-                    </div>
-                </div>
+                <KpiCard
+                    label="Total Items"
+                    value={pagination?.total || 0}
+                    icon={<Package size={20} className="text-blue-600" />}
+                />
+                <KpiCard
+                    label="Low Stock Alerts"
+                    value={alerts?.lowStockCount || 0}
+                    icon={<AlertTriangle size={20} className="text-yellow-600" />}
+                />
+                <KpiCard
+                    label="Total Valuation"
+                    value={formatCurrencyAmount(analytics?.totalValuation || 0, currency)}
+                    icon={<Plus size={20} className="text-emerald-600" />}
+                />
             </div>
 
             {/* Controls */}

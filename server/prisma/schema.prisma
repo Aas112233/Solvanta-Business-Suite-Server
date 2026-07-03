@@ -673,6 +673,7 @@ model Product {
   @@index([companyId, categoryId, status])
   @@index([companyId, itemGroupId, status])
   @@index([companyId, name])
+  @@index([companyId, barcodes])
   @@map("products")
 }
 
@@ -897,6 +898,7 @@ model InventoryStock {
   @@index([companyId, productId])
   @@index([companyId, branchId])
   @@index([companyId, branchId, productId])
+  @@index([companyId, qtyOnHand, minStock])
   @@map("inventory_stocks")
 }
 
@@ -985,6 +987,7 @@ model POSInvoice {
   @@index([posShiftId])
   @@index([salesOrderId])
   @@index([companyId, clientRequestId])
+  @@index([companyId, branchId, paymentMethod, createdAt])
   @@map("pos_invoices")
 }
 
@@ -1008,6 +1011,7 @@ model POSInvoiceItem {
   returnItems SalesReturnItem[]
 
   @@map("pos_invoice_items")
+  @@index([invoiceId])
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1289,6 +1293,8 @@ model SalesReturnItem {
   product     Product        @relation(fields: [productId], references: [id])
 
   @@map("sales_return_items")
+  @@index([returnId])
+  @@index([invoiceItemId])
 }
 
 model SalesQuotation {
@@ -1342,6 +1348,7 @@ model SalesQuotationItem {
   product   Product?       @relation(fields: [productId], references: [id])
 
   @@map("sales_quotation_items")
+  @@index([quotationId])
 }
 
 enum SalesOrderStatus {
@@ -1404,6 +1411,7 @@ model SalesOrderItem {
   product Product?   @relation(fields: [productId], references: [id])
 
   @@map("sales_order_items")
+  @@index([orderId])
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1463,6 +1471,8 @@ model PurchaseInvoiceItem {
   returnItems PurchaseReturnItem[]
 
   @@map("purchase_invoice_items")
+  @@index([invoiceId])
+  @@index([productId])
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1517,6 +1527,7 @@ model PurchaseOrderItem {
   product       Product       @relation(fields: [productId], references: [id])
 
   @@map("purchase_order_items")
+  @@index([poId])
 }
 
 model PurchaseReturn {
@@ -1684,6 +1695,7 @@ model StockCountItem {
   product    Product    @relation(fields: [productId], references: [id])
 
   @@map("stock_count_items")
+  @@index([stockCountId])
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1780,6 +1792,7 @@ model JournalEntryLine {
   account      Account      @relation(fields: [accountId], references: [id])
 
   @@map("journal_entry_lines")
+  @@index([journalEntryId])
 }
 
 model Expense {
@@ -2322,6 +2335,7 @@ model BankTransaction {
   @@index([bankAccountId, transactionDate])
   @@index([isReconciled])
   @@index([sourceType, sourceId])
+  @@index([reconciliationId])
   @@map("bank_transactions")
 }
 

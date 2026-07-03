@@ -191,54 +191,24 @@
     transition: transform 0.1s;
   }
 
-  /* Basic dark-mode compatibility for pages still using fixed gray utility classes */
-  .dark .bg-white {
-    background-color: #111827 !important;
-  }
-
-  .dark .bg-gray-50 {
-    background-color: #111827 !important;
-  }
-
-  .dark .bg-gray-100 {
-    background-color: #1f2937 !important;
-  }
-
+  /* ── DARK MODE LEGACY BRIDGE ──────────────────────────────────── */
+  /* TODO: Remove these !important overrides once all pages have been
+     migrated to semantic design tokens (text-text-primary, bg-background-card,
+     border-border, etc.). System components are done; ~100 page files remain.
+     Each page migrated to PageTemplate + DataTable removes the need for
+     one class of override. Track via: grep -r "text-gray-\|bg-white\|border-gray-" client/src/pages/ */
+  .dark .bg-white { background-color: #111827 !important; }
+  .dark .bg-gray-50 { background-color: #111827 !important; }
+  .dark .bg-gray-100 { background-color: #1f2937 !important; }
   .dark .border-gray-100,
   .dark .border-gray-200,
-  .dark .border-gray-300 {
-    border-color: #334155 !important;
-  }
-
-  .dark .text-gray-900 {
-    color: #e5e7eb !important;
-  }
-
-  .dark .text-gray-800 {
-    color: #d1d5db !important;
-  }
-
-  .dark .text-gray-700 {
-    color: #cbd5e1 !important;
-  }
-
-  .dark .text-gray-600 {
-    color: #94a3b8 !important;
-  }
-
-  .dark .text-gray-500 {
-    color: #94a3b8 !important;
-  }
-
-  .dark .text-gray-400 {
-    color: #94a3b8 !important;
-  }
-
-  .dark .hover\:bg-gray-50:hover {
-    background-color: #1f2937 !important;
-  }
-
-  .dark .hover\:bg-gray-100:hover {
-    background-color: #334155 !important;
-  }
+  .dark .border-gray-300 { border-color: #334155 !important; }
+  .dark .text-gray-900 { color: #e5e7eb !important; }
+  .dark .text-gray-800 { color: #d1d5db !important; }
+  .dark .text-gray-700 { color: #cbd5e1 !important; }
+  .dark .text-gray-600 { color: #94a3b8 !important; }
+  .dark .text-gray-500 { color: #94a3b8 !important; }
+  .dark .text-gray-400 { color: #94a3b8 !important; }
+  .dark .hover\:bg-gray-50:hover { background-color: #1f2937 !important; }
+  .dark .hover\:bg-gray-100:hover { background-color: #334155 !important; }
 }

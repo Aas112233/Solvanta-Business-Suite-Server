@@ -6,11 +6,12 @@ import api from '../../../lib/api';
 import { useAuthStore } from '../../../stores/authStore';
 import ModuleRefreshButton from '../../../components/ModuleRefreshButton';
 import { cashStatusColor, formatMoney } from './utils';
+import { DEFAULT_CURRENCY } from '../../../lib/constants';
 
 export default function SalesCashDeposits() {
     const queryClient = useQueryClient();
     const activeBranchId = useAuthStore((s) => s.activeBranchId);
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
     const [search, setSearch] = useState('');
     const [searchInput, setSearchInput] = useState('');
     const [savingId, setSavingId] = useState('');

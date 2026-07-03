@@ -1,25 +1,25 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
+import { DEFAULT_CURRENCY, FETCH_ALL_LIMIT } from '../../lib/constants';
 import { exportExcel } from '../../lib/fileExport';
 import type { ExcelColumn } from '../../lib/excelReport';
-import { Loader2, Download, CheckSquare, Square, PieChart as PieChartIcon } from 'lucide-react';
+import { Loader2, Download } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { getSalesCustomerExportText } from '../../lib/salesCustomerDisplay';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
-import AppDropdown from '../ui/AppDropdown';
 import {
     buildPaymentMethodOptions,
     DEFAULT_SALE_PAYMENT_METHOD_OPTIONS,
     GLOBAL_STRING_GROUPS,
 } from '../../lib/globalStrings';
+import { PageTemplate, Section, KpiCard, Button, FilterBar, Select } from '../ui';
 
 interface SalesReportProps {
     branches: any[];
 }
 
 export default function SalesReport({ branches }: SalesReportProps) {
-    const currency = useAuthStore((s) => s.user?.company?.currency) || 'SAR';
+    const currency = useAuthStore((s) => s.user?.company?.currency) || DEFAULT_CURRENCY;
 
     const [dateFrom, setDateFrom] = useState<string>('');
     const [dateTo, setDateTo] = useState<string>('');
@@ -53,8 +53,6 @@ export default function SalesReport({ branches }: SalesReportProps) {
         blankLabel: 'All Payment Methods',
     });
 
-    // Using the aggregated reports endpoint for summary and chart
-    // We only pass the filters the backend truly supports for real-time aggregate changes
     const { data: salesData, isLoading: salesLoading } = useQuery({
         queryKey: ['report-sales', localBranchId, dateFrom, dateTo],
         queryFn: () => api.get('/reports/sales', {
@@ -69,7 +67,6 @@ export default function SalesReport({ branches }: SalesReportProps) {
     const handleExport = async () => {
         setIsExporting(true);
         try {
-            // Fetch all invoices matching criteria (handling pagination bypass)
             let allInvoices: any[] = [];
             let page = 1;
             let hasMore = true;
@@ -77,30 +74,26 @@ export default function SalesReport({ branches }: SalesReportProps) {
             while (hasMore) {
                 const r = await api.get('/sales/invoices', {
                     params: {
-                        limit: 1000,
+                        limit: FETCH_ALL_LIMIT,
                         page,
                         startDate: selectedColumns.date ? (dateFrom || undefined) : undefined,
                         endDate: selectedColumns.date ? (dateTo || undefined) : undefined,
                         paymentMethod: selectedColumns.paymentMethod ? (paymentMethod || undefined) : undefined,
-                        // Note: Backend might rely on active branch context header, so it won't reliably fetch cross-branch unless requested correctly,
-                        // meaning fallback to salesData is very important.
                     }
                 });
 
                 const fetchedInvoices = r.data?.data || [];
                 allInvoices = [...allInvoices, ...fetchedInvoices];
 
-                if (fetchedInvoices.length < 1000) {
+                if (fetchedInvoices.length < FETCH_ALL_LIMIT) {
                     hasMore = false;
                 } else {
                     page++;
                 }
             }
 
-            // If we didn't get any from endpoint, fallback to salesData.invoices
             let finalInvoices = allInvoices.length > 0 ? allInvoices : (salesData?.invoices || []);
 
-            // Apply frontend-level filtering for exact local searches
             if (selectedColumns.paymentMethod && paymentMethod) {
                 finalInvoices = finalInvoices.filter((i: any) => i.paymentMethod === paymentMethod);
             }
@@ -164,150 +157,146 @@ export default function SalesReport({ branches }: SalesReportProps) {
         }
     };
 
-    const baseCols = [
-        { key: 'invoiceNo', label: 'Invoice Number', type: 'text', state: invoiceNoQuery, onChange: (e: any) => setInvoiceNoQuery(e.target.value), placeholder: 'Search by Invoice No...' },
-        { key: 'date', label: 'Transaction Date', type: 'dateRange', fromState: dateFrom, onFromChange: (e: any) => setDateFrom(e.target.value), toState: dateTo, onToChange: (e: any) => setDateTo(e.target.value) },
-        {
-            key: 'branch', label: 'Warehouse / Branch', type: 'select', state: localBranchId, onChange: (e: any) => setLocalBranchId(e.target.value),
-            options: [{ value: '', label: 'All Warehouses' }, ...branches.map(b => ({ value: b.id, label: b.name }))]
-        },
-        { key: 'customer', label: 'Customer Details', type: 'text', state: customerQuery, onChange: (e: any) => setCustomerQuery(e.target.value), placeholder: 'Search by Customer Name/Phone...' },
-        {
-            key: 'paymentMethod', label: 'Payment Method', type: 'select', state: paymentMethod, onChange: (e: any) => setPaymentMethod(e.target.value),
-            options: salesPaymentMethodOptions
-        },
-        { key: 'createdBy', label: 'Created By', type: 'text', state: createdByQuery, onChange: (e: any) => setCreatedByQuery(e.target.value), placeholder: 'Search by Employee Name...' },
+    const columns = [
+        { key: 'invoiceNo', label: 'Invoice Number' },
+        { key: 'date', label: 'Transaction Date' },
+        { key: 'branch', label: 'Warehouse / Branch' },
+        { key: 'customer', label: 'Customer Details' },
+        { key: 'paymentMethod', label: 'Payment Method' },
+        { key: 'createdBy', label: 'Created By' },
         { key: 'subtotal', label: 'Subtotal' },
         { key: 'discountTotal', label: 'Discount Amount' },
         { key: 'taxTotal', label: 'Tax Amount' },
         { key: 'grandTotal', label: 'Grand Total' }
     ];
 
-    const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+    const selectedColCount = columns.filter((col) => selectedColumns[col.key]).length;
+    const activeFilterCount = [localBranchId, dateFrom, dateTo, paymentMethod, customerQuery, invoiceNoQuery, createdByQuery].filter(Boolean).length;
 
     return (
-        <div className="space-y-6">
-            {salesLoading ? (
-                <div className="flex justify-center p-10"><Loader2 size={24} className="animate-spin text-blue-600" /></div>
-            ) : salesData && (
-                <>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-                        {[
-                            { label: 'Total Sales', value: `${currency} ${Number(salesData.summary.totalSales).toLocaleString()} `, color: 'var(--color-success)' },
-                            { label: 'Total Tax', value: `${currency} ${Number(salesData.summary.totalTax).toLocaleString()} `, color: 'var(--color-warning)' },
-                            { label: 'Invoices', value: salesData.summary.invoiceCount.toLocaleString(), color: 'var(--color-accent)' },
-                        ].map((s, i) => (
-                            <div key={i} className="rounded-xl p-5" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
-                                <p className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{s.label}</p>
-                                <p className="text-2xl font-bold mt-1" style={{ color: s.color }}>{s.value}</p>
-                            </div>
+        <PageTemplate
+            title="Sales Report"
+            subtitle="Sales performance summary with invoice-level drilldown and payment analysis."
+            breadcrumb={[
+                { label: 'Home', href: '/' },
+                { label: 'Reports', href: '/reports' },
+                { label: 'Sales Report' },
+            ]}
+            action={
+                <Button
+                    variant="primary"
+                    size="sm"
+                    icon={isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    onClick={handleExport}
+                    disabled={isExporting}
+                    loading={isExporting}
+                >
+                    {isExporting ? 'Generating...' : 'Export Excel'}
+                </Button>
+            }
+            loading={salesLoading}
+            maxWidth="full"
+        >
+            <div className="space-y-6">
+                {/* KPI Summary */}
+                {salesData && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <KpiCard label="Total Sales" value={`${currency} ${Number(salesData.summary.totalSales).toLocaleString()}`} />
+                        <KpiCard label="Total Tax" value={`${currency} ${Number(salesData.summary.totalTax).toLocaleString()}`} />
+                        <KpiCard label="Invoices" value={Number(salesData.summary.invoiceCount || 0).toLocaleString()} />
+                    </div>
+                )}
+
+                {/* Filters */}
+                <FilterBar>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Select
+                            options={[{ value: '', label: 'All Warehouses' }, ...branches.map((b: any) => ({ value: b.id, label: b.name }))]}
+                            value={localBranchId}
+                            onChange={(e) => setLocalBranchId(e.target.value)}
+                            placeholder="Warehouse"
+                            className="min-w-[180px]"
+                        />
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="date"
+                                value={dateFrom}
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
+                            <span className="text-text-tertiary text-sm">to</span>
+                            <input
+                                type="date"
+                                value={dateTo}
+                                onChange={(e) => setDateTo(e.target.value)}
+                                className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary"
+                            />
+                        </div>
+                        <Select
+                            options={salesPaymentMethodOptions}
+                            value={paymentMethod}
+                            onChange={(e) => setPaymentMethod(e.target.value)}
+                            placeholder="Payment Method"
+                            className="min-w-[180px]"
+                        />
+                        <input
+                            type="text"
+                            placeholder="Search by Invoice No..."
+                            value={invoiceNoQuery}
+                            onChange={(e) => setInvoiceNoQuery(e.target.value)}
+                            className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary min-w-[180px]"
+                        />
+                        <input
+                            type="text"
+                            placeholder="Search by Customer..."
+                            value={customerQuery}
+                            onChange={(e) => setCustomerQuery(e.target.value)}
+                            className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary min-w-[180px]"
+                        />
+                        <input
+                            type="text"
+                            placeholder="Search by Employee..."
+                            value={createdByQuery}
+                            onChange={(e) => setCreatedByQuery(e.target.value)}
+                            className="h-10 rounded-lg border border-border bg-background-card px-3 text-sm text-text-primary min-w-[180px]"
+                        />
+                    </div>
+                    <span className="text-xs text-text-tertiary ml-auto">{activeFilterCount} active filters</span>
+                </FilterBar>
+
+                {/* Column Toggles */}
+                <Section variant="card" title="Export Columns" headerBorder>
+                    <div className="flex items-center gap-2 mb-3">
+                        <Button size="sm" variant="ghost" onClick={() => setSelectedColumns((prev) => {
+                            const next = { ...prev };
+                            columns.forEach((col) => { next[col.key] = true; });
+                            return next;
+                        })}>Select All</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setSelectedColumns((prev) => {
+                            const next = { ...prev };
+                            columns.forEach((col) => { next[col.key] = false; });
+                            return next;
+                        })}>Clear All</Button>
+                        <span className="text-xs text-text-tertiary ml-auto">{selectedColCount} selected</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {columns.map((col) => (
+                            <label
+                                key={col.key}
+                                className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer hover:text-text-primary transition-colors"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedColumns[col.key]}
+                                    onChange={() => toggleColumn(col.key)}
+                                    className="rounded border-border text-brand focus:ring-brand-200"
+                                />
+                                {col.label}
+                            </label>
                         ))}
                     </div>
-                </>
-            )}
-
-            <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm mt-8">
-                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600">
-                            <PieChartIcon size={20} />
-                        </div>
-                        <div>
-                            <h2 className="text-lg font-semibold text-gray-900">Configure & Download Export</h2>
-                            <p className="text-sm text-gray-500">Toggle fields below to include them in the export or apply specific filters.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="space-y-6 bg-gray-50/50 p-5 rounded-lg border border-gray-100">
-                    <div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {baseCols.map(col => {
-                                const isSelected = selectedColumns[col.key] !== false;
-                                return (
-                                    <div
-                                        key={col.key}
-                                        className={`flex flex-col transition-all rounded-xl border overflow-hidden ${isSelected
-                                            ? 'border-blue-500 bg-blue-50 shadow-sm ring-1 ring-blue-500/20'
-                                            : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
-                                            }`}
-                                    >
-                                        <button
-                                            onClick={() => toggleColumn(col.key)}
-                                            className="flex items-center gap-3 text-sm transition-all text-left p-3"
-                                        >
-                                            {isSelected ? (
-                                                <CheckSquare size={18} className="text-blue-600 flex-shrink-0" />
-                                            ) : (
-                                                <Square size={18} className="text-gray-300 flex-shrink-0" />
-                                            )}
-                                            <span className={`font-medium ${isSelected ? 'text-blue-800' : 'text-gray-700'}`}>{col.label}</span>
-                                        </button>
-
-                                        {isSelected && col.type === 'select' && (
-                                            <div className="px-3 pb-3">
-                                                                                                <AppDropdown
-                                                    value={col.state || ''}
-                                                    onChange={(v) => col.onChange?.({ target: { value: v } } as any)}
-                                                    options={[...(col.options || []).map((opt: any) => ({ value: opt.value, label: opt.label }))]}
-                                                    placeholder='Select'
-                                                    searchable
-                                                />
-                                            </div>
-                                        )}
-
-                                        {isSelected && col.type === 'dateRange' && (
-                                            <div className="px-3 pb-3 flex flex-col gap-2">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[10px] uppercase font-bold text-blue-700 w-10">From</span>
-                                                    <input
-                                                        type="date"
-                                                        value={col.fromState}
-                                                        onChange={col.onFromChange}
-                                                        className="w-full text-xs rounded-lg border-gray-300 py-1.5 px-2 shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white"
-                                                    />
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[10px] uppercase font-bold text-blue-700 w-10">To</span>
-                                                    <input
-                                                        type="date"
-                                                        value={col.toState}
-                                                        onChange={col.onToChange}
-                                                        className="w-full text-xs rounded-lg border-gray-300 py-1.5 px-2 shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white"
-                                                    />
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {isSelected && col.type === 'text' && (
-                                            <div className="px-3 pb-3">
-                                                <input
-                                                    type="text"
-                                                    placeholder={col.placeholder || 'Search...'}
-                                                    value={col.state || ''}
-                                                    onChange={(v) => col.onChange?.({ target: { value: v } } as any)}
-                                                    className="w-full text-xs rounded-lg border-gray-300 p-2 shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white"
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    <div className="pt-6 mt-4 border-t border-gray-200 flex justify-end">
-                        <button
-                            onClick={handleExport}
-                            disabled={isExporting}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl flex items-center gap-2 font-bold transition-all shadow-lg shadow-blue-100 disabled:opacity-50 disabled:shadow-none"
-                        >
-                            {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                            {isExporting ? 'Generating Excel...' : 'Generate & Download Excel'}
-                        </button>
-                    </div>
-                </div>
+                </Section>
             </div>
-        </div>
+        </PageTemplate>
     );
 }
