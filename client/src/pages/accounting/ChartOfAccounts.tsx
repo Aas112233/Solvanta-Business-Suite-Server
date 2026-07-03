@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
-import { Plus, Search, Building2, Lock, CheckCircle2, ChevronRight, ChevronDown } from 'lucide-react';
+import { Plus, Search, Building2, Lock, CheckCircle2, ChevronRight, ChevronDown, BookOpen, LayoutTemplate, Store, Wrench, Coffee, ShoppingCart, HardHat, AlertTriangle, Loader2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { PageTemplate, Section, Button, Select, Modal } from '../../components/ui';
+import { toast } from 'react-hot-toast';
 
 interface Account {
     id: string;
@@ -43,6 +44,59 @@ export default function ChartOfAccounts() {
         EQUITY: true,
         REVENUE: true,
         EXPENSE: true
+    });
+
+    // ── Template State ──
+    const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+    const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+    const [templateConfirmOpen, setTemplateConfirmOpen] = useState(false);
+
+    const TEMPLATE_ICONS: Record<string, React.ReactNode> = {
+        '🛒': <Store size={20} />,
+        '🏭': <Wrench size={20} />,
+        '💼': <BookOpen size={20} />,
+        '🍽️': <Coffee size={20} />,
+        '📦': <ShoppingCart size={20} />,
+        '🏗️': <HardHat size={20} />,
+    };
+
+    const { data: templates = [], isLoading: templatesLoading } = useQuery({
+        queryKey: ['coa-templates'],
+        queryFn: async () => {
+            const res = await api.get('/accounting/templates');
+            return (res.data.data || []) as Array<{
+                id: string; name: string; nameArabic: string;
+                description: string; icon: string;
+                accountCount: number; mappingCount: number;
+            }>;
+        },
+        enabled: isTemplateModalOpen,
+    });
+
+    const templateDetailQuery = useQuery({
+        queryKey: ['coa-template', selectedTemplateId],
+        queryFn: async () => {
+            const res = await api.get(`/accounting/templates/${selectedTemplateId}`);
+            return res.data.data as any;
+        },
+        enabled: !!selectedTemplateId && templateConfirmOpen,
+    });
+
+    const seedMutation = useMutation({
+        mutationFn: async (templateId: string) => {
+            const res = await api.post('/accounting/seed-template', { templateId });
+            return res.data;
+        },
+        onSuccess: (data: any) => {
+            toast.success(data.message || 'Chart of Accounts seeded successfully!');
+            queryClient.invalidateQueries({ queryKey: ['accounts'] });
+            setTemplateConfirmOpen(false);
+            setIsTemplateModalOpen(false);
+            setSelectedTemplateId(null);
+        },
+        onError: (error: any) => {
+            toast.error(error.response?.data?.error?.message || 'Failed to seed COA');
+        },
     });
 
     const toggleGroup = (group: string) => {
@@ -114,13 +168,24 @@ export default function ChartOfAccounts() {
                 { label: 'Chart of Accounts' }
             ]}
             action={
-                <Button
-                    variant="primary"
-                    icon={<Plus size={18} />}
-                    onClick={() => setIsModalOpen(true)}
-                >
-                    New Account
-                </Button>
+                <div className="flex items-center gap-2">
+                    <Button
+                        variant="outline"
+                        icon={<LayoutTemplate size={18} />}
+                        onClick={() => setIsTemplateModalOpen(true)}
+                        disabled={accounts.length > 0}
+                        title={accounts.length > 0 ? 'Templates can only be loaded into an empty Chart of Accounts' : 'Load a pre-built COA template'}
+                    >
+                        Load Template
+                    </Button>
+                    <Button
+                        variant="primary"
+                        icon={<Plus size={18} />}
+                        onClick={() => setIsModalOpen(true)}
+                    >
+                        New Account
+                    </Button>
+                </div>
             }
             loading={isLoading}
             maxWidth="full"
@@ -300,6 +365,116 @@ export default function ChartOfAccounts() {
                             </Button>
                         </div>
                     </form>
+                </Modal>
+
+                {/* ── Template Selection Modal ── */}
+                <Modal
+                    isOpen={isTemplateModalOpen}
+                    onClose={() => { setIsTemplateModalOpen(false); setSelectedTemplateId(null); }}
+                    title="Load Chart of Accounts Template"
+                >
+                    <div className="space-y-4">
+                        <p className="text-sm text-text-secondary">
+                            Choose a pre-built Chart of Accounts template for your industry. This will create all necessary accounts and default mappings automatically.
+                        </p>
+
+                        {templatesLoading ? (
+                            <div className="flex items-center justify-center py-8">
+                                <Loader2 size={24} className="animate-spin text-brand" />
+                            </div>
+                        ) : (
+                            <div className="grid gap-3 max-h-96 overflow-y-auto">
+                                {templates.map((tpl) => (
+                                    <button
+                                        key={tpl.id}
+                                        type="button"
+                                        onClick={() => { setSelectedTemplateId(tpl.id); setTemplateConfirmOpen(true); }}
+                                        className={clsx(
+                                            'flex items-start gap-4 p-4 rounded-xl border text-left transition-all',
+                                            'hover:border-brand hover:shadow-sm',
+                                            selectedTemplateId === tpl.id ? 'border-brand bg-brand-50/30' : 'border-border'
+                                        )}
+                                    >
+                                        <span className="text-2xl mt-0.5">{tpl.icon}</span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <h4 className="font-semibold text-text-primary">{tpl.name}</h4>
+                                                <span className="text-xs text-text-tertiary font-arabic">{tpl.nameArabic}</span>
+                                            </div>
+                                            <p className="text-xs text-text-tertiary mt-0.5">{tpl.description}</p>
+                                            <div className="flex items-center gap-3 mt-2">
+                                                <span className="text-[11px] text-text-tertiary bg-background-subtle px-2 py-0.5 rounded">
+                                                    {tpl.accountCount} accounts
+                                                </span>
+                                                <span className="text-[11px] text-text-tertiary bg-background-subtle px-2 py-0.5 rounded">
+                                                    {tpl.mappingCount} mappings
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="pt-4 flex items-center justify-end gap-3 border-t border-border">
+                            <Button variant="outline" onClick={() => setIsTemplateModalOpen(false)} type="button">
+                                Cancel
+                            </Button>
+                        </div>
+                    </div>
+                </Modal>
+
+                {/* ── Template Confirm Modal ── */}
+                <Modal
+                    isOpen={templateConfirmOpen}
+                    onClose={() => { setTemplateConfirmOpen(false); setSelectedTemplateId(null); }}
+                    title="Confirm Template Installation"
+                >
+                    <div className="space-y-4">
+                        <div className="flex items-start gap-3 p-4 bg-warning-soft rounded-lg border border-warning/20">
+                            <AlertTriangle size={20} className="text-warning shrink-0 mt-0.5" />
+                            <div>
+                                <p className="text-sm font-medium text-warning">This will replace your existing configuration</p>
+                                <p className="text-xs text-text-tertiary mt-1">
+                                    Loading a template will create all accounts and default mappings. Your existing Chart of Accounts must be empty first. This action cannot be easily undone.
+                                </p>
+                            </div>
+                        </div>
+
+                        {templateDetailQuery.isLoading ? (
+                            <div className="flex items-center justify-center py-8">
+                                <Loader2 size={24} className="animate-spin text-brand" />
+                            </div>
+                        ) : templateDetailQuery.data ? (
+                            <div className="space-y-2">
+                                <p className="text-sm font-medium text-text-primary">
+                                    Template: {templateDetailQuery.data.name} {templateDetailQuery.data.icon}
+                                </p>
+                                <div className="grid grid-cols-2 gap-2 text-xs text-text-tertiary">
+                                    <span>{(templateDetailQuery.data.accounts || []).reduce((s: number, a: any) => s + 1 + (a.children?.length || 0), 0)} accounts</span>
+                                    <span>{(templateDetailQuery.data.mappings || []).length} auto-mappings</span>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        <div className="pt-4 flex items-center justify-end gap-3 border-t border-border">
+                            <Button
+                                variant="outline"
+                                onClick={() => { setTemplateConfirmOpen(false); setSelectedTemplateId(null); }}
+                                type="button"
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                variant="primary"
+                                onClick={() => selectedTemplateId && seedMutation.mutate(selectedTemplateId)}
+                                loading={seedMutation.isPending}
+                                type="button"
+                            >
+                                {seedMutation.isPending ? 'Installing...' : 'Install Template'}
+                            </Button>
+                        </div>
+                    </div>
                 </Modal>
             </div>
         </PageTemplate>

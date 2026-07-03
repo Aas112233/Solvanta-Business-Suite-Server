@@ -8,6 +8,7 @@ import { paginationSchema, getPaginationParams } from '../../utils/pagination.js
 import { PERMISSIONS } from '../../config/permissions.js';
 import { AppError } from '../../utils/AppError.js';
 import { asyncHandler } from '../../middleware/errorHandler.js';
+import type { CoaAccountTemplate } from './coaTemplates.js';
 
 const objectIdSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid id');
 
@@ -32,6 +33,31 @@ const ACCOUNT_MAPPING_TYPES = [
     'TRANSFER_IN_TRANSIT',
     'WIP_ASSET',
     'PRODUCTION_VARIANCE',
+    'SERVICE_REVENUE',
+    'SERVICE_COST',
+    'SALES_SHIPPING_REVENUE',
+    'PURCHASE_FREIGHT',
+    'SALARY_EXPENSE',
+    'PAYROLL_PAYABLE',
+    'EXCHANGE_GAIN',
+    'EXCHANGE_LOSS',
+    'BANK_CHARGES',
+    'INTEREST_INCOME',
+    'INTEREST_EXPENSE',
+    'BAD_DEBT_EXPENSE',
+    'MARKETING_EXPENSE',
+    'RENT_EXPENSE',
+    'UTILITY_EXPENSE',
+    'DEPRECIATION_EXPENSE',
+    'INSURANCE_EXPENSE',
+    'MAINTENANCE_EXPENSE',
+    'OFFICE_SUPPLIES_EXPENSE',
+    'TRAVEL_EXPENSE',
+    'ROUNDING',
+    'CONTRACT_REVENUE',
+    'SUBCONTRACTOR_EXPENSE',
+    'RETENTION_RECEIVABLE',
+    'RETENTION_PAYABLE',
 ] as const;
 const ACCOUNT_ENTITY_TYPES = ['GLOBAL', 'BRANCH', 'PRODUCT', 'CATEGORY', 'CUSTOMER', 'SUPPLIER'] as const;
 
@@ -356,6 +382,113 @@ accountingRoutes.post('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_POST
     });
 
     sendSuccess(res, account, undefined, 201);
+}));
+
+// ─── COA Templates ─────────────────────────────────────────────
+accountingRoutes.get('/templates', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), asyncHandler(async (_req, res) => {
+    const { COA_TEMPLATES } = await import('./coaTemplates.js');
+    // Return template metadata only (no accounts — the payload is large)
+    const summaries = COA_TEMPLATES.map(t => ({
+        id: t.id,
+        name: t.name,
+        nameArabic: t.nameArabic,
+        description: t.description,
+        icon: t.icon,
+        accountCount: t.accounts.reduce((sum, a) => sum + 1 + (a.children?.length ?? 0), 0),
+        mappingCount: t.mappings.length,
+    }));
+    sendSuccess(res, summaries);
+}));
+
+accountingRoutes.get('/templates/:id', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), asyncHandler(async (req, res) => {
+    const { COA_TEMPLATES, getTemplateById } = await import('./coaTemplates.js');
+    const templateId = String(req.params.id);
+    const template = getTemplateById(templateId);
+    if (!template) throw AppError.notFound('COA template');
+    sendSuccess(res, template);
+}));
+
+accountingRoutes.post('/seed-template', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), asyncHandler(async (req, res) => {
+    const { templateId } = req.body;
+    if (!templateId || typeof templateId !== 'string') {
+        throw AppError.badRequest('templateId is required');
+    }
+
+    const { getTemplateById } = await import('./coaTemplates.js');
+    const seedTemplate = getTemplateById(String(templateId));
+    if (!seedTemplate) throw AppError.notFound('COA template');
+
+    const companyId = req.user!.companyId;
+
+    // Check if company already has accounts
+    const existingCount = await prisma.account.count({ where: { companyId } });
+    if (existingCount > 0) {
+        throw AppError.badRequest(
+            `Company already has ${existingCount} accounts. Seeding is only allowed for new/empty companies. ` +
+            'To re-seed, delete all existing accounts first.'
+        );
+    }
+
+    // Flatten the hierarchical template into individual accounts
+    let createdCount = 0;
+    let mappingCount = 0;
+
+    async function createAccounts(
+        items: CoaAccountTemplate[],
+        parentId: string | null = null
+    ): Promise<void> {
+        for (const item of items) {
+            const account = await prisma.account.create({
+                data: {
+                    companyId,
+                    code: item.code,
+                    name: item.name,
+                    type: item.type as any,
+                    parentId,
+                    isSystem: item.isSystem ?? false,
+                },
+            });
+            createdCount++;
+            if (item.children && item.children.length > 0) {
+                await createAccounts(item.children, account.id);
+            }
+        }
+    }
+
+    await createAccounts(seedTemplate.accounts);
+
+    // Seed default account mappings
+    const codeToAccount = new Map<string, string>();
+    const allAccounts = await prisma.account.findMany({
+        where: { companyId },
+        select: { id: true, code: true },
+    });
+    for (const a of allAccounts) {
+        codeToAccount.set(a.code, a.id);
+    }
+
+    for (const m of seedTemplate.mappings) {
+        const accountId = codeToAccount.get(m.accountCode);
+        if (!accountId) continue; // skip if referenced account not in template
+
+        await prisma.accountMapping.create({
+            data: {
+                companyId,
+                mappingType: m.mappingType as any,
+                entityType: m.entityType,
+                entityId: m.entityType === 'GLOBAL' ? null : undefined,
+                accountId,
+            },
+        });
+        mappingCount++;
+    }
+
+    sendSuccess(res, {
+        templateId: seedTemplate.id,
+        templateName: seedTemplate.name,
+        accountsCreated: createdCount,
+        mappingsCreated: mappingCount,
+    }, { message: `Seeded "${seedTemplate.name}" chart of accounts successfully` }, 201);
 }));
 
 // --- Mappings ---

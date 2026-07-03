@@ -134,6 +134,39 @@ enum AccountMappingType {
   TRANSFER_IN_TRANSIT
   WIP_ASSET
   PRODUCTION_VARIANCE
+  // ── New: Revenue & Cost of Services ──
+  SERVICE_REVENUE
+  SERVICE_COST
+  // ── New: Shipping & Freight ──
+  SALES_SHIPPING_REVENUE
+  PURCHASE_FREIGHT
+  // ── New: Payroll ──
+  SALARY_EXPENSE
+  PAYROLL_PAYABLE
+  // ── New: Banking & Treasury ──
+  EXCHANGE_GAIN
+  EXCHANGE_LOSS
+  BANK_CHARGES
+  INTEREST_INCOME
+  INTEREST_EXPENSE
+  // ── New: Receivables Management ──
+  BAD_DEBT_EXPENSE
+  // ── New: Operational Expenses ──
+  MARKETING_EXPENSE
+  RENT_EXPENSE
+  UTILITY_EXPENSE
+  DEPRECIATION_EXPENSE
+  INSURANCE_EXPENSE
+  MAINTENANCE_EXPENSE
+  OFFICE_SUPPLIES_EXPENSE
+  TRAVEL_EXPENSE
+  // ── New: Adjustments ──
+  ROUNDING
+  // ── New: Construction-specific ──
+  CONTRACT_REVENUE
+  SUBCONTRACTOR_EXPENSE
+  RETENTION_RECEIVABLE
+  RETENTION_PAYABLE
 }
 
 enum BOMStatus {
