@@ -10,6 +10,8 @@ import { paginationSchema, getPaginationParams } from '../../utils/pagination.js
 import { z } from 'zod';
 import { enforceTenantCreateWithinLimit } from '../super-admin/tenant-intelligence.js';
 import * as XLSX from 'xlsx';
+import { cacheControl } from '../../middleware/cacheControl.js';
+import { cached, invalidateCache, CacheNames } from '../../lib/cache.js';
 
 export const productRoutes = Router();
 productRoutes.use(authenticate);
@@ -1894,8 +1896,11 @@ productRoutes.post(
 // ════════════ MASTER DATA ════════════
 
 // Categories
-productRoutes.get('/meta/categories', requirePermission(PERMISSIONS.PRODUCT_VIEW), asyncHandler(async (req, res) => {
-        const categories = await prisma.category.findMany({ where: { companyId: req.user!.companyId }, orderBy: { name: 'asc' } });
+productRoutes.get('/meta/categories', requirePermission(PERMISSIONS.PRODUCT_VIEW), cacheControl(300), asyncHandler(async (req, res) => {
+        const companyId = req.user!.companyId;
+        const categories = await cached(CacheNames.CATEGORIES, companyId, () =>
+                prisma.category.findMany({ where: { companyId }, orderBy: { name: 'asc' } })
+        );
         sendSuccess(res, categories);
 }));
 productRoutes.post('/meta/categories', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ body: categoryCreateSchema }), asyncHandler(async (req, res) => {
@@ -1913,6 +1918,7 @@ productRoutes.post('/meta/categories', requireAnyPermission(PERMISSIONS.PRODUCT_
                 defaultProfitMarginPct: Number(defaultProfitMarginPct || 0),
             }
         });
+        invalidateCache(CacheNames.CATEGORIES, companyId);
         sendSuccess(res, category);
 }));
 productRoutes.patch('/meta/categories/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema, body: categoryPatchSchema }), asyncHandler(async (req, res) => {
@@ -1934,6 +1940,7 @@ productRoutes.patch('/meta/categories/:id', requireAnyPermission(PERMISSIONS.PRO
                 ...(defaultProfitMarginPct !== undefined ? { defaultProfitMarginPct: Number(defaultProfitMarginPct) } : {}),
             }
         });
+        invalidateCache(CacheNames.CATEGORIES, companyId);
         sendSuccess(res, category);
 }));
 productRoutes.delete('/meta/categories/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema }), asyncHandler(async (req, res) => {
@@ -1942,12 +1949,16 @@ productRoutes.delete('/meta/categories/:id', requireAnyPermission(PERMISSIONS.PR
         const existing = await prisma.category.findFirst({ where: { id, companyId }, select: { id: true } });
         if (!existing) throw AppError.notFound('Category');
         await prisma.category.delete({ where: { id } });
+        invalidateCache(CacheNames.CATEGORIES, companyId);
         sendSuccess(res, { message: 'Category deleted' });
 }));
 
 // Groups
-productRoutes.get('/meta/groups', requirePermission(PERMISSIONS.PRODUCT_VIEW), asyncHandler(async (req, res) => {
-        const groups = await (prisma as any).itemGroup.findMany({ where: { companyId: req.user!.companyId }, orderBy: { name: 'asc' } });
+productRoutes.get('/meta/groups', requirePermission(PERMISSIONS.PRODUCT_VIEW), cacheControl(300), asyncHandler(async (req, res) => {
+        const companyId = req.user!.companyId;
+        const groups = await cached(CacheNames.ITEM_GROUPS, companyId, () =>
+                (prisma as any).itemGroup.findMany({ where: { companyId }, orderBy: { name: 'asc' } })
+        );
         sendSuccess(res, groups);
 }));
 productRoutes.post('/meta/groups', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ body: groupCreateSchema }), asyncHandler(async (req, res) => {
@@ -1960,6 +1971,7 @@ productRoutes.post('/meta/groups', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT
                 code: code ? String(code).trim().toUpperCase() : null,
             }
         });
+        invalidateCache(CacheNames.ITEM_GROUPS, companyId);
         sendSuccess(res, group);
 }));
 productRoutes.patch('/meta/groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema, body: groupPatchSchema }), asyncHandler(async (req, res) => {
@@ -1975,6 +1987,7 @@ productRoutes.patch('/meta/groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT
                 ...(code !== undefined ? { code: code ? String(code).trim().toUpperCase() : null } : {}),
             }
         });
+        invalidateCache(CacheNames.ITEM_GROUPS, companyId);
         sendSuccess(res, group);
 }));
 productRoutes.delete('/meta/groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema }), asyncHandler(async (req, res) => {
@@ -1983,12 +1996,16 @@ productRoutes.delete('/meta/groups/:id', requireAnyPermission(PERMISSIONS.PRODUC
         const existing = await (prisma as any).itemGroup.findFirst({ where: { id, companyId }, select: { id: true } });
         if (!existing) throw AppError.notFound('Group');
         await (prisma as any).itemGroup.delete({ where: { id } });
+        invalidateCache(CacheNames.ITEM_GROUPS, companyId);
         sendSuccess(res, { message: 'Group deleted' });
 }));
 
 // Brands
-productRoutes.get('/meta/brands', requirePermission(PERMISSIONS.PRODUCT_VIEW), asyncHandler(async (req, res) => {
-        const brands = await prisma.brand.findMany({ where: { companyId: req.user!.companyId }, orderBy: { name: 'asc' } });
+productRoutes.get('/meta/brands', requirePermission(PERMISSIONS.PRODUCT_VIEW), cacheControl(300), asyncHandler(async (req, res) => {
+        const companyId = req.user!.companyId;
+        const brands = await cached(CacheNames.BRANDS, companyId, () =>
+                prisma.brand.findMany({ where: { companyId }, orderBy: { name: 'asc' } })
+        );
         sendSuccess(res, brands);
 }));
 productRoutes.post('/meta/brands', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ body: brandCreateSchema }), asyncHandler(async (req, res) => {
@@ -1998,6 +2015,7 @@ productRoutes.post('/meta/brands', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT
                 name: req.body.name,
             }
         });
+        invalidateCache(CacheNames.BRANDS, req.user!.companyId);
         sendSuccess(res, brand);
 }));
 productRoutes.patch('/meta/brands/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema, body: brandPatchSchema }), asyncHandler(async (req, res) => {
@@ -2006,6 +2024,7 @@ productRoutes.patch('/meta/brands/:id', requireAnyPermission(PERMISSIONS.PRODUCT
         const existing = await prisma.brand.findFirst({ where: { id, companyId }, select: { id: true } });
         if (!existing) throw AppError.notFound('Brand');
         const brand = await prisma.brand.update({ where: { id }, data: { name: req.body.name } });
+        invalidateCache(CacheNames.BRANDS, companyId);
         sendSuccess(res, brand);
 }));
 productRoutes.delete('/meta/brands/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema }), asyncHandler(async (req, res) => {
@@ -2014,23 +2033,27 @@ productRoutes.delete('/meta/brands/:id', requireAnyPermission(PERMISSIONS.PRODUC
         const existing = await prisma.brand.findFirst({ where: { id, companyId }, select: { id: true } });
         if (!existing) throw AppError.notFound('Brand');
         await prisma.brand.delete({ where: { id } });
+        invalidateCache(CacheNames.BRANDS, companyId);
         sendSuccess(res, { message: 'Brand deleted' });
 }));
 
 // Price Groups (Channels)
-productRoutes.get('/meta/price-groups', requirePermission(PERMISSIONS.PRODUCT_VIEW), asyncHandler(async (req, res) => {
-        const groups = await (prisma as any).priceGroup.findMany({
-            where: { companyId: req.user!.companyId },
-            include: {
-                _count: {
-                    select: {
-                        customers: true,
-                        productPriceGroups: true,
-                    }
-                }
-            },
-            orderBy: [{ isDefault: 'desc' }, { name: 'asc' }]
-        });
+productRoutes.get('/meta/price-groups', requirePermission(PERMISSIONS.PRODUCT_VIEW), cacheControl(300), asyncHandler(async (req, res) => {
+        const companyId = req.user!.companyId;
+        const groups = await cached(CacheNames.PRICE_GROUPS, companyId, () =>
+                (prisma as any).priceGroup.findMany({
+                    where: { companyId },
+                    include: {
+                        _count: {
+                            select: {
+                                customers: true,
+                                productPriceGroups: true,
+                            }
+                        }
+                    },
+                    orderBy: [{ isDefault: 'desc' }, { name: 'asc' }]
+                })
+        );
         sendSuccess(res, groups);
 }));
 productRoutes.post('/meta/price-groups', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ body: priceGroupSchema }), asyncHandler(async (req, res) => {
@@ -2051,6 +2074,7 @@ productRoutes.post('/meta/price-groups', requireAnyPermission(PERMISSIONS.PRODUC
             }
             return (tx as any).priceGroup.create({ data: payload });
         });
+        invalidateCache(CacheNames.PRICE_GROUPS, companyId);
         sendSuccess(res, group);
 }));
 productRoutes.patch('/meta/price-groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), validate({ params: idParamsSchema, body: priceGroupPatchSchema }), asyncHandler(async (req, res) => {
@@ -2078,6 +2102,7 @@ productRoutes.patch('/meta/price-groups/:id', requireAnyPermission(PERMISSIONS.P
             }
             return (tx as any).priceGroup.update({ where: { id }, data: payload });
         });
+        invalidateCache(CacheNames.PRICE_GROUPS, companyId);
         sendSuccess(res, group);
 }));
 productRoutes.delete('/meta/price-groups/:id', requireAnyPermission(PERMISSIONS.PRODUCT_EDIT, PERMISSIONS.PRODUCT_EDIT_MASTER), asyncHandler(async (req, res) => {
@@ -2101,6 +2126,7 @@ productRoutes.delete('/meta/price-groups/:id', requireAnyPermission(PERMISSIONS.
         }
 
         await (prisma as any).priceGroup.delete({ where: { id } });
+        invalidateCache(CacheNames.PRICE_GROUPS, companyId);
         sendSuccess(res, { message: 'Price Group deleted' });
 }));
 

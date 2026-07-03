@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { prisma } from '../../lib/prisma.js';
-import { sendSuccess } from '../../utils/response.js';
+import { sendSuccess, sendPaginated } from '../../utils/response.js';
+import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
 import { PERMISSIONS } from '../../config/permissions.js';
 import { AppError } from '../../utils/AppError.js';
 import { asyncHandler } from '../../middleware/errorHandler.js';
@@ -273,11 +274,20 @@ accountingRoutes.use(authenticate);
 
 // --- Chart of Accounts ---
 accountingRoutes.get('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_VIEW as any), asyncHandler(async (req, res) => {
-    const accounts = await prisma.account.findMany({
-        where: { companyId: req.user!.companyId },
-        orderBy: [{ type: 'asc' }, { code: 'asc' }]
-    });
-    sendSuccess(res, accounts);
+    const query = paginationSchema.parse(req.query);
+    const { skip, take, page, limit } = getPaginationParams(query);
+    const where = { companyId: req.user!.companyId };
+
+    const [accounts, total] = await Promise.all([
+        prisma.account.findMany({
+            where,
+            skip,
+            take,
+            orderBy: [{ type: 'asc' }, { code: 'asc' }]
+        }),
+        prisma.account.count({ where }),
+    ]);
+    sendPaginated(res, accounts, total, page, limit);
 }));
 
 accountingRoutes.post('/accounts', requirePermission(PERMISSIONS.ACCOUNTING_POST as any), validate({ body: accountCreateSchema }), asyncHandler(async (req, res) => {

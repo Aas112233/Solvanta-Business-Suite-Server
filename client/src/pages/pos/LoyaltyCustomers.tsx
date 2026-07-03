@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 import toast from '@/lib/toast';
+import { useDebounce } from '../../hooks/useDebounce';
 import {
     Search,
     Plus,
@@ -46,13 +47,14 @@ const emptyForm = {
 export default function LoyaltyCustomers() {
     const qc = useQueryClient();
     const [search, setSearch] = useState('');
+    const debouncedSearch = useDebounce(search, 300);
     const [showForm, setShowForm] = useState(false);
     const [form, setForm] = useState(emptyForm);
     const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
 
     const { data: customers = [], isLoading } = useQuery({
-        queryKey: ['loyalty-customers', search],
-        queryFn: () => api.get('/pos/loyalty-customers', { params: { q: search } }).then((r) => r.data.data as LoyaltyCustomer[]),
+        queryKey: ['loyalty-customers', debouncedSearch],
+        queryFn: () => api.get('/pos/loyalty-customers', { params: { q: debouncedSearch } }).then((r) => r.data.data as LoyaltyCustomer[]),
     });
 
     const { data: customerDetail } = useQuery({

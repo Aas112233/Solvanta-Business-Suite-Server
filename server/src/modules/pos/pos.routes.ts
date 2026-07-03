@@ -1901,19 +1901,45 @@ posRoutes.get('/unposted', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISSION
             orderBy: { createdAt: 'desc' },
         });
 
-        // Enrich items with current stock levels for better visibility in unposted list
-        const enriched = await Promise.all(invoices.map(async (inv: any) => {
-            const itemsWithStock = await Promise.all(inv.items.map(async (item: any) => {
-                const currentStock = await InventoryService.getAvailableStockQty(prisma as any, {
+        // Batch stock lookup: collect all unique (productId, branchId, unitCode) pairs
+        const stockKeys = new Map<string, { productId: string; branchId: string; unitCode: string }>();
+        for (const inv of invoices) {
+            for (const item of inv.items) {
+                if (!item.productId) continue;
+                const key = `${item.productId}|${inv.branchId}|${item.unitCode}`;
+                if (!stockKeys.has(key)) {
+                    stockKeys.set(key, { productId: item.productId, branchId: inv.branchId, unitCode: item.unitCode });
+                }
+            }
+        }
+
+        // Single batched query for all stock levels
+        const stockLevels = new Map<string, number>();
+        if (stockKeys.size > 0) {
+            const stocks = await (prisma as any).inventoryStock.findMany({
+                where: {
                     companyId: req.user!.companyId,
-                    branchId: inv.branchId,
-                    productId: item.productId,
-                    unitCode: item.unitCode,
-                });
+                    OR: Array.from(stockKeys.values()).map(sk => ({
+                        branchId: sk.branchId,
+                        productId: sk.productId,
+                    })),
+                },
+                select: { branchId: true, productId: true, unitCode: true, qtyOnHand: true },
+            });
+            for (const s of stocks) {
+                stockLevels.set(`${s.productId}|${s.branchId}|${s.unitCode}`, s.qtyOnHand);
+            }
+        }
+
+        // Map stock levels in memory (fast, no DB calls)
+        const enriched = invoices.map((inv: any) => {
+            const itemsWithStock = inv.items.map((item: any) => {
+                const stockKey = `${item.productId}|${inv.branchId}|${item.unitCode}`;
+                const currentStock = item.productId ? (stockLevels.get(stockKey) ?? 0) : null;
                 return { ...item, currentStock };
-            }));
+            });
             return { ...inv, items: itemsWithStock };
-        }));
+        });
 
         sendSuccess(res, enriched);
 }))
@@ -1927,40 +1953,64 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
         const companyId = req.user!.companyId;
         const userId = req.user!.id;
 
-        for (const id of invoiceIds) {
+        // Pre-fetch all invoices with items in a single batch query
+        const invoicesToPost = await (prisma as any).pOSInvoice.findMany({
+            where: { id: { in: invoiceIds }, companyId, isPosted: false },
+            include: { items: true },
+        });
+
+        if (invoicesToPost.length === 0) {
+            sendSuccess(res, { message: 'No unposted invoices found', posted: 0 });
+            return;
+        }
+
+        // Batch stock check: collect all unique (productId, branchId, unitCode) pairs
+        const stockKeySet = new Map<string, { productId: string; branchId: string; unitCode: string }>();
+        for (const inv of invoicesToPost) {
+            for (const item of inv.items) {
+                if (!item.productId) continue;
+                const key = `${item.productId}|${inv.branchId}|${item.unitCode}`;
+                if (!stockKeySet.has(key)) {
+                    stockKeySet.set(key, { productId: item.productId, branchId: inv.branchId, unitCode: item.unitCode });
+                }
+            }
+        }
+
+        // Single batched stock query for all items across all invoices
+        const stockMap = new Map<string, number>();
+        if (stockKeySet.size > 0) {
+            const allStocks = await (prisma as any).inventoryStock.findMany({
+                where: {
+                    companyId,
+                    OR: Array.from(stockKeySet.values()).map(sk => ({
+                        branchId: sk.branchId,
+                        productId: sk.productId,
+                    })),
+                },
+                select: { branchId: true, productId: true, unitCode: true, qtyOnHand: true },
+            });
+            for (const s of allStocks) {
+                stockMap.set(`${s.productId}|${s.branchId}|${s.unitCode}`, s.qtyOnHand);
+            }
+        }
+
+        for (const invoice of invoicesToPost) {
             try {
-                await prisma.$transaction(async (tx) => {
-                    const invoice = await (tx as any).pOSInvoice.findFirst({
-                        where: { id, companyId, isPosted: false },
-                        include: { items: true },
-                    });
+                // Validate branch access
+                await assertBranchAccessible(req, invoice.branchId);
 
-                    if (!invoice) throw AppError.notFound(`Invoice ${id} not found or already posted`);
-                    await assertBranchAccessible(req, invoice.branchId);
+                // Stock check from in-memory map (fast, no DB calls)
+                for (const item of invoice.items) {
+                    if (!item.productId) continue;
+                    const stockKey = `${item.productId}|${invoice.branchId}|${item.unitCode}`;
+                    const qtyAvailable = stockMap.get(stockKey) ?? 0;
 
-                    let accountingItems: Array<{
-                        productId: string;
-                        qty: number;
-                        unitPrice: number;
-                        lineTotal: number;
-                        taxAmount: number;
-                        cost: number;
-                    }> = [];
-
-                    // Check stock again
-                    // Stock check loop (throws early if insufficient stock)
-                    for (const item of invoice.items) {
-                        const qtyAvailable = await InventoryService.getAvailableStockQty(tx as any, {
-                            companyId,
-                            branchId: invoice.branchId,
-                            productId: item.productId,
-                            unitCode: item.unitCode,
-                        });
-
-                        if (qtyAvailable < item.qty) {
-                            throw AppError.badRequest(`Insufficient stock for product ${item.productId} in invoice ${invoice.invoiceNo}`);
-                        }
+                    if (qtyAvailable < item.qty) {
+                        throw AppError.badRequest(`Insufficient stock for product ${item.productId} in invoice ${invoice.invoiceNo}`);
                     }
+                }
+
+                await prisma.$transaction(async (tx) => {
 
                     // Batch-deduct inventory stock
                     const postStockMutations = invoice.items.map((item: any) => ({
@@ -1977,7 +2027,7 @@ posRoutes.post('/post-batch', requireAnyPermission(PERMISSIONS.POS_SELL, PERMISS
                         createdById: userId,
                     }));
                     const postBatchResults = await InventoryService.mutateStockBatch(tx as any, postStockMutations);
-                    accountingItems = invoice.items.map((item: any, i: number) => ({
+                    const accountingItems = invoice.items.map((item: any, i: number) => ({
                         productId: String(item.productId),
                         qty: Number(item.qty || 0),
                         unitPrice: Number(item.unitPrice || 0),

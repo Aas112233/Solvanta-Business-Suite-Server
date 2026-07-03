@@ -6,23 +6,9 @@ const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 
 import { tenantStorage } from './tenantContext.js';
 
-// Production-optimized Prisma configuration
-const isProduction = env.NODE_ENV === 'production';
-const isVercel = !!process.env.VERCEL;
-
-// Optimize MongoDB connection pool for serverless
-// Vercel: max 5 connections (limited memory)
-// Other production: max 10 connections
-const getDatabaseUrl = () => {
-    const base = env.DATABASE_URL;
-    if (!isProduction) return base;
-    
-    // Add connection pool parameters for production
-    const separator = base.includes('?') ? '&' : '?';
-    const poolSize = isVercel ? 5 : 10;
-    return `${base}${separator}maxPoolSize=${poolSize}&minPoolSize=1`;
-};
-
+// Pool configuration is set via the DATABASE_URL connection string.
+// Production: maxPoolSize=50, minPoolSize=5 (see .env.production).
+// Development: uses MongoDB driver defaults (maxPoolSize=100).
 export const basePrisma =
     globalForPrisma.prisma ??
     new PrismaClient({
@@ -34,7 +20,7 @@ export const basePrisma =
             ]
             : [{ emit: 'stdout', level: 'error' }],
         transactionOptions: {
-            maxWait: 10000,  // Max time to acquire a connection (10s)
+            maxWait: 15000,  // Max time to acquire a connection (15s — increased for high concurrency)
             timeout: 60000,  // Max transaction execution time (60s)
         },
     });
@@ -274,7 +260,7 @@ async function gracefulShutdown() {
     await flushAuditLogsAndWait();
     await basePrisma.$disconnect();
 }
-if (isProduction) {
+if (env.NODE_ENV === 'production') {
     process.on('beforeExit', gracefulShutdown);
     process.on('SIGTERM', () => { gracefulShutdown().then(() => process.exit(0)); });
     process.on('SIGINT', () => { gracefulShutdown().then(() => process.exit(0)); });

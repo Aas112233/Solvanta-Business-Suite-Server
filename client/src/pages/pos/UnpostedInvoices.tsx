@@ -61,6 +61,9 @@ export default function UnpostedInvoices() {
     });
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [viewingInvoice, setViewingInvoice] = useState<any>(null);
+    const [page, setPage] = useState(1);
+    const [limit] = useState(20);
+    const [total, setTotal] = useState(0);
 
     const { data: globalPaymentMethods } = useQuery<any[]>({
         queryKey: ['global-strings', GLOBAL_STRING_GROUPS.salePaymentMethods],
@@ -80,10 +83,10 @@ export default function UnpostedInvoices() {
         }
     });
 
-    const { data: invoices, isLoading, isFetching } = useQuery({
-        queryKey: ['unpostedInvoices', searchTerm, appliedFilters],
+    const { data: invoices = [], isLoading, isFetching } = useQuery({
+        queryKey: ['unpostedInvoices', searchTerm, appliedFilters, page, limit],
         queryFn: async () => {
-            const params: any = {};
+            const params: any = { page, limit };
             if (searchTerm) params.search = searchTerm;
             if (appliedFilters.branchId) params.branchId = appliedFilters.branchId;
             if (appliedFilters.dateFrom) params.dateFrom = appliedFilters.dateFrom;
@@ -95,9 +98,21 @@ export default function UnpostedInvoices() {
             if (appliedFilters.maxAmount) params.maxAmount = Number(appliedFilters.maxAmount);
 
             const res = await api.get('/pos/unposted', { params });
-            return res.data.data;
+            const payload = res.data;
+            if (payload.pagination) {
+                setTotal(payload.pagination.total ?? 0);
+            }
+            return payload.data ?? [];
         }
     });
+
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    // Reset page when filters/search change
+    useEffect(() => {
+        setPage(1);
+        setSelectedIds([]);
+    }, [searchTerm, appliedFilters]);
 
     const postMutation = useMutation({
         mutationFn: async (invoiceIds: string[]) => {
@@ -481,6 +496,34 @@ export default function UnpostedInvoices() {
                     </table>
                 </div>
             </div>
+
+            {/* Pagination */}
+            {total > limit && (
+                <div className="flex items-center justify-between px-6 py-3 bg-gray-50 border-t border-gray-200">
+                    <span className="text-sm text-gray-500">
+                        Showing {((page - 1) * limit) + 1}–{Math.min(page * limit, total)} of {total}
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page <= 1}
+                            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-100 transition-colors"
+                        >
+                            Previous
+                        </button>
+                        <span className="text-sm font-medium text-gray-700 px-2">
+                            Page {page} of {totalPages}
+                        </span>
+                        <button
+                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                            disabled={page >= totalPages}
+                            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-100 transition-colors"
+                        >
+                            Next
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Invoice Detail Modal */}
             <DocumentPreviewModal

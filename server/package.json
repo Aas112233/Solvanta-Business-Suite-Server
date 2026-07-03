@@ -38,6 +38,7 @@
         "express-rate-limit": "^7.5.0",
         "helmet": "^8.0.0",
         "jsonwebtoken": "^9.0.2",
+        "lru-cache": "^11.5.1",
         "mongodb": "^7.1.1",
         "morgan": "^1.10.0",
         "prisma": "^6.3.1",

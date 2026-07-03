@@ -20,6 +20,7 @@ function getNodeModulePackageName(id: string) {
 }
 
 function getVendorChunkName(packageName: string) {
+    // Large, core frameworks — keep separate for optimal caching
     if (packageName === 'react' || packageName === 'react-dom' || packageName === 'scheduler') {
         return 'vendor-react-core';
     }
@@ -36,7 +37,41 @@ function getVendorChunkName(packageName: string) {
         return 'vendor-d3';
     }
 
-    return `vendor-${packageName.replace('@', '').replaceAll('/', '-')}`;
+    // Group smaller packages into logical bundles to reduce HTTP requests
+    const UI_PACKAGES = new Set([
+        'lucide-react', 'clsx', 'react-hot-toast', 'class-variance-authority',
+    ]);
+    if (UI_PACKAGES.has(packageName)) {
+        return 'vendor-ui';
+    }
+
+    const FORM_PACKAGES = new Set([
+        'react-hook-form', '@hookform/resolvers', 'zod',
+    ]);
+    if (FORM_PACKAGES.has(packageName) || packageName.startsWith('@hookform/')) {
+        return 'vendor-forms';
+    }
+
+    const UTIL_PACKAGES = new Set([
+        'date-fns', 'axios', 'jsbarcode', 'i18next', 'react-i18next',
+        'i18next-browser-languagedetector', 'zustand',
+    ]);
+    if (UTIL_PACKAGES.has(packageName)) {
+        return 'vendor-utils';
+    }
+
+    // recharts is large (~200KB) and only used on analytics pages — separate chunk
+    if (packageName === 'recharts') {
+        return 'vendor-charts';
+    }
+
+    // PDF/Excel generation (lazy-loaded at runtime, but include in case of static imports)
+    if (packageName === 'jspdf' || packageName === 'exceljs' || packageName === 'xlsx') {
+        return 'vendor-docs';
+    }
+
+    // Everything else goes to a shared vendor chunk
+    return 'vendor-shared';
 }
 
 export default defineConfig(({ mode }) => {

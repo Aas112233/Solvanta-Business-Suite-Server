@@ -306,6 +306,9 @@ supplierRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.SUPPLIER_VIEW), 
     const dateFrom = parseOptionalDate(req.query.dateFrom, 'start');
     const dateTo = parseOptionalDate(req.query.dateTo, 'end');
 
+    const query = paginationSchema.parse(req.query);
+    const { skip, take, page, limit } = getPaginationParams(query);
+
     const supplier = await basePrisma.supplier.findFirst({
         where: { id: supplierId, companyId, ...activeSupplierFilter },
     });
@@ -380,7 +383,7 @@ supplierRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.SUPPLIER_VIEW), 
     let runningBalance = Number(supplier.openingBalance || 0);
     let openingBalance = runningBalance;
     let finalBalance = runningBalance;
-    const filteredLedger: Array<Record<string, unknown>> = [];
+    const fullLedger: Array<Record<string, unknown>> = [];
 
     for (const transaction of transactions) {
         const transactionDate = new Date(transaction.date);
@@ -399,8 +402,11 @@ supplierRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.SUPPLIER_VIEW), 
 
         runningBalance += delta;
         finalBalance = runningBalance;
-        filteredLedger.push({ ...transaction, balance: runningBalance });
+        fullLedger.push({ ...transaction, balance: runningBalance });
     }
+
+    const total = fullLedger.length;
+    const paginatedLedger = fullLedger.slice(skip, skip + take);
 
     sendSuccess(res, {
         supplier: {
@@ -413,8 +419,15 @@ supplierRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.SUPPLIER_VIEW), 
             address: supplier.address,
         },
         openingBalance,
-        ledger: filteredLedger,
+        ledger: paginatedLedger,
         finalBalance
+    }, {
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit),
+        },
     });
 }));
 

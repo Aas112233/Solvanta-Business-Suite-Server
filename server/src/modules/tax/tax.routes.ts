@@ -2,6 +2,8 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { prisma } from '../../lib/prisma.js';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
+import { cacheControl } from '../../middleware/cacheControl.js';
+import { cached, invalidateCache, CacheNames } from '../../lib/cache.js';
 import { PERMISSIONS } from '../../config/permissions.js';
 import { sendSuccess } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
@@ -20,13 +22,16 @@ const taxCreateSchema = z.object({
 
 const taxUpdateSchema = taxCreateSchema.partial();
 
-// GET /taxes
-taxRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), async (req: Request, res: Response, next: NextFunction) => {
+// GET /taxes — cached 5 min (tax rates change rarely)
+taxRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), cacheControl(300), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const taxes = await prisma.tax.findMany({
-            where: { companyId: req.user!.companyId },
-            orderBy: { createdAt: 'desc' }
-        });
+        const companyId = req.user!.companyId;
+        const taxes = await cached(CacheNames.TAXES, companyId, () =>
+            prisma.tax.findMany({
+                where: { companyId },
+                orderBy: { createdAt: 'desc' }
+            })
+        );
         sendSuccess(res, taxes);
     } catch (error) { next(error); }
 });
@@ -76,6 +81,7 @@ taxRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), valida
         } catch (_) { /* audit is best-effort */ }
 
         sendSuccess(res, result, { message: 'Tax created successfully' }, 201);
+        invalidateCache(CacheNames.TAXES, companyId);
     } catch (error) { next(error); }
 });
 
@@ -128,6 +134,7 @@ taxRoutes.patch('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), va
         } catch (_) { /* audit is best-effort */ }
 
         sendSuccess(res, result, { message: 'Tax updated successfully' });
+        invalidateCache(CacheNames.TAXES, companyId);
     } catch (error) { next(error); }
 });
 
@@ -170,5 +177,6 @@ taxRoutes.delete('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), a
         } catch (_) { /* audit is best-effort */ }
 
         sendSuccess(res, { message: 'Tax deleted successfully' });
+        invalidateCache(CacheNames.TAXES, companyId);
     } catch (error) { next(error); }
 });

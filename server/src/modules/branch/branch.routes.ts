@@ -7,6 +7,8 @@ import { sendSuccess, sendPaginated } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
 import { z } from 'zod';
 import { enforceTenantCreateWithinLimit } from '../super-admin/tenant-intelligence.js';
+import { cacheControl } from '../../middleware/cacheControl.js';
+import { cached, invalidateCache, CacheNames } from '../../lib/cache.js';
 
 export const branchRoutes = Router();
 branchRoutes.use(authenticate);
@@ -25,18 +27,21 @@ const branchPatchSchema = branchSchema.partial().strict().refine(
 );
 
 // GET /branches
-branchRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES), async (req, res, next) => {
+branchRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES), cacheControl(300), async (req, res, next) => {
     try {
         const includeInactive = typeof req.query.includeInactive === 'string'
             && ['1', 'true', 'yes'].includes(req.query.includeInactive.toLowerCase());
+        const companyId = req.user!.companyId;
 
-        const branches = await prisma.branch.findMany({
-            where: {
-                companyId: req.user!.companyId,
-                ...(includeInactive ? {} : { isActive: true }),
-            },
-            orderBy: { name: 'asc' },
-        });
+        const branches = await cached(CacheNames.BRANCHES, companyId, () =>
+                prisma.branch.findMany({
+                    where: {
+                        companyId,
+                        ...(includeInactive ? {} : { isActive: true }),
+                    },
+                    orderBy: { name: 'asc' },
+                })
+        );
         sendSuccess(res, branches);
     } catch (error) { next(error); }
 });
@@ -65,6 +70,7 @@ branchRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES), val
         const branch = await prisma.branch.create({
             data: { ...req.body, companyId: req.user!.companyId },
         });
+        invalidateCache(CacheNames.BRANCHES, req.user!.companyId);
         sendSuccess(res, branch, undefined, 201);
     } catch (error) { next(error); }
 });
@@ -79,6 +85,7 @@ branchRoutes.patch('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES),
         });
         if (branch.count === 0) throw AppError.notFound('Branch');
         const updated = await prisma.branch.findUnique({ where: { id: branchId } });
+        invalidateCache(CacheNames.BRANCHES, req.user!.companyId);
         sendSuccess(res, updated);
     } catch (error) { next(error); }
 });
@@ -102,6 +109,7 @@ branchRoutes.delete('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES)
             data: { isActive: false },
         });
         if (result.count > 0) {
+            invalidateCache(CacheNames.BRANCHES, req.user!.companyId);
             sendSuccess(res, { message: 'Branch deactivated' });
             return;
         }
@@ -111,6 +119,7 @@ branchRoutes.delete('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_BRANCHES)
             select: { id: true, isActive: true },
         });
         if (!existing) throw AppError.notFound('Branch');
+        invalidateCache(CacheNames.BRANCHES, req.user!.companyId);
         sendSuccess(res, { message: 'Branch already inactive' });
     } catch (error) { next(error); }
 });

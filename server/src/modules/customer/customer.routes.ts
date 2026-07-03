@@ -202,12 +202,15 @@ customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async
     const dateFrom = parseOptionalDate(req.query.dateFrom);
     const dateTo = parseOptionalDate(req.query.dateTo);
 
+    const query = paginationSchema.parse(req.query);
+    const { skip, take, page, limit } = getPaginationParams(query);
+
     const customer = await prisma.customer.findFirst({
         where: { id: customerId, companyId, ...getActiveCustomerFilter() },
     });
     if (!customer) throw AppError.notFound('Customer');
 
-    // Fetch all transactions: Invoices, Returns, and Payment Receipts
+    // Fetch all raw transactions (needed for proper running balance)
     const [invoices, returns] = await Promise.all([
         prisma.pOSInvoice.findMany({
             where: {
@@ -224,8 +227,6 @@ customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async
             orderBy: { createdAt: 'asc' },
         }),
     ]);
-
-    console.log(`[Ledger] Customer ${customerId}: Found ${invoices.length} invoices, ${returns.length} returns`);
 
     // Get all invoice IDs for this customer to fetch payment journal entries
     const invoiceIds = invoices.map(i => i.id);
@@ -244,18 +245,17 @@ customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async
             },
             orderBy: { date: 'asc' },
         });
-        console.log(`[Ledger] Found ${journalEntries.length} payment journal entries`);
     }
 
     // Merge and sort all transactions
-    const transactions: any[] = [
+    const allTransactions: any[] = [
         ...invoices.map(i => ({
             id: i.id,
             date: i.createdAt,
             type: 'INVOICE',
             reference: i.invoiceNo,
             description: `Sales Invoice: ${i.invoiceNo}`,
-            debit: Number(i.grandTotal), // Invoice increases what customer owes
+            debit: Number(i.grandTotal),
             credit: 0,
         })),
         ...returns.map(r => ({
@@ -265,17 +265,16 @@ customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async
             reference: r.returnNo,
             description: `Sales Return: ${r.returnNo}`,
             debit: 0,
-            credit: Number(r.grandTotal), // Return decreases what customer owes
+            credit: Number(r.grandTotal),
         })),
     ];
 
     // Add payment journal entries
     journalEntries.forEach((je: any) => {
-        // Find the credit line (Accounts Receivable - customer account)
         const creditLine = je.lines?.find((line: any) => line.credit > 0);
         const debitLine = je.lines?.find((line: any) => line.debit > 0);
 
-        transactions.push({
+        allTransactions.push({
             id: je.id,
             date: je.date,
             type: 'PAYMENT',
@@ -286,19 +285,19 @@ customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async
         });
     });
 
-    transactions.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    allTransactions.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-    // Calculate running balance starting from opening balance
-    let balance = Number(customer.openingBalance || 0);
-    const ledger = transactions.map(t => {
-        balance += (t.debit - t.credit);
-        return { ...t, balance };
+    // Calculate running balance for ALL transactions
+    let runningBalance = Number(customer.openingBalance || 0);
+    const fullLedger = allTransactions.map(t => {
+        runningBalance += (t.debit - t.credit);
+        return { ...t, balance: runningBalance };
     });
 
-    // Filter by date if provided (filter AFTER calculating running balance)
-    let filteredLedger = ledger;
+    // Filter by date if provided
+    let filteredLedger = fullLedger;
     if (dateFrom || dateTo) {
-        filteredLedger = ledger.filter(t => {
+        filteredLedger = fullLedger.filter(t => {
             const tDate = new Date(t.date);
             if (dateFrom && tDate < dateFrom) return false;
             if (dateTo && tDate > dateTo) return false;
@@ -306,11 +305,21 @@ customerRoutes.get('/:id/ledger', requirePermission(PERMISSIONS.CRM_VIEW), async
         });
     }
 
+    const total = filteredLedger.length;
+    const paginatedLedger = filteredLedger.slice(skip, skip + take);
+
     sendSuccess(res, {
         customer: { id: customer.id, name: customer.name, customerCode: customer.customerCode, openingBalance: customer.openingBalance },
         openingBalance: customer.openingBalance,
-        ledger: filteredLedger,
-        finalBalance: balance
+        ledger: paginatedLedger,
+        finalBalance: runningBalance
+    }, {
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit),
+        },
     });
 }));
 

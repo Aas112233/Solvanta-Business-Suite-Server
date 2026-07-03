@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, memo } from 'react';
 import { clsx } from 'clsx';
 import { Loader2 } from 'lucide-react';
 
@@ -49,7 +49,7 @@ interface TableRowProps {
     selected?: boolean;
 }
 
-export function TableRow({ children, className, onClick, selected }: TableRowProps) {
+export const TableRow = memo(function TableRow({ children, className, onClick, selected }: TableRowProps) {
     return (
         <tr
             className={clsx(
@@ -64,7 +64,7 @@ export function TableRow({ children, className, onClick, selected }: TableRowPro
             {children}
         </tr>
     );
-}
+});
 
 // ── Table Head Cell ──────────────────────────────────────────────────
 interface TableHeadProps {
@@ -139,7 +139,7 @@ interface TableCellProps {
     rowSpan?: number;
 }
 
-export function TableCell({
+export const TableCell = memo(function TableCell({
     children,
     className,
     align = 'left',
@@ -166,7 +166,7 @@ export function TableCell({
             {children}
         </td>
     );
-}
+});
 
 // ── Table Loading State ──────────────────────────────────────────────
 interface TableLoadingProps {

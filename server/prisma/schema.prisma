@@ -892,7 +892,7 @@ model InventoryStock {
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   branch  Branch  @relation(fields: [branchId], references: [id])
-  product Product @relation(fields: [productId], references: [id])
+  product Product? @relation(fields: [productId], references: [id])
 
   @@unique([branchId, productId])
   @@index([companyId, productId])

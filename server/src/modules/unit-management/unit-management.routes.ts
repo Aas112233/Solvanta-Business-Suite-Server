@@ -5,6 +5,8 @@ import { PERMISSIONS } from '../../config/permissions.js';
 import { prisma } from '../../lib/prisma.js';
 import { sendSuccess } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
+import { cacheControl } from '../../middleware/cacheControl.js';
+import { cached, invalidateCache, CacheNames } from '../../lib/cache.js';
 
 export const unitManagementRoutes = Router();
 unitManagementRoutes.use(authenticate);
@@ -51,11 +53,13 @@ async function ensureUniqueUnitName(name: string, excludeId?: string) {
 }
 
 // GET /unit-management
-unitManagementRoutes.get('/', requirePermission(PERMISSIONS.PRODUCT_VIEW), async (_req: Request, res: Response, next: NextFunction) => {
+unitManagementRoutes.get('/', requirePermission(PERMISSIONS.PRODUCT_VIEW), cacheControl(300), async (_req: Request, res: Response, next: NextFunction) => {
     try {
-        const units = await (prisma as any).unitMaster.findMany({
-            orderBy: { name: 'asc' },
-        });
+        const units = await cached(CacheNames.UNIT_MASTERS, 'all', () =>
+                (prisma as any).unitMaster.findMany({
+                    orderBy: { name: 'asc' },
+                })
+        );
         sendSuccess(res, units);
     } catch (error) {
         next(error);
@@ -79,6 +83,7 @@ unitManagementRoutes.post(
                     defaultQtyInBaseUnit: toNullableQty(parsed.defaultQtyInBaseUnit),
                 },
             });
+            invalidateCache(CacheNames.UNIT_MASTERS, 'all');
             sendSuccess(res, created);
         } catch (error: any) {
             if (error?.code === 'P2002') {
@@ -114,6 +119,7 @@ unitManagementRoutes.patch(
                 where: { id: req.params.id as string },
                 data: payload,
             });
+            invalidateCache(CacheNames.UNIT_MASTERS, 'all');
             sendSuccess(res, updated);
         } catch (error: any) {
             if (error?.code === 'P2025') {
@@ -138,6 +144,7 @@ unitManagementRoutes.delete(
             await (prisma as any).unitMaster.delete({
                 where: { id: req.params.id as string },
             });
+            invalidateCache(CacheNames.UNIT_MASTERS, 'all');
             sendSuccess(res, { message: 'Unit deleted' });
         } catch (error: any) {
             if (error?.code === 'P2025') {

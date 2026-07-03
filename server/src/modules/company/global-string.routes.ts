@@ -6,6 +6,8 @@ import { sendSuccess } from '../../utils/response.js';
 import { AppError } from '../../utils/AppError.js';
 import { z } from 'zod';
 import { validate } from '../../middleware/validate.js';
+import { cacheControl } from '../../middleware/cacheControl.js';
+import { cached, invalidateCache, CacheNames } from '../../lib/cache.js';
 
 export const globalStringRoutes = Router();
 globalStringRoutes.use(authenticate);
@@ -35,16 +37,20 @@ const updateSchema = z.object({
 
 // ── GET / ───────────────────────────────────────────────────────
 // List all global strings for a group
-globalStringRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), async (req, res, next) => {
+globalStringRoutes.get('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_SETTINGS), cacheControl(300), async (req, res, next) => {
     try {
         const { group } = req.query;
-        const strings = await (prisma as any).globalString.findMany({
-            where: {
-                companyId: req.user!.companyId,
-                ...(group ? { group: group as string } : {}),
-            },
-            orderBy: [{ systemKey: 'desc' }, { value: 'asc' }],
-        });
+        const companyId = req.user!.companyId;
+        const cacheKey = group ? `${companyId}:${group}` : companyId;
+        const strings = await cached(CacheNames.GLOBAL_STRINGS, cacheKey, () =>
+                (prisma as any).globalString.findMany({
+                    where: {
+                        companyId,
+                        ...(group ? { group: group as string } : {}),
+                    },
+                    orderBy: [{ systemKey: 'desc' }, { value: 'asc' }],
+                })
+        );
         sendSuccess(res, strings);
     } catch (error) { next(error); }
 });
@@ -83,6 +89,7 @@ globalStringRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_STRINGS)
                     isActive: true, // Re-enable if it was disabled
                 }
             });
+            invalidateCache(CacheNames.GLOBAL_STRINGS);
             return sendSuccess(res, result, { message: 'Already exists — updated' }, 200);
         }
 
@@ -99,6 +106,7 @@ globalStringRoutes.post('/', requirePermission(PERMISSIONS.ADMIN_MANAGE_STRINGS)
         if (data.description) createPayload.description = data.description;
 
         const result = await (prisma as any).globalString.create({ data: createPayload });
+        invalidateCache(CacheNames.GLOBAL_STRINGS);
         sendSuccess(res, result, { message: 'Created successfully' }, 201);
     } catch (error) { next(error); }
 });
@@ -143,6 +151,7 @@ globalStringRoutes.put('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_STRING
             where: { id },
             data: updatePayload,
         });
+        invalidateCache(CacheNames.GLOBAL_STRINGS);
         sendSuccess(res, result, { message: 'Updated successfully' });
     } catch (error) { next(error); }
 });
@@ -162,6 +171,7 @@ globalStringRoutes.delete('/:id', requirePermission(PERMISSIONS.ADMIN_MANAGE_STR
         }
 
         await (prisma as any).globalString.delete({ where: { id } });
+        invalidateCache(CacheNames.GLOBAL_STRINGS);
         sendSuccess(res, null, { message: 'Deleted successfully' });
     } catch (error) { next(error); }
 });

@@ -3,7 +3,8 @@ import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { PERMISSIONS } from '../../config/permissions.js';
 import { prisma } from '../../lib/prisma.js';
-import { sendSuccess } from '../../utils/response.js';
+import { sendSuccess, sendPaginated } from '../../utils/response.js';
+import { paginationSchema, getPaginationParams } from '../../utils/pagination.js';
 import { AppError } from '../../utils/AppError.js';
 import { z } from 'zod';
 
@@ -26,15 +27,24 @@ hrRoutes.get(
     requirePermission(PERMISSIONS.HR_DEPARTMENT_VIEW),
     async (req, res, next) => {
         try {
-            const departments = await prisma.department.findMany({
-                where: { companyId: req.user!.companyId },
-                include: {
-                    parent: true,
-                    _count: { select: { employees: true } },
-                },
-                orderBy: { name: 'asc' },
-            });
-            sendSuccess(res, departments);
+            const query = paginationSchema.parse(req.query);
+            const { skip, take, page, limit } = getPaginationParams(query);
+            const where = { companyId: req.user!.companyId };
+
+            const [departments, total] = await Promise.all([
+                prisma.department.findMany({
+                    where,
+                    skip,
+                    take,
+                    include: {
+                        parent: true,
+                        _count: { select: { employees: true } },
+                    },
+                    orderBy: { name: 'asc' },
+                }),
+                prisma.department.count({ where }),
+            ]);
+            sendPaginated(res, departments, total, page, limit);
         } catch (error) {
             next(error);
         }
@@ -351,17 +361,40 @@ hrRoutes.get(
     requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW),
     async (req, res, next) => {
         try {
-            const employees = await prisma.employee.findMany({
-                where: { companyId: req.user!.companyId },
-                include: {
-                    branch: true,
-                    department: true,
-                    position: true,
-                    manager: true,
-                },
-                orderBy: { firstName: 'asc' },
-            });
-            sendSuccess(res, employees);
+            const query = paginationSchema.parse(req.query);
+            const { skip, take, page, limit } = getPaginationParams(query);
+
+            const { status, departmentId, branchId, search } = req.query;
+            const where: any = { companyId: req.user!.companyId };
+
+            if (status) where.status = status;
+            if (departmentId) where.departmentId = departmentId;
+            if (branchId) where.branchId = branchId;
+            if (search) {
+                where.OR = [
+                    { firstName: { contains: search as string, mode: 'insensitive' } },
+                    { lastName: { contains: search as string, mode: 'insensitive' } },
+                    { employeeNo: { contains: search as string, mode: 'insensitive' } },
+                    { email: { contains: search as string, mode: 'insensitive' } },
+                ];
+            }
+
+            const [employees, total] = await Promise.all([
+                prisma.employee.findMany({
+                    where,
+                    skip,
+                    take,
+                    include: {
+                        branch: true,
+                        department: true,
+                        position: true,
+                        manager: true,
+                    },
+                    orderBy: { firstName: 'asc' },
+                }),
+                prisma.employee.count({ where }),
+            ]);
+            sendPaginated(res, employees, total, page, limit);
         } catch (error) {
             next(error);
         }
@@ -530,16 +563,24 @@ hrRoutes.get(
     requirePermission(PERMISSIONS.HR_EMPLOYEE_VIEW),
     async (req, res, next) => {
         try {
+            const query = paginationSchema.parse(req.query);
+            const { skip, take, page, limit } = getPaginationParams(query);
             const { employeeId } = req.params;
+            const where = {
+                companyId: req.user!.companyId,
+                employeeId: employeeId as string,
+            };
 
-            const documents = await prisma.employeeDocument.findMany({
-                where: {
-                    companyId: req.user!.companyId,
-                    employeeId: employeeId as string,
-                },
-                orderBy: { createdAt: 'desc' },
-            });
-            sendSuccess(res, documents);
+            const [documents, total] = await Promise.all([
+                prisma.employeeDocument.findMany({
+                    where,
+                    skip,
+                    take,
+                    orderBy: { createdAt: 'desc' },
+                }),
+                prisma.employeeDocument.count({ where }),
+            ]);
+            sendPaginated(res, documents, total, page, limit);
         } catch (error) {
             next(error);
         }
@@ -653,11 +694,20 @@ hrRoutes.get(
     requirePermission(PERMISSIONS.HR_ATTENDANCE_VIEW),
     async (req, res, next) => {
         try {
-            const shifts = await prisma.shift.findMany({
-                where: { companyId: req.user!.companyId },
-                orderBy: { startTime: 'asc' },
-            });
-            sendSuccess(res, shifts);
+            const query = paginationSchema.parse(req.query);
+            const { skip, take, page, limit } = getPaginationParams(query);
+            const where = { companyId: req.user!.companyId };
+
+            const [shifts, total] = await Promise.all([
+                prisma.shift.findMany({
+                    where,
+                    skip,
+                    take,
+                    orderBy: { startTime: 'asc' },
+                }),
+                prisma.shift.count({ where }),
+            ]);
+            sendPaginated(res, shifts, total, page, limit);
         } catch (error) {
             next(error);
         }
@@ -847,10 +897,19 @@ hrRoutes.get(
     requirePermission(PERMISSIONS.HR_LEAVE_VIEW),
     async (req, res, next) => {
         try {
-            const types = await prisma.leaveType.findMany({
-                where: { companyId: req.user!.companyId },
-            });
-            sendSuccess(res, types);
+            const query = paginationSchema.parse(req.query);
+            const { skip, take, page, limit } = getPaginationParams(query);
+            const where = { companyId: req.user!.companyId };
+
+            const [types, total] = await Promise.all([
+                prisma.leaveType.findMany({
+                    where,
+                    skip,
+                    take,
+                }),
+                prisma.leaveType.count({ where }),
+            ]);
+            sendPaginated(res, types, total, page, limit);
         } catch (error) {
             next(error);
         }
@@ -897,22 +956,30 @@ hrRoutes.get(
     requirePermission(PERMISSIONS.HR_LEAVE_VIEW),
     async (req, res, next) => {
         try {
+            const query = paginationSchema.parse(req.query);
+            const { skip, take, page, limit } = getPaginationParams(query);
+
             const { status, employeeId } = req.query;
             const where: any = { companyId: req.user!.companyId };
-            
+
             if (status) where.status = status;
             if (employeeId) where.employeeId = employeeId;
 
-            const leaves = await prisma.leave.findMany({
-                where,
-                include: {
-                    employee: { select: { firstName: true, lastName: true, employeeNo: true } },
-                    leaveType: true,
-                    approvedBy: { select: { name: true } }
-                },
-                orderBy: { appliedDate: 'desc' },
-            });
-            sendSuccess(res, leaves);
+            const [leaves, total] = await Promise.all([
+                prisma.leave.findMany({
+                    where,
+                    skip,
+                    take,
+                    include: {
+                        employee: { select: { firstName: true, lastName: true, employeeNo: true } },
+                        leaveType: true,
+                        approvedBy: { select: { name: true } }
+                    },
+                    orderBy: { appliedDate: 'desc' },
+                }),
+                prisma.leave.count({ where }),
+            ]);
+            sendPaginated(res, leaves, total, page, limit);
         } catch (error) {
             next(error);
         }
